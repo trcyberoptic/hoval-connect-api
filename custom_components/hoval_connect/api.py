@@ -138,7 +138,14 @@ class HovalConnectApi:
                     if plant_id:
                         self._pat_cache.pop(plant_id, None)
                     raise HovalAuthError("Authentication failed")
-                resp.raise_for_status()
+                if resp.status >= 400:
+                    body = await resp.text()
+                    _LOGGER.error(
+                        "API error %s %s → HTTP %s: %s", method, path, resp.status, body[:500]
+                    )
+                    raise HovalApiError(
+                        f"API request failed: {method} {path}: HTTP {resp.status}"
+                    )
                 return await resp.json()
         except (HovalAuthError, HovalApiError):
             raise
