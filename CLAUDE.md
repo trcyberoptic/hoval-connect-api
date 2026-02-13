@@ -19,7 +19,7 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 
 ### Key files
 
-- `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching
+- `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy
 - `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` every 60s
 - `config_flow.py` — UI config flow (email/password) + reauth flow
 - `climate.py` — Climate entity for HV ventilation (mode, fan speed, humidity)
