@@ -1,17 +1,46 @@
-# Hoval Connect API – Unofficial Documentation
+# Hoval Connect API – Unofficial Documentation & Home Assistant Integration
 
-Reverse-engineered API documentation for the **Hoval Connect** IoT platform (used by Hoval heating/ventilation systems).
+Reverse-engineered API documentation for the **Hoval Connect** IoT platform (used by Hoval heating/ventilation systems), plus a **Home Assistant custom integration** (HACS-compatible).
 
 > ⚠️ **Unofficial.** Not affiliated with Hoval. Use at your own risk. API may change without notice.
 
-## Overview
+## Home Assistant Integration
+
+### Installation (HACS)
+
+1. In HACS, go to **Integrations** → **Custom repositories**
+2. Add `https://github.com/trcyberoptic/hoval-connect-api` as an **Integration**
+3. Install **Hoval Connect**
+4. Restart Home Assistant
+5. Go to **Settings** → **Integrations** → **Add Integration** → search **Hoval Connect**
+6. Enter your Hoval Connect email and password
+
+Plants and circuits are discovered automatically from your account.
+
+### What You Get
+
+- **Climate entity** per HV (ventilation) circuit — mode control (Auto/Fan Only/Off), fan speed (20–100%), target humidity
+- **Sensor entities** per circuit — outside temperature, exhaust temperature, air volume, humidity, target humidity
+- Automatic token management (ID token + Plant Access Token, refreshed transparently)
+- Polls every 60 seconds
+
+### Requirements
+
+- A Hoval Connect account (same credentials as the Hoval Connect mobile app)
+- Home Assistant 2024.1.0 or newer
+
+---
+
+## API Documentation
+
+### Overview
 
 Hoval Connect is a cloud platform that connects Hoval HVAC systems (heating, ventilation, hot water) via an IoT gateway to Azure IoT Hub. The mobile app (Android/iOS) communicates through a REST API hosted on Azure.
 
 ### Architecture
 
 ```
-Hoval Device ←→ IoT Gateway ←→ Azure IoT Hub ←→ Hoval Core API ←→ Mobile App
+Hoval Device ←→ IoT Gateway ←→ Azure IoT Hub ←→ Hoval Core API ←→ Mobile App / HA Integration
                                                   (REST/JSON)
 ```
 
