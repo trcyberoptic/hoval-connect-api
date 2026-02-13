@@ -61,12 +61,22 @@ class HovalConnectApi:
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as resp:
-                if resp.status == 401 or resp.status == 400:
-                    raise HovalAuthError("Invalid credentials")
+                if resp.status in (400, 401, 403):
+                    body = await resp.text()
+                    _LOGGER.debug("IDP auth failed (HTTP %s): %s", resp.status, body)
+                    raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
                 resp.raise_for_status()
                 data = await resp.json()
+        except HovalAuthError:
+            raise
         except aiohttp.ClientError as err:
             raise HovalApiError(f"Connection error during authentication: {err}") from err
+        except Exception as err:
+            raise HovalApiError(f"Unexpected error during authentication: {err}") from err
+
+        if "id_token" not in data:
+            _LOGGER.error("IDP response missing id_token. Keys: %s", list(data.keys()))
+            raise HovalApiError("IDP response missing id_token")
 
         self._id_token = data["id_token"]
         self._id_token_exp = time.time() + ID_TOKEN_TTL.total_seconds()
@@ -89,6 +99,8 @@ class HovalConnectApi:
                     raise HovalAuthError("ID token rejected")
                 resp.raise_for_status()
                 data = await resp.json()
+        except (HovalAuthError, HovalApiError):
+            raise
         except aiohttp.ClientError as err:
             raise HovalApiError(f"Connection error fetching plant token: {err}") from err
 
@@ -123,12 +135,17 @@ class HovalConnectApi:
             ) as resp:
                 if resp.status == 401:
                     self._id_token = None
-                    self._pat_cache.pop(plant_id, None) if plant_id else None
+                    if plant_id:
+                        self._pat_cache.pop(plant_id, None)
                     raise HovalAuthError("Authentication failed")
                 resp.raise_for_status()
                 return await resp.json()
+        except (HovalAuthError, HovalApiError):
+            raise
         except aiohttp.ClientError as err:
             raise HovalApiError(f"API request failed: {method} {path}: {err}") from err
+        except Exception as err:
+            raise HovalApiError(f"Unexpected error: {method} {path}: {err}") from err
 
     async def get_plants(self) -> list[dict[str, Any]]:
         """Get list of user's plants."""
