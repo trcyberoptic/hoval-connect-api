@@ -59,6 +59,8 @@ Hoval Device ←→ IoT Gateway ←→ Azure IoT Hub ←→ Hoval Core API ←�
 
 ### Step 1: Get ID Token (OAuth2 Password Grant)
 
+> **Note:** The `client_id` below is the public OAuth2 client ID for the Hoval Connect mobile app, extracted from the official Android/iOS app. It is the same for all users and is required by the SAP IAS identity provider.
+
 ```bash
 curl -X POST "https://akwc5scsc.accounts.ondemand.com/oauth2/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \

@@ -7,6 +7,8 @@ DOMAIN = "hoval_connect"
 # API endpoints
 BASE_URL = "https://azure-iot-prod.hoval.com/core"
 IDP_URL = "https://akwc5scsc.accounts.ondemand.com/oauth2/token"
+# Public OAuth2 client_id for the Hoval Connect mobile app (same for all users).
+# Extracted from the official Android/iOS app; required by the SAP IAS identity provider.
 CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 
 # Token TTLs (with safety margins)
