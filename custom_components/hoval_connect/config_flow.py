@@ -40,9 +40,11 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
             try:
                 plants = await api.get_plants()
-            except HovalAuthError:
+            except HovalAuthError as err:
+                _LOGGER.warning("Hoval auth failed: %s", err)
                 errors["base"] = "invalid_auth"
-            except HovalApiError:
+            except HovalApiError as err:
+                _LOGGER.error("Hoval API error during setup: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:
                 _LOGGER.exception("Unexpected exception during config flow")
