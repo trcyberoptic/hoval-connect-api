@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoval Connect",
+        "description": "Enter your Hoval Connect account credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Hoval Connect",
+        "description": "Your session has expired. Please re-enter your credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Unable to connect to Hoval Connect. Please try again later.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "outside_temperature": {
+        "name": "Outside temperature"
+      },
+      "exhaust_temperature": {
+        "name": "Exhaust temperature"
+      },
+      "air_volume": {
+        "name": "Air volume"
+      },
+      "humidity_actual": {
+        "name": "Humidity"
+      },
+      "humidity_target": {
+        "name": "Target humidity"
+      }
+    }
+  }
+}

@@ -4,28 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Reverse-engineered API documentation for the Hoval Connect IoT platform. This is a **documentation-only repo** — no build system, no tests, no package manager. The repo contains API docs (README.md) and two example clients.
+Reverse-engineered API documentation and **Home Assistant custom integration** for the Hoval Connect IoT platform. Hoval Connect is a cloud platform connecting Hoval HVAC systems (heating, ventilation, hot water) via IoT gateways to Azure IoT Hub.
 
-Hoval Connect is a cloud platform connecting Hoval HVAC systems (heating, ventilation, hot water) via IoT gateways to Azure IoT Hub.
+## Repository Structure
+
+- `README.md` — API documentation + HA integration install instructions
+- `examples/` — Standalone Python and Bash API client examples
+- `custom_components/hoval_connect/` — Home Assistant integration (HACS-compatible)
+- `hacs.json` — HACS repository metadata
+
+## Home Assistant Integration
+
+The integration lives in `custom_components/hoval_connect/`. User setup is email + password only — plants and circuits are discovered automatically from the Hoval account at runtime.
+
+### Key files
+
+- `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching
+- `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` every 60s
+- `config_flow.py` — UI config flow (email/password) + reauth flow
+- `climate.py` — Climate entity for HV ventilation (mode, fan speed, humidity)
+- `sensor.py` — 5 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity, target humidity)
+- `__init__.py` — Entry setup, runtime data, platform forwarding
+
+### Entity architecture
+
+- Entities use `CoordinatorEntity` — no direct API calls, all data comes from the coordinator
+- One HA device per plant+circuit, identified by `{plantId}_{circuitPath}`
+- Currently supports HV (ventilation) circuits only (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
 
 ## Running Examples
 
 ```bash
-# Python client (requires `requests` library)
 python examples/hoval_client.py <email> <password>
-
-# Bash script (requires curl + python3 for JSON parsing)
 ./examples/get-live-values.sh <email> <password> <plantId> <circuitPath> <circuitType>
 ```
 
-No credentials are stored in the repo — always passed as arguments.
-
 ## Authentication Architecture (2-step)
 
-1. **ID Token**: OAuth2 password grant to SAP IAS (`https://akwc5scsc.accounts.ondemand.com/oauth2/token`), client_id `991b54b2-7e67-47ef-81fe-572e21c59899`. Use `id_token` from response, NOT `access_token`. Lifetime: 30min.
-2. **Plant Access Token (PAT)**: Fetch via `GET /v1/plants/{plantId}/settings` using the id_token. Returns JWT in `token` field. Send as `X-Plant-Access-Token` header. Lifetime: ~15min.
-
-Both tokens are auto-refreshed with TTL caching in the Python client.
+1. **ID Token**: OAuth2 password grant to SAP IAS. Use `id_token` from response, NOT `access_token`. Lifetime: 30min.
+2. **Plant Access Token (PAT)**: Fetch via `GET /v1/plants/{plantId}/settings`. Send as `X-Plant-Access-Token` header. Lifetime: ~15min.
 
 ## API Base URL
 
@@ -33,8 +50,8 @@ Both tokens are auto-refreshed with TTL caching in the Python client.
 
 ## Key Endpoint Patterns
 
-- Endpoints prefixed with `/api/` or `/v1/` need only the id_token (`Authorization: Bearer`)
-- Most `/v1/plants/`, `/v2/api/`, `/v3/` endpoints also require `X-Plant-Access-Token`
+- `/api/` endpoints need only the id_token (`Authorization: Bearer`)
+- `/v1/plants/`, `/v2/api/`, `/v3/` endpoints also require `X-Plant-Access-Token`
 - `/business/` endpoints require elevated (partner) access — regular users get 403
 
 ## Circuit Types
@@ -43,7 +60,7 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 
 ## Known Gaps
 
-- Temperature history (`/v3/api/statistics/temperature/`) requires `datapoints` param — valid datapoint IDs not yet discovered
+- Temperature history (`/v3/api/statistics/temperature/`) requires `datapoints` param — valid IDs not yet discovered
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
 - Full OpenAPI 3.1 spec available at `/v3/api-docs` (~450KB, auth required)
