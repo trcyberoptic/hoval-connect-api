@@ -156,7 +156,7 @@ class HovalConnectApi:
 
     async def get_plants(self) -> list[dict[str, Any]]:
         """Get list of user's plants."""
-        return await self._request("GET", "/api/my-plants", params={"size": "50", "page": "0"})
+        return await self._request("GET", "/api/my-plants", params={"size": "12", "page": "0"})
 
     async def get_plant_settings(self, plant_id: str) -> dict[str, Any]:
         """Get plant settings (also refreshes PAT as side effect)."""
