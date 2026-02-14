@@ -173,6 +173,14 @@ class HovalConnectApi:
         """Get all circuits for a plant."""
         return await self._request("GET", f"/v1/plants/{plant_id}/circuits", plant_id=plant_id)
 
+    async def get_programs(self, plant_id: str, circuit_path: str) -> Any:
+        """Get time programs for a circuit."""
+        return await self._request(
+            "GET",
+            f"/v3/plants/{plant_id}/circuits/{circuit_path}/programs",
+            plant_id=plant_id,
+        )
+
     async def get_live_values(
         self, plant_id: str, circuit_path: str, circuit_type: str
     ) -> list[dict[str, str]]:
