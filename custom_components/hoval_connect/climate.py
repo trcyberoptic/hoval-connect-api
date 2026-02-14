@@ -110,7 +110,13 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         circuit = self._circuit
         if circuit is None:
             return HVACMode.OFF
-        return HOVAL_TO_HVAC_MODE.get(circuit.operation_mode, HVACMode.AUTO)
+        mapped = HOVAL_TO_HVAC_MODE.get(circuit.operation_mode)
+        if mapped is None:
+            _LOGGER.warning(
+                "Unknown operationMode %r, defaulting to AUTO", circuit.operation_mode
+            )
+            return HVACMode.AUTO
+        return mapped
 
     @property
     def hvac_action(self) -> HVACAction | None:
