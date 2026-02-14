@@ -21,13 +21,10 @@ Plants and circuits are discovered automatically from your account.
 
 ### What You Get
 
-**Climate entity** (per HV ventilation circuit):
-- HVAC modes: Auto, Fan Only, Off
-- Displays exhaust air temperature and current humidity
-
-**Fan entity** (per HV ventilation circuit):
-- Continuous speed slider: 0–100%
-- Turn on/off control (standby mode)
+**Fan entity** (per HV ventilation circuit) — single control:
+- Continuous speed slider: 0–100% (sets constant mode)
+- Turn on/off toggle (standby ↔ constant mode)
+- Debounced slider input (1.5s) to prevent API rate-limiting
 
 **Sensor entities** (8 per circuit):
 - Outside temperature, exhaust temperature
