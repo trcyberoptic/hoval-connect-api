@@ -44,6 +44,15 @@
       },
       "humidity_target": {
         "name": "Target humidity"
+      },
+      "active_week_program": {
+        "name": "Week program"
+      },
+      "active_day_program": {
+        "name": "Day program"
+      },
+      "program_air_volume": {
+        "name": "Program air volume"
       }
     }
   }
