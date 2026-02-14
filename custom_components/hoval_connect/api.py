@@ -235,18 +235,18 @@ class HovalConnectApi:
         """Set a temporary air volume override (works with active time program).
 
         POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change
-              ?value={airVolume}&duration=PT{minutes}M  (ISO 8601 duration)
+              ?value={airVolume}  body: {"duration": N}
         """
-        iso_duration = f"PT{duration_minutes}M"
         _LOGGER.debug(
-            "set_temporary_change: plant=%s circuit=%s value=%s duration=%s",
-            plant_id, circuit_path, value, iso_duration,
+            "set_temporary_change: plant=%s circuit=%s value=%s duration=%dmin",
+            plant_id, circuit_path, value, duration_minutes,
         )
         result = await self._request(
             "POST",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
-            params={"value": str(value), "duration": iso_duration},
+            params={"value": str(value)},
+            json_data={"duration": duration_minutes},
         )
         _LOGGER.debug("set_temporary_change: completed successfully")
         return result

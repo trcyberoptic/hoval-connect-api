@@ -28,6 +28,19 @@
       "reauth_successful": "Re-authentication successful."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hoval Connect Options",
+        "data": {
+          "override_duration": "Temporary override duration (minutes)"
+        },
+        "data_description": {
+          "override_duration": "How long a manual fan speed change lasts before the time program resumes (1–1440 min)."
+        }
+      }
+    }
+  },
   "entity": {
     "binary_sensor": {
       "plant_online": {

@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry
-from .const import DOMAIN, OPERATION_MODE_STANDBY
+from .const import CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION, DOMAIN, OPERATION_MODE_STANDBY
 from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_speed
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def async_setup_entry(
     for plant_id, plant_data in coordinator.data.plants.items():
         for path, circuit in plant_data.circuits.items():
             entities.append(
-                HovalFan(coordinator, plant_id, path, circuit)
+                HovalFan(coordinator, entry, plant_id, path, circuit)
             )
 
     async_add_entities(entities)
@@ -53,12 +53,14 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     def __init__(
         self,
         coordinator: HovalDataCoordinator,
+        entry: HovalConnectConfigEntry,
         plant_id: str,
         circuit_path: str,
         circuit_data: HovalCircuitData,
     ) -> None:
         """Initialize the fan entity."""
         super().__init__(coordinator)
+        self._entry = entry
         self._plant_id = plant_id
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_fan"
@@ -71,6 +73,11 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         )
         self._debounce_task: asyncio.Task | None = None
         self._pending_percentage: int | None = None
+
+    @property
+    def _override_duration(self) -> int:
+        """Get override duration in minutes from options."""
+        return self._entry.options.get(CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION)
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -119,6 +126,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 self._plant_id,
                 self._circuit_path,
                 value=percentage,
+                duration_minutes=self._override_duration,
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)
@@ -168,6 +176,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 self._plant_id,
                 self._circuit_path,
                 value=value,
+                duration_minutes=self._override_duration,
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)
