@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.climate import (
@@ -165,6 +166,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         await self.coordinator.api.set_circuit_mode(
             self._plant_id, self._circuit_path, mode, value=value
         )
+        await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
 

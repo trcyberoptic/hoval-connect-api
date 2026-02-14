@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
@@ -115,6 +116,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             OPERATION_MODE_CONSTANT,
             value=percentage,
         )
+        await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_on(
@@ -140,6 +142,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             OPERATION_MODE_CONSTANT,
             value=value,
         )
+        await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
@@ -149,4 +152,5 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             self._circuit_path,
             OPERATION_MODE_STANDBY,
         )
+        await asyncio.sleep(2)
         await self.coordinator.async_request_refresh()

@@ -216,16 +216,20 @@ class HovalConnectApi:
         """Set circuit operation mode (constant, standby, manual, reset).
 
         The 'constant' mode requires a 'value' parameter (air volume %).
+        Uses PUT for value-based modes (constant) and POST for state
+        transitions (standby, manual, reset) based on API behavior.
         """
         params: dict[str, str] | None = None
         if value is not None:
             params = {"value": str(value)}
+        # constant uses PUT with query param, others use POST
+        method = "PUT" if mode == "constant" else "POST"
         _LOGGER.debug(
-            "set_circuit_mode: plant=%s circuit=%s mode=%s value=%s",
-            plant_id, circuit_path, mode, value,
+            "set_circuit_mode: %s plant=%s circuit=%s mode=%s value=%s",
+            method, plant_id, circuit_path, mode, value,
         )
         result = await self._request(
-            "PUT",
+            method,
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
             params=params,
