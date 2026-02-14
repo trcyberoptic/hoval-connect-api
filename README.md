@@ -21,11 +21,28 @@ Plants and circuits are discovered automatically from your account.
 
 ### What You Get
 
-- **Climate entity** per HV (ventilation) circuit — mode control (Auto/Fan Only/Off), fan speed (20–100%)
-- **Sensor entities** per circuit — outside temperature, exhaust temperature, air volume, humidity, target humidity
-- **Time program sensors** — active week program, active day program, program air volume (current phase value)
-- **Plant status** — online/offline binary sensor, error binary sensor, latest event type/message/time, active event count
-- Automatic token management (ID token + Plant Access Token, refreshed transparently)
+**Climate entity** (per HV ventilation circuit):
+- HVAC modes: Auto, Fan Only, Off
+- Fan speed control: 5 levels (20%, 40%, 60%, 80%, 100%)
+- Displays exhaust air temperature and current humidity
+
+**Sensor entities** (8 per circuit):
+- Outside temperature, exhaust temperature
+- Air volume, humidity (actual), humidity (target)
+- Active week program, active day program, program air volume (current time program phase)
+
+**Plant status** (per plant):
+- Online/offline binary sensor (connectivity class)
+- Error binary sensor (problem class, detects blocking/locking events)
+- Latest event type, message, and timestamp sensors
+- Active event count sensor
+
+**Diagnostics:**
+- Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs)
+
+**Under the hood:**
+- 2-step token management (ID token + Plant Access Token) with TTL caching and auto-refresh
+- Skips API calls when plant is offline, invalidates token cache on reconnect
 - Polls every 60 seconds
 
 ### Known Limitations
@@ -284,6 +301,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 ```
 
 #### Circuit Control Endpoints (PUT/POST)
+
+> **Note:** PUT control endpoints return **HTTP 204 No Content** on success (no response body).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
