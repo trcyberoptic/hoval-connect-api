@@ -33,10 +33,10 @@
       "init": {
         "title": "Hoval Connect Options",
         "data": {
-          "override_duration": "Temporary override duration (minutes)"
+          "override_duration": "Temporary override duration"
         },
         "data_description": {
-          "override_duration": "How long a manual fan speed change lasts before the time program resumes (1–1440 min)."
+          "override_duration": "How long a manual fan speed change lasts before the time program resumes."
         }
       }
     }

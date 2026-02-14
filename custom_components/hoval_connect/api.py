@@ -230,25 +230,43 @@ class HovalConnectApi:
         return result
 
     async def set_temporary_change(
-        self, plant_id: str, circuit_path: str, value: int, duration_minutes: int = 60
+        self, plant_id: str, circuit_path: str, value: int, duration: str = "FOUR"
     ) -> Any:
         """Set a temporary air volume override (works with active time program).
 
-        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change
-              ?value={airVolume}  body: {"duration": N}
+        v1: POST .../{circuitPath}/temporary-change?duration=FOUR|MIDNIGHT&value={airVolume}
+        Duration enum: FOUR (4 hours) or MIDNIGHT (until midnight).
         """
         _LOGGER.debug(
-            "set_temporary_change: plant=%s circuit=%s value=%s duration=%dmin",
-            plant_id, circuit_path, value, duration_minutes,
+            "set_temporary_change: plant=%s circuit=%s value=%s duration=%s",
+            plant_id, circuit_path, value, duration,
         )
         result = await self._request(
             "POST",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
-            params={"value": str(value)},
-            json_data={"duration": duration_minutes},
+            params={"duration": duration, "value": str(value)},
         )
         _LOGGER.debug("set_temporary_change: completed successfully")
+        return result
+
+    async def reset_temporary_change(
+        self, plant_id: str, circuit_path: str
+    ) -> Any:
+        """Cancel an active temporary override, resume time program.
+
+        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change/reset
+        """
+        _LOGGER.debug(
+            "reset_temporary_change: plant=%s circuit=%s",
+            plant_id, circuit_path,
+        )
+        result = await self._request(
+            "POST",
+            f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change/reset",
+            plant_id=plant_id,
+        )
+        _LOGGER.debug("reset_temporary_change: completed successfully")
         return result
 
     def invalidate_tokens(self) -> None:
