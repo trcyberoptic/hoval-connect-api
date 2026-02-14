@@ -144,6 +144,8 @@ class HovalConnectApi:
                     raise HovalApiError(
                         f"API request failed: HTTP {resp.status}"
                     )
+                if resp.status == 204:
+                    return None
                 return await resp.json()
         except (HovalAuthError, HovalApiError):
             raise
