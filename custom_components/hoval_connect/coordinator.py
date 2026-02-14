@@ -154,6 +154,11 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     is_online=plant.get("isOnline", True),
                 )
 
+                # Skip all API calls when plant is offline
+                if not plant_data.is_online:
+                    data.plants[plant_id] = plant_data
+                    continue
+
                 # Fetch circuits
                 try:
                     circuits_raw = await self.api.get_circuits(plant_id)
