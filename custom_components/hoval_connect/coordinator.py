@@ -106,6 +106,16 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     circuit_data.live_values = {
                         v["key"]: v["value"] for v in live_values
                     }
+                    _LOGGER.debug(
+                        "Circuit %s [%s]: operationMode=%s, activeProgram=%s, "
+                        "targetAirVolume=%s, live_values=%s",
+                        path,
+                        ctype,
+                        circuit_data.operation_mode,
+                        circuit_data.active_program,
+                        circuit_data.target_air_volume,
+                        circuit_data.live_values,
+                    )
 
                     plant_data.circuits[path] = circuit_data
 

@@ -160,11 +160,18 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
 
     @property
     def fan_mode(self) -> str | None:
-        """Return the current fan mode (air volume %)."""
+        """Return the current fan mode (air volume %).
+
+        Uses airVolume from live values (actual current volume) rather than
+        targetAirVolume from circuit config (user-configured default that
+        doesn't reflect active time programs).
+        """
         circuit = self._circuit
         if circuit is None:
             return None
-        val = circuit.live_values.get("airVolume") or circuit.target_air_volume
+        val = circuit.live_values.get("airVolume")
+        if val is None:
+            val = circuit.target_air_volume
         return str(int(float(val))) if val is not None else None
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
