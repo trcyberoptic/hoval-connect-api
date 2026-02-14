@@ -106,6 +106,16 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     circuit_data.live_values = {
                         v["key"]: v["value"] for v in live_values
                     }
+
+                    # Fetch time programs to get the currently active air volume
+                    try:
+                        programs = await self.api.get_programs(plant_id, path)
+                        _LOGGER.debug(
+                            "Circuit %s programs: %s", path, programs
+                        )
+                    except HovalApiError:
+                        _LOGGER.debug("Programs endpoint not available for %s", path)
+
                     _LOGGER.debug(
                         "Circuit %s [%s]: operationMode=%s, activeProgram=%s, "
                         "targetAirVolume=%s, live_values=%s",
