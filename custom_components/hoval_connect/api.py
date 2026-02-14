@@ -192,6 +192,14 @@ class HovalConnectApi:
             params={"circuitPath": circuit_path, "circuitType": circuit_type},
         )
 
+    async def get_events(self, plant_id: str) -> list[dict[str, Any]]:
+        """Get plant error events."""
+        return await self._request("GET", f"/v1/plant-events/{plant_id}")
+
+    async def get_latest_event(self, plant_id: str) -> dict[str, Any]:
+        """Get latest plant event."""
+        return await self._request("GET", f"/v1/plant-events/latest/{plant_id}")
+
     async def get_weather(self, plant_id: str) -> list[dict[str, Any]]:
         """Get weather forecast for plant location."""
         return await self._request(
@@ -206,6 +214,7 @@ class HovalConnectApi:
             "PUT",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
+            json_data={},
         )
 
     async def set_circuit_settings(

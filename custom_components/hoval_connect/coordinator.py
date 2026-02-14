@@ -18,10 +18,6 @@ from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, SUPPORTED_CIRCUIT_TYPES
 
 _LOGGER = logging.getLogger(__name__)
 
-WEEKDAY_NAMES = [
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
-]
-
 
 def _resolve_active_program_value(
     programs: dict[str, Any], now: datetime
@@ -69,6 +65,17 @@ def _resolve_active_program_value(
 
 
 @dataclass
+class HovalEventData:
+    """Parsed data for a plant event."""
+
+    event_type: str | None = None
+    message: str | None = None
+    timestamp: str | None = None
+    circuit_path: str | None = None
+    is_active: bool = False
+
+
+@dataclass
 class HovalCircuitData:
     """Parsed data for a single circuit."""
 
@@ -93,7 +100,11 @@ class HovalPlantData:
 
     plant_id: str
     name: str
+    is_online: bool = True
+    has_error: bool = False
     circuits: dict[str, HovalCircuitData] = field(default_factory=dict)
+    latest_event: HovalEventData | None = None
+    events: list[HovalEventData] = field(default_factory=list)
 
 
 @dataclass
@@ -133,8 +144,14 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 plant_id = plant["plantExternalId"]
                 plant_name = plant.get("description", plant_id)
 
+                plant_data = HovalPlantData(
+                    plant_id=plant_id,
+                    name=plant_name,
+                    is_online=plant.get("isOnline", True),
+                )
+
+                # Fetch circuits
                 circuits_raw = await self.api.get_circuits(plant_id)
-                plant_data = HovalPlantData(plant_id=plant_id, name=plant_name)
 
                 for circuit in circuits_raw:
                     ctype = circuit.get("type", "")
@@ -174,19 +191,51 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     except HovalApiError:
                         _LOGGER.debug("Programs endpoint not available for %s", path)
 
-                    _LOGGER.debug(
-                        "Circuit %s [%s]: mode=%s, program=%s/%s, "
-                        "programVolume=%s, liveVolume=%s",
-                        path,
-                        ctype,
-                        circuit_data.operation_mode,
-                        circuit_data.active_week_name,
-                        circuit_data.active_day_program_name,
-                        circuit_data.program_air_volume,
-                        circuit_data.live_values.get("airVolume"),
-                    )
+                    if circuit_data.has_error:
+                        plant_data.has_error = True
 
                     plant_data.circuits[path] = circuit_data
+
+                # Fetch plant events
+                try:
+                    latest_raw = await self.api.get_latest_event(plant_id)
+                    if latest_raw:
+                        plant_data.latest_event = HovalEventData(
+                            event_type=latest_raw.get("eventType"),
+                            message=latest_raw.get("message"),
+                            timestamp=latest_raw.get("timestamp"),
+                            circuit_path=latest_raw.get("circuitPath"),
+                            is_active=latest_raw.get("isActive", False),
+                        )
+                        _LOGGER.debug(
+                            "Plant %s latest event: %s", plant_id, latest_raw
+                        )
+                except HovalApiError:
+                    _LOGGER.debug("Events endpoint not available for %s", plant_id)
+
+                try:
+                    events_raw = await self.api.get_events(plant_id)
+                    if events_raw:
+                        # Keep only the most recent 10 events
+                        for ev in events_raw[:10]:
+                            plant_data.events.append(HovalEventData(
+                                event_type=ev.get("eventType"),
+                                message=ev.get("message"),
+                                timestamp=ev.get("timestamp"),
+                                circuit_path=ev.get("circuitPath"),
+                                is_active=ev.get("isActive", False),
+                            ))
+                        # Set has_error if any active blocking/locking event
+                        for ev in plant_data.events:
+                            if ev.is_active and ev.event_type in (
+                                "blocking", "locking"
+                            ):
+                                plant_data.has_error = True
+                                break
+                except HovalApiError:
+                    _LOGGER.debug(
+                        "Events list endpoint not available for %s", plant_id
+                    )
 
                 data.plants[plant_id] = plant_data
 
