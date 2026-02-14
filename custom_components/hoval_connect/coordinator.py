@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import HovalAuthError, HovalApiError, HovalConnectApi
+from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, SUPPORTED_CIRCUIT_TYPES
 
 _LOGGER = logging.getLogger(__name__)
