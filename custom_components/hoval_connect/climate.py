@@ -44,9 +44,6 @@ HVAC_MODE_TO_HOVAL: dict[HVACMode, str] = {
     HVACMode.OFF: OPERATION_MODE_STANDBY,
 }
 
-FAN_MODES = ["20", "40", "60", "80", "100"]
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: HovalConnectConfigEntry,
@@ -72,8 +69,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO, HVACMode.FAN_ONLY]
-    _attr_supported_features = ClimateEntityFeature.FAN_MODE
-    _attr_fan_modes = FAN_MODES
+    _attr_supported_features = ClimateEntityFeature(0)
 
     def __init__(
         self,
@@ -144,22 +140,6 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         val = circuit.live_values.get("humidityActual")
         return int(float(val)) if val is not None else None
 
-    @property
-    def fan_mode(self) -> str | None:
-        """Return the current fan mode (air volume %).
-
-        Uses airVolume from live values (actual current volume) rather than
-        targetAirVolume from circuit config (user-configured default that
-        doesn't reflect active time programs).
-        """
-        circuit = self._circuit
-        if circuit is None:
-            return None
-        val = circuit.live_values.get("airVolume")
-        if val is None:
-            val = circuit.target_air_volume
-        return str(int(float(val))) if val is not None else None
-
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the HVAC mode."""
         mode = HVAC_MODE_TO_HOVAL.get(hvac_mode)
@@ -180,17 +160,4 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         )
         await self.coordinator.async_request_refresh()
 
-    async def async_set_fan_mode(self, fan_mode: str) -> None:
-        """Set the fan mode (air volume %).
-
-        Uses the 'constant' mode endpoint which accepts a value parameter,
-        since the settings endpoint is not available for HV circuits.
-        """
-        await self.coordinator.api.set_circuit_mode(
-            self._plant_id,
-            self._circuit_path,
-            OPERATION_MODE_CONSTANT,
-            value=int(fan_mode),
-        )
-        await self.coordinator.async_request_refresh()
 
