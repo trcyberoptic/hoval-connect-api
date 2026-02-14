@@ -73,12 +73,8 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     _attr_name = None
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.AUTO, HVACMode.FAN_ONLY]
-    _attr_supported_features = (
-        ClimateEntityFeature.FAN_MODE | ClimateEntityFeature.TARGET_HUMIDITY
-    )
+    _attr_supported_features = ClimateEntityFeature.FAN_MODE
     _attr_fan_modes = FAN_MODES
-    _attr_min_humidity = 30
-    _attr_max_humidity = 70
 
     def __init__(
         self,
@@ -150,15 +146,6 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         return int(float(val)) if val is not None else None
 
     @property
-    def target_humidity(self) -> int | None:
-        """Return the target humidity."""
-        circuit = self._circuit
-        if circuit is None:
-            return None
-        val = circuit.live_values.get("humidityTarget") or circuit.target_air_humidity
-        return int(float(val)) if val is not None else None
-
-    @property
     def fan_mode(self) -> str | None:
         """Return the current fan mode (air volume %).
 
@@ -194,11 +181,3 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         )
         await self.coordinator.async_request_refresh()
 
-    async def async_set_humidity(self, humidity: int) -> None:
-        """Set the target humidity."""
-        await self.coordinator.api.set_circuit_settings(
-            self._plant_id,
-            self._circuit_path,
-            {"targetAirHumidity": humidity},
-        )
-        await self.coordinator.async_request_refresh()
