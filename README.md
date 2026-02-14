@@ -310,11 +310,11 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}` | 🔑🏭 | Set constant mode (value = air volume %) |
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/time-programs` | 🔑🏭 | Set time programs |
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary override |
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/reset` | 🔑🏭 | Reset to auto |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary override |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/reset` | 🔑🏭 | Reset to auto |
 | ~~PUT~~ | ~~`/v3/plants/{plantId}/circuits/{circuitPath}/settings`~~ | 🔑🏭 | ~~Update circuit settings~~ (returns 405 — not supported for HV circuits) |
 
 ---
