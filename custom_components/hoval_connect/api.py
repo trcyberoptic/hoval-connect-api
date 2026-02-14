@@ -207,14 +207,20 @@ class HovalConnectApi:
         )
 
     async def set_circuit_mode(
-        self, plant_id: str, circuit_path: str, mode: str
+        self, plant_id: str, circuit_path: str, mode: str, value: int | None = None
     ) -> Any:
-        """Set circuit operation mode (constant, standby, manual, reset)."""
+        """Set circuit operation mode (constant, standby, manual, reset).
+
+        The 'constant' mode requires a 'value' parameter (air volume %).
+        """
+        params: dict[str, str] | None = None
+        if value is not None:
+            params = {"value": str(value)}
         return await self._request(
             "PUT",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
-            json_data={},
+            params=params,
         )
 
     async def set_circuit_settings(
@@ -222,7 +228,7 @@ class HovalConnectApi:
     ) -> Any:
         """Update circuit settings (e.g. targetAirVolume)."""
         return await self._request(
-            "PUT",
+            "POST",
             f"/v3/plants/{plant_id}/circuits/{circuit_path}/settings",
             plant_id=plant_id,
             json_data=settings,
