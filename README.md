@@ -306,7 +306,7 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?value={airVolume}&duration={minutes}` | 🔑🏭 | Temporary air volume override (keeps time program active) |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?value={airVolume}&duration=PT{N}M` | 🔑🏭 | Temporary air volume override (ISO 8601 duration, keeps time program active) |
 | ~~PUT~~ | ~~`/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}`~~ | 🔑🏭 | ~~Set constant mode~~ (HTTP 500 when time program is active — use `temporary-change` instead) |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
