@@ -22,7 +22,7 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 ### Key files
 
 - `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy. Handles HTTP 204 No Content for PUT control endpoints.
-- `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` + `get_programs()` + `get_events()` every 60s. Skips API calls when plant is offline, invalidates PAT cache on reconnect.
+- `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` + `get_programs()` + `get_events()` every 60s. Skips API calls when plant is offline, invalidates PAT cache on reconnect. Provides `control_lock` (asyncio.Lock) to serialize control commands, and `resolve_fan_speed()` helper for smart fan speed resolution.
 - `config_flow.py` — UI config flow (email/password) + reauth flow
 - `climate.py` — Climate entity for HV ventilation (HVAC modes: Auto/Fan Only/Off, shows exhaust temp + humidity)
 - `fan.py` — Fan entity with continuous 0–100% speed slider (`FanEntityFeature.SET_SPEED`), turn on/off (standby)
@@ -38,7 +38,8 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - Device hierarchy: one parent device per plant, one child device per plant+circuit (linked via `via_device`)
 - Circuit devices identified by `{plantId}_{circuitPath}`
 - Currently supports HV (ventilation) circuits only (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
-- Climate entity triggers coordinator refresh after control actions (`set_circuit_mode`)
+- Climate and fan entities use `coordinator.control_lock` to serialize API control commands (prevents race conditions)
+- Fan speed resolution uses smart fallback chain: live airVolume → targetAirVolume → program air volume → default 40% (API rejects value=0)
 
 ## Running Examples
 
@@ -69,6 +70,8 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 ## API Behavior Notes
 
 - PUT control endpoints (`/v1/plants/{plantId}/circuits/{circuitPath}/...`) return HTTP 204 No Content on success — no response body
+- `constant` mode uses PUT with `?value=` query param; `standby`, `manual`, `reset` use POST (no body)
+- API returns HTTP 424 Failed Dependency if `constant` is called with `value=0` — always send value >= 1
 - `get_weather()` method exists in `api.py` but is not currently used by any entity
 
 ## Known Gaps

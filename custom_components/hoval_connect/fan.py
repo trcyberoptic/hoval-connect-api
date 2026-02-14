@@ -13,11 +13,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry
 from .const import DOMAIN, OPERATION_MODE_CONSTANT, OPERATION_MODE_STANDBY
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_speed
 
 _LOGGER = logging.getLogger(__name__)
-
-SPEED_RANGE = (0, 100)
 
 
 async def async_setup_entry(
@@ -110,14 +108,15 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         if percentage == 0:
             await self.async_turn_off()
             return
-        await self.coordinator.api.set_circuit_mode(
-            self._plant_id,
-            self._circuit_path,
-            OPERATION_MODE_CONSTANT,
-            value=percentage,
-        )
-        await asyncio.sleep(2)
-        await self.coordinator.async_request_refresh()
+        async with self.coordinator.control_lock:
+            await self.coordinator.api.set_circuit_mode(
+                self._plant_id,
+                self._circuit_path,
+                OPERATION_MODE_CONSTANT,
+                value=percentage,
+            )
+            await asyncio.sleep(2)
+            await self.coordinator.async_request_refresh()
 
     async def async_turn_on(
         self,
@@ -129,28 +128,24 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         if percentage is not None:
             await self.async_set_percentage(percentage)
             return
-        # Resume with last known speed or default 40%
-        circuit = self._circuit
-        value = 40
-        if circuit:
-            val = circuit.live_values.get("airVolume") or circuit.target_air_volume
-            if val is not None:
-                value = max(1, int(float(val)))
-        await self.coordinator.api.set_circuit_mode(
-            self._plant_id,
-            self._circuit_path,
-            OPERATION_MODE_CONSTANT,
-            value=value,
-        )
-        await asyncio.sleep(2)
-        await self.coordinator.async_request_refresh()
+        async with self.coordinator.control_lock:
+            value = resolve_fan_speed(self._circuit)
+            await self.coordinator.api.set_circuit_mode(
+                self._plant_id,
+                self._circuit_path,
+                OPERATION_MODE_CONSTANT,
+                value=value,
+            )
+            await asyncio.sleep(2)
+            await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off the fan (standby mode)."""
-        await self.coordinator.api.set_circuit_mode(
-            self._plant_id,
-            self._circuit_path,
-            OPERATION_MODE_STANDBY,
-        )
-        await asyncio.sleep(2)
-        await self.coordinator.async_request_refresh()
+        async with self.coordinator.control_lock:
+            await self.coordinator.api.set_circuit_mode(
+                self._plant_id,
+                self._circuit_path,
+                OPERATION_MODE_STANDBY,
+            )
+            await asyncio.sleep(2)
+            await self.coordinator.async_request_refresh()
