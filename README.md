@@ -4,6 +4,8 @@ Reverse-engineered API documentation for the **Hoval Connect** IoT platform (use
 
 > ⚠️ **Unofficial.** Not affiliated with Hoval. Use at your own risk. API may change without notice.
 
+> **Successor to [Hoval-GatewayV2-CANBUS-MQTT](https://github.com/trcyberoptic/Hoval-GatewayV2-CANBUS-MQTT).** This cloud-based integration requires no additional hardware — just your Hoval Connect credentials. The previous project used CAN bus + MQTT via a physical gateway connection.
+
 ## Home Assistant Integration
 
 ### Installation (HACS)
