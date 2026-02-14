@@ -75,8 +75,8 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._pending_percentage: int | None = None
 
     @property
-    def _override_duration(self) -> int:
-        """Get override duration in minutes from options."""
+    def _override_duration(self) -> str:
+        """Get override duration enum from options (FOUR or MIDNIGHT)."""
         return self._entry.options.get(CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION)
 
     @property
@@ -126,7 +126,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 self._plant_id,
                 self._circuit_path,
                 value=percentage,
-                duration_minutes=self._override_duration,
+                duration=self._override_duration,
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)
@@ -176,7 +176,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 self._plant_id,
                 self._circuit_path,
                 value=value,
-                duration_minutes=self._override_duration,
+                duration=self._override_duration,
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)

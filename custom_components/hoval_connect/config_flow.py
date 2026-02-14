@@ -10,7 +10,13 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFl
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
-from .const import CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION, DOMAIN
+from .const import (
+    CONF_OVERRIDE_DURATION,
+    DEFAULT_OVERRIDE_DURATION,
+    DOMAIN,
+    DURATION_FOUR_HOURS,
+    DURATION_MIDNIGHT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,7 +142,10 @@ class HovalConnectOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_OVERRIDE_DURATION,
                         default=current,
-                    ): vol.All(int, vol.Range(min=1, max=1440)),
+                    ): vol.In({
+                        DURATION_FOUR_HOURS: "4 hours",
+                        DURATION_MIDNIGHT: "Until midnight",
+                    }),
                 }
             ),
         )

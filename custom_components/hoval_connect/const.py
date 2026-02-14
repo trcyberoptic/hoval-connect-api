@@ -35,6 +35,8 @@ SUPPORTED_CIRCUIT_TYPES = {CIRCUIT_TYPE_HV}
 # Hoval operation modes
 OPERATION_MODE_STANDBY = "standby"
 
-# Options defaults
+# Temporary change duration options (API enum)
+DURATION_FOUR_HOURS = "FOUR"
+DURATION_MIDNIGHT = "MIDNIGHT"
 CONF_OVERRIDE_DURATION = "override_duration"
-DEFAULT_OVERRIDE_DURATION = 60  # minutes
+DEFAULT_OVERRIDE_DURATION = DURATION_FOUR_HOURS
