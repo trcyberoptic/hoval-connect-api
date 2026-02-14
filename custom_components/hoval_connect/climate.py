@@ -182,11 +182,16 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         await self.coordinator.async_request_refresh()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
-        """Set the fan mode (air volume %)."""
-        await self.coordinator.api.set_circuit_settings(
+        """Set the fan mode (air volume %).
+
+        Uses the 'constant' mode endpoint which accepts a value parameter,
+        since the settings endpoint is not available for HV circuits.
+        """
+        await self.coordinator.api.set_circuit_mode(
             self._plant_id,
             self._circuit_path,
-            {"targetAirVolume": int(fan_mode)},
+            OPERATION_MODE_CONSTANT,
+            value=int(fan_mode),
         )
         await self.coordinator.async_request_refresh()
 

@@ -141,7 +141,11 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             plants = await self.api.get_plants()
 
             for plant in plants:
-                plant_id = plant["plantExternalId"]
+                plant_id = plant.get("plantExternalId")
+                if not plant_id:
+                    _LOGGER.debug("Skipping plant with missing plantExternalId")
+                    continue
+
                 plant_name = plant.get("description", plant_id)
 
                 plant_data = HovalPlantData(
@@ -151,7 +155,11 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 )
 
                 # Fetch circuits
-                circuits_raw = await self.api.get_circuits(plant_id)
+                try:
+                    circuits_raw = await self.api.get_circuits(plant_id)
+                except HovalApiError:
+                    _LOGGER.debug("Circuits endpoint not available for plant")
+                    circuits_raw = []
 
                 for circuit in circuits_raw:
                     ctype = circuit.get("type", "")
@@ -173,10 +181,15 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         has_error=circuit.get("hasError", False),
                     )
 
-                    live_values = await self.api.get_live_values(plant_id, path, ctype)
-                    circuit_data.live_values = {
-                        v["key"]: v["value"] for v in live_values
-                    }
+                    try:
+                        live_values = await self.api.get_live_values(
+                            plant_id, path, ctype
+                        )
+                        circuit_data.live_values = {
+                            v["key"]: v["value"] for v in live_values
+                        }
+                    except HovalApiError:
+                        _LOGGER.debug("Live values not available for %s", path)
 
                     # Fetch time programs to resolve currently active phase
                     try:
@@ -208,7 +221,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                             is_active=latest_raw.get("isActive", False),
                         )
                         _LOGGER.debug(
-                            "Plant %s latest event: %s", plant_id, latest_raw
+                            "Latest event: type=%s active=%s",
+                            latest_raw.get("eventType"),
+                            latest_raw.get("isActive"),
                         )
                 except HovalApiError:
                     _LOGGER.debug("Events endpoint not available for %s", plant_id)
@@ -244,6 +259,6 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 "Authentication failed — check credentials"
             ) from err
         except HovalApiError as err:
-            raise UpdateFailed(f"Error fetching Hoval data: {err}") from err
+            raise UpdateFailed("Error fetching Hoval data") from err
 
         return data
