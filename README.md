@@ -23,8 +23,11 @@ Plants and circuits are discovered automatically from your account.
 
 **Climate entity** (per HV ventilation circuit):
 - HVAC modes: Auto, Fan Only, Off
-- Fan speed control: 5 levels (20%, 40%, 60%, 80%, 100%)
 - Displays exhaust air temperature and current humidity
+
+**Fan entity** (per HV ventilation circuit):
+- Continuous speed slider: 0–100%
+- Turn on/off control (standby mode)
 
 **Sensor entities** (8 per circuit):
 - Outside temperature, exhaust temperature
