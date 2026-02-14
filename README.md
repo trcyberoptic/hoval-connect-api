@@ -201,8 +201,8 @@ https://azure-iot-prod.hoval.com/core
 [
   {
     "ContractID": "0000000000",
-    "ContractType": "000000000004505010",
-    "ValidFrom": "2025-12-01",
+    "ContractType": "000000000000000000",
+    "ValidFrom": "2025-01-01",
     "ValidTo": "2050-12-30",
     "GatewaySerialID": "123456789012345",
     "isOnboarded": true,
@@ -287,13 +287,13 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/constant` | 🔑🏭 | Set constant mode |
+| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}` | 🔑🏭 | Set constant mode (value = air volume %) |
 | PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
 | PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/time-programs` | 🔑🏭 | Set time programs |
 | PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary override |
 | PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/reset` | 🔑🏭 | Reset to auto |
-| PUT | `/v3/plants/{plantId}/circuits/{circuitPath}/settings` | 🔑🏭 | Update circuit settings |
+| ~~PUT~~ | ~~`/v3/plants/{plantId}/circuits/{circuitPath}/settings`~~ | 🔑🏭 | ~~Update circuit settings~~ (returns 405 — not supported for HV circuits) |
 
 ---
 

@@ -4,7 +4,7 @@ Hoval Connect API Client - Python Example
 Usage:
     from hoval_client import HovalClient
     client = HovalClient("email@example.com", "password")
-    values = client.get_live_values("123456789012345", "520.50.0", "HV")
+    values = client.get_live_values("YOUR_PLANT_ID", "520.50.0", "HV")
 """
 
 import requests

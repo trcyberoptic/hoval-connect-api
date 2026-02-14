@@ -11,7 +11,10 @@ from homeassistant.core import HomeAssistant
 from . import HovalConnectConfigEntry
 
 REDACT_CONFIG = {"password", "email"}
-REDACT_COORDINATOR = {"token", "id_token", "plant_access_token"}
+REDACT_COORDINATOR = {
+    "token", "id_token", "plant_access_token",
+    "plant_id", "plantExternalId",
+}
 
 
 async def async_get_config_entry_diagnostics(

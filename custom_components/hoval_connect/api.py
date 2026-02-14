@@ -62,8 +62,7 @@ class HovalConnectApi:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as resp:
                 if resp.status in (400, 401, 403):
-                    body = await resp.text()
-                    _LOGGER.debug("IDP auth failed (HTTP %s): %s", resp.status, body)
+                    _LOGGER.debug("IDP auth failed (HTTP %s)", resp.status)
                     raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
                 resp.raise_for_status()
                 data = await resp.json()
@@ -139,20 +138,19 @@ class HovalConnectApi:
                         self._pat_cache.pop(plant_id, None)
                     raise HovalAuthError("Authentication failed")
                 if resp.status >= 400:
-                    body = await resp.text()
-                    _LOGGER.error(
-                        "API error %s %s → HTTP %s: %s", method, path, resp.status, body[:500]
+                    _LOGGER.debug(
+                        "API error %s %s → HTTP %s", method, path, resp.status
                     )
                     raise HovalApiError(
-                        f"API request failed: {method} {path}: HTTP {resp.status}"
+                        f"API request failed: HTTP {resp.status}"
                     )
                 return await resp.json()
         except (HovalAuthError, HovalApiError):
             raise
         except aiohttp.ClientError as err:
-            raise HovalApiError(f"API request failed: {method} {path}: {err}") from err
+            raise HovalApiError(f"Connection error: {err}") from err
         except Exception as err:
-            raise HovalApiError(f"Unexpected error: {method} {path}: {err}") from err
+            raise HovalApiError(f"Unexpected error: {err}") from err
 
     async def get_plants(self) -> list[dict[str, Any]]:
         """Get list of user's plants."""
@@ -221,17 +219,6 @@ class HovalConnectApi:
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
             params=params,
-        )
-
-    async def set_circuit_settings(
-        self, plant_id: str, circuit_path: str, settings: dict[str, Any]
-    ) -> Any:
-        """Update circuit settings (e.g. targetAirVolume)."""
-        return await self._request(
-            "POST",
-            f"/v3/plants/{plant_id}/circuits/{circuit_path}/settings",
-            plant_id=plant_id,
-            json_data=settings,
         )
 
     def invalidate_tokens(self) -> None:
