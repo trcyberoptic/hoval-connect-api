@@ -186,6 +186,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         continue
 
                     path = circuit["path"]
+                    _LOGGER.debug(
+                        "Circuit %s: operationMode=%r activeProgram=%r targetAirVolume=%r",
+                        path,
+                        circuit.get("operationMode"),
+                        circuit.get("activeProgram"),
+                        circuit.get("targetAirVolume"),
+                    )
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
