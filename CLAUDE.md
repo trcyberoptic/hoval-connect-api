@@ -24,13 +24,12 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy. Handles HTTP 204 No Content for PUT control endpoints.
 - `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` + `get_programs()` + `get_events()` every 60s. Skips API calls when plant is offline, invalidates PAT cache on reconnect. Provides `control_lock` (asyncio.Lock) to serialize control commands, and `resolve_fan_speed()` helper for smart fan speed resolution.
 - `config_flow.py` — UI config flow (email/password) + reauth flow
-- `climate.py` — Climate entity for HV ventilation (HVAC modes: Auto/Fan Only/Off, shows exhaust temp + humidity)
-- `fan.py` — Fan entity with continuous 0–100% speed slider (`FanEntityFeature.SET_SPEED`), turn on/off (standby)
+- `fan.py` — Fan entity: single control per circuit with 0–100% speed slider (`FanEntityFeature.SET_SPEED`), on/off toggle (standby ↔ constant mode), debounced slider input (1.5s)
 - `sensor.py` — 8 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity actual/target, active week/day program, program air volume) + 4 plant-level event sensors (latest event type/message/time, active event count)
 - `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error status with problem class)
 - `diagnostics.py` — Diagnostic data export with automatic PII redaction
 - `const.py` — Constants: API URLs, OAuth client ID, token TTLs (25min ID, 12min PAT), polling interval (60s), circuit types, operation modes
-- `__init__.py` — Entry setup, runtime data, platform forwarding (binary_sensor, climate, fan, sensor)
+- `__init__.py` — Entry setup, runtime data, platform forwarding (binary_sensor, fan, sensor)
 
 ### Entity architecture
 
@@ -38,7 +37,7 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - Device hierarchy: one parent device per plant, one child device per plant+circuit (linked via `via_device`)
 - Circuit devices identified by `{plantId}_{circuitPath}`
 - Currently supports HV (ventilation) circuits only (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
-- Climate and fan entities use `coordinator.control_lock` to serialize API control commands (prevents race conditions)
+- Fan entity uses `coordinator.control_lock` to serialize API control commands (prevents race conditions)
 - Fan speed resolution uses smart fallback chain: live airVolume → targetAirVolume → program air volume → default 40% (API rejects value=0)
 
 ## Running Examples
