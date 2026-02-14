@@ -132,14 +132,18 @@ class HovalConnectApi:
             async with self._session.request(
                 method, url, headers=headers, params=params, json=json_data
             ) as resp:
+                _LOGGER.debug(
+                    "API %s %s → HTTP %s", method, path, resp.status
+                )
                 if resp.status == 401:
                     self._id_token = None
                     if plant_id:
                         self._pat_cache.pop(plant_id, None)
                     raise HovalAuthError("Authentication failed")
                 if resp.status >= 400:
+                    body = await resp.text()
                     _LOGGER.debug(
-                        "API error %s %s → HTTP %s", method, path, resp.status
+                        "API error body: %s", body[:500]
                     )
                     raise HovalApiError(
                         f"API request failed: HTTP {resp.status}"
@@ -216,12 +220,18 @@ class HovalConnectApi:
         params: dict[str, str] | None = None
         if value is not None:
             params = {"value": str(value)}
-        return await self._request(
+        _LOGGER.debug(
+            "set_circuit_mode: plant=%s circuit=%s mode=%s value=%s",
+            plant_id, circuit_path, mode, value,
+        )
+        result = await self._request(
             "PUT",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
             params=params,
         )
+        _LOGGER.debug("set_circuit_mode: completed successfully")
+        return result
 
     def invalidate_tokens(self) -> None:
         """Force token refresh on next request."""

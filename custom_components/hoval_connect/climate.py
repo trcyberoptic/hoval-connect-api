@@ -142,6 +142,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the HVAC mode."""
+        _LOGGER.debug("async_set_hvac_mode called: %s", hvac_mode)
         mode = HVAC_MODE_TO_HOVAL.get(hvac_mode)
         if mode is None:
             _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
