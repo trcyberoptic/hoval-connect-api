@@ -17,6 +17,8 @@ from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_spe
 
 _LOGGER = logging.getLogger(__name__)
 
+DEBOUNCE_SECONDS = 1.5
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -67,6 +69,8 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             model=f"HomeVent ({circuit_data.circuit_type})",
             via_device=(DOMAIN, plant_id),
         )
+        self._debounce_task: asyncio.Task | None = None
+        self._pending_percentage: int | None = None
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -94,6 +98,9 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     @property
     def percentage(self) -> int | None:
         """Return the current speed percentage (0-100)."""
+        # Show pending value immediately for responsive UI
+        if self._pending_percentage is not None:
+            return self._pending_percentage
         circuit = self._circuit
         if circuit is None:
             return None
@@ -104,12 +111,9 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             return None
         return max(0, min(100, int(float(val))))
 
-    async def async_set_percentage(self, percentage: int) -> None:
-        """Set the speed percentage of the fan."""
-        _LOGGER.debug("async_set_percentage called: %d%%", percentage)
-        if percentage == 0:
-            await self.async_turn_off()
-            return
+    async def _send_percentage(self, percentage: int) -> None:
+        """Actually send the percentage to the API (called after debounce)."""
+        self._pending_percentage = None
         async with self.coordinator.control_lock:
             await self.coordinator.api.set_circuit_mode(
                 self._plant_id,
@@ -123,6 +127,34 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
+
+    async def _debounced_set(self, percentage: int) -> None:
+        """Wait for debounce period, then send the latest percentage."""
+        await asyncio.sleep(DEBOUNCE_SECONDS)
+        _LOGGER.debug("Debounce complete, sending %d%%", percentage)
+        await self._send_percentage(percentage)
+
+    async def async_set_percentage(self, percentage: int) -> None:
+        """Set the speed percentage of the fan (debounced)."""
+        _LOGGER.debug("async_set_percentage called: %d%%", percentage)
+        if percentage == 0:
+            # Cancel any pending debounce
+            if self._debounce_task and not self._debounce_task.done():
+                self._debounce_task.cancel()
+                self._debounce_task = None
+                self._pending_percentage = None
+            await self.async_turn_off()
+            return
+        # Store pending value and update UI immediately
+        self._pending_percentage = percentage
+        self.async_write_ha_state()
+        # Cancel previous debounce timer
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        # Start new debounce timer
+        self._debounce_task = asyncio.ensure_future(
+            self._debounced_set(percentage)
+        )
 
     async def async_turn_on(
         self,
