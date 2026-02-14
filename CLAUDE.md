@@ -69,7 +69,7 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 ## API Behavior Notes
 
 - Control endpoints return HTTP 204 No Content on success — no response body
-- `temporary-change` uses POST with `?value=` query param — sets air volume override while keeping time program active
+- `temporary-change` uses POST with `?value=&duration=` query params — sets air volume override for N minutes while keeping time program active
 - `constant` mode (PUT) returns HTTP 500 when a time program (`tteControlled`) is active — use `temporary-change` instead
 - `standby`, `manual`, `reset` use POST (no body)
 - API always reports `operationMode='REGULAR'` regardless of actual device state — optimistic override needed for standby tracking

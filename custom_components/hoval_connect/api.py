@@ -230,21 +230,22 @@ class HovalConnectApi:
         return result
 
     async def set_temporary_change(
-        self, plant_id: str, circuit_path: str, value: int
+        self, plant_id: str, circuit_path: str, value: int, duration: int = 60
     ) -> Any:
         """Set a temporary air volume override (works with active time program).
 
-        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?value={airVolume}
+        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change
+              ?value={airVolume}&duration={minutes}
         """
         _LOGGER.debug(
-            "set_temporary_change: plant=%s circuit=%s value=%s",
-            plant_id, circuit_path, value,
+            "set_temporary_change: plant=%s circuit=%s value=%s duration=%s",
+            plant_id, circuit_path, value, duration,
         )
         result = await self._request(
             "POST",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
-            params={"value": str(value)},
+            params={"value": str(value), "duration": str(duration)},
         )
         _LOGGER.debug("set_temporary_change: completed successfully")
         return result
