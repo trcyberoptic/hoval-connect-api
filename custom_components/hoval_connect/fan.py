@@ -105,6 +105,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
 
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage of the fan."""
+        _LOGGER.debug("async_set_percentage called: %d%%", percentage)
         if percentage == 0:
             await self.async_turn_off()
             return
