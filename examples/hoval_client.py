@@ -7,8 +7,9 @@ Usage:
     values = client.get_live_values("YOUR_PLANT_ID", "520.50.0", "HV")
 """
 
-import requests
 import time
+
+import requests
 
 
 class HovalClient:

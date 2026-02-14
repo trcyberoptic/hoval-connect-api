@@ -6,11 +6,10 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import HovalAuthError, HovalApiError, HovalConnectApi
+from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,7 +38,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             api = HovalConnectApi(session, user_input["email"], user_input["password"])
 
             try:
-                plants = await api.get_plants()
+                await api.get_plants()
             except HovalAuthError as err:
                 _LOGGER.warning("Hoval auth failed: %s", err)
                 errors["base"] = "invalid_auth"
