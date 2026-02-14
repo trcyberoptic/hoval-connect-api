@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry
 from .const import DOMAIN
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -30,7 +30,14 @@ class HovalSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[HovalCircuitData], Any | None]
 
 
-SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
+@dataclass(frozen=True, kw_only=True)
+class HovalPlantSensorEntityDescription(SensorEntityDescription):
+    """Describe a Hoval plant-level sensor entity."""
+
+    value_fn: Callable[[HovalPlantData], Any | None]
+
+
+CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
     HovalSensorEntityDescription(
         key="outside_temperature",
         translation_key="outside_temperature",
@@ -93,6 +100,34 @@ SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
     ),
 )
 
+PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
+    HovalPlantSensorEntityDescription(
+        key="latest_event_type",
+        translation_key="latest_event_type",
+        icon="mdi:alert-circle-outline",
+        value_fn=lambda p: p.latest_event.event_type if p.latest_event else None,
+    ),
+    HovalPlantSensorEntityDescription(
+        key="latest_event_message",
+        translation_key="latest_event_message",
+        icon="mdi:message-alert-outline",
+        value_fn=lambda p: p.latest_event.message if p.latest_event else None,
+    ),
+    HovalPlantSensorEntityDescription(
+        key="latest_event_time",
+        translation_key="latest_event_time",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda p: p.latest_event.timestamp if p.latest_event else None,
+    ),
+    HovalPlantSensorEntityDescription(
+        key="active_events",
+        translation_key="active_events",
+        icon="mdi:alert",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda p: sum(1 for e in p.events if e.is_active),
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -102,19 +137,28 @@ async def async_setup_entry(
     """Set up Hoval sensor entities."""
     coordinator = entry.runtime_data.coordinator
 
-    entities: list[HovalSensor] = []
+    entities: list[SensorEntity] = []
     for plant_id, plant_data in coordinator.data.plants.items():
+        # Circuit-level sensors
         for path, circuit in plant_data.circuits.items():
-            for description in SENSOR_DESCRIPTIONS:
+            for description in CIRCUIT_SENSOR_DESCRIPTIONS:
                 entities.append(
-                    HovalSensor(coordinator, plant_id, path, circuit, description)
+                    HovalCircuitSensor(
+                        coordinator, plant_id, path, circuit, description
+                    )
                 )
+
+        # Plant-level sensors
+        for description in PLANT_SENSOR_DESCRIPTIONS:
+            entities.append(
+                HovalPlantSensor(coordinator, plant_id, plant_data, description)
+            )
 
     async_add_entities(entities)
 
 
-class HovalSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
-    """Hoval sensor entity."""
+class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
+    """Hoval circuit sensor entity."""
 
     _attr_has_entity_name = True
     entity_description: HovalSensorEntityDescription
@@ -168,5 +212,57 @@ class HovalSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
             return str(val)
         try:
             return float(val)
+        except (ValueError, TypeError):
+            return None
+
+
+class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
+    """Hoval plant-level sensor entity."""
+
+    _attr_has_entity_name = True
+    entity_description: HovalPlantSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: HovalDataCoordinator,
+        plant_id: str,
+        plant_data: HovalPlantData,
+        description: HovalPlantSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._plant_id = plant_id
+        self._attr_unique_id = f"{plant_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, plant_id)},
+            name=f"Hoval {plant_data.name}",
+            manufacturer="Hoval",
+            model="Plant",
+        )
+
+    @property
+    def _plant(self) -> HovalPlantData | None:
+        """Get current plant data from coordinator."""
+        return self.coordinator.data.plants.get(self._plant_id)
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return super().available and self._plant is not None
+
+    @property
+    def native_value(self) -> float | str | None:
+        """Return the sensor value."""
+        plant = self._plant
+        if plant is None:
+            return None
+        val = self.entity_description.value_fn(plant)
+        if val is None:
+            return None
+        if self.entity_description.native_unit_of_measurement is None and not isinstance(val, (int, float)):
+            return str(val)
+        try:
+            return float(val) if isinstance(val, (int, float)) else val
         except (ValueError, TypeError):
             return None

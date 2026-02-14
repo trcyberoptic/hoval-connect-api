@@ -21,9 +21,10 @@ Plants and circuits are discovered automatically from your account.
 
 ### What You Get
 
-- **Climate entity** per HV (ventilation) circuit — mode control (Auto/Fan Only/Off), fan speed (20–100%), target humidity
+- **Climate entity** per HV (ventilation) circuit — mode control (Auto/Fan Only/Off), fan speed (20–100%)
 - **Sensor entities** per circuit — outside temperature, exhaust temperature, air volume, humidity, target humidity
 - **Time program sensors** — active week program, active day program, program air volume (current phase value)
+- **Plant status** — online/offline binary sensor, error binary sensor, latest event type/message/time, active event count
 - Automatic token management (ID token + Plant Access Token, refreshed transparently)
 - Polls every 60 seconds
 
@@ -33,7 +34,6 @@ Plants and circuits are discovered automatically from your account.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No weather entities.** Weather forecast data is available in the API but not exposed as HA entities.
-- **No event/notification entities.** Plant error events and notifications are not yet surfaced.
 - **No holiday mode control.**
 - **Single account only.** Each HA instance supports one Hoval Connect account.
 

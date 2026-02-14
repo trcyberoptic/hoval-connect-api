@@ -17,7 +17,7 @@ from .coordinator import HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.CLIMATE, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR]
 
 type HovalConnectConfigEntry = ConfigEntry[HovalRuntimeData]
 

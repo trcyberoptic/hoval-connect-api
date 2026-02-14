@@ -29,6 +29,14 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "plant_online": {
+        "name": "Online"
+      },
+      "plant_error": {
+        "name": "Error"
+      }
+    },
     "sensor": {
       "outside_temperature": {
         "name": "Outside temperature"
@@ -53,6 +61,18 @@
       },
       "program_air_volume": {
         "name": "Program air volume"
+      },
+      "latest_event_type": {
+        "name": "Latest event type"
+      },
+      "latest_event_message": {
+        "name": "Latest event"
+      },
+      "latest_event_time": {
+        "name": "Latest event time"
+      },
+      "active_events": {
+        "name": "Active events"
       }
     }
   }
