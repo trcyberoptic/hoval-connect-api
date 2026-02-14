@@ -219,11 +219,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                     path = circuit["path"]
                     _LOGGER.debug(
-                        "Circuit %s: operationMode=%r activeProgram=%r targetAirVolume=%r",
+                        "Circuit %s raw: %s",
                         path,
-                        circuit.get("operationMode"),
-                        circuit.get("activeProgram"),
-                        circuit.get("targetAirVolume"),
+                        {k: v for k, v in circuit.items() if k != "name"},
                     )
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
@@ -244,6 +242,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         circuit_data.live_values = {
                             v["key"]: v["value"] for v in live_values
                         }
+                        _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
                     except HovalApiError:
                         _LOGGER.debug("Live values not available for %s", path)
 
