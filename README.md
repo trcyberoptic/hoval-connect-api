@@ -306,11 +306,11 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}` | 🔑🏭 | Set constant mode (value = air volume %) |
+| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?value={airVolume}&duration={minutes}` | 🔑🏭 | Temporary air volume override (keeps time program active) |
+| ~~PUT~~ | ~~`/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}`~~ | 🔑🏭 | ~~Set constant mode~~ (HTTP 500 when time program is active — use `temporary-change` instead) |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/time-programs` | 🔑🏭 | Set time programs |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary override |
 | POST | `/v1/plants/{plantId}/circuits/{circuitPath}/reset` | 🔑🏭 | Reset to auto |
 | ~~PUT~~ | ~~`/v3/plants/{plantId}/circuits/{circuitPath}/settings`~~ | 🔑🏭 | ~~Update circuit settings~~ (returns 405 — not supported for HV circuits) |
 
