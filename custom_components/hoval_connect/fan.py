@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry
-from .const import DOMAIN, OPERATION_MODE_CONSTANT, OPERATION_MODE_STANDBY
+from .const import DOMAIN, OPERATION_MODE_STANDBY
 from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_speed
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,14 +115,10 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         """Actually send the percentage to the API (called after debounce)."""
         self._pending_percentage = None
         async with self.coordinator.control_lock:
-            await self.coordinator.api.set_circuit_mode(
+            await self.coordinator.api.set_temporary_change(
                 self._plant_id,
                 self._circuit_path,
-                OPERATION_MODE_CONSTANT,
                 value=percentage,
-            )
-            self.coordinator.set_mode_override(
-                self._circuit_path, OPERATION_MODE_CONSTANT
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)
@@ -168,14 +164,10 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             return
         async with self.coordinator.control_lock:
             value = resolve_fan_speed(self._circuit)
-            await self.coordinator.api.set_circuit_mode(
+            await self.coordinator.api.set_temporary_change(
                 self._plant_id,
                 self._circuit_path,
-                OPERATION_MODE_CONSTANT,
                 value=value,
-            )
-            self.coordinator.set_mode_override(
-                self._circuit_path, OPERATION_MODE_CONSTANT
             )
             self.async_write_ha_state()
             await asyncio.sleep(2)
