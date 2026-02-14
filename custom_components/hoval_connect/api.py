@@ -211,30 +211,42 @@ class HovalConnectApi:
         )
 
     async def set_circuit_mode(
-        self, plant_id: str, circuit_path: str, mode: str, value: int | None = None
+        self, plant_id: str, circuit_path: str, mode: str
     ) -> Any:
-        """Set circuit operation mode (constant, standby, manual, reset).
+        """Set circuit operation mode (standby, manual, reset).
 
-        The 'constant' mode requires a 'value' parameter (air volume %).
-        Uses PUT for value-based modes (constant) and POST for state
-        transitions (standby, manual, reset) based on API behavior.
+        Uses POST for state transitions.
         """
-        params: dict[str, str] | None = None
-        if value is not None:
-            params = {"value": str(value)}
-        # constant uses PUT with query param, others use POST
-        method = "PUT" if mode == "constant" else "POST"
         _LOGGER.debug(
-            "set_circuit_mode: %s plant=%s circuit=%s mode=%s value=%s",
-            method, plant_id, circuit_path, mode, value,
+            "set_circuit_mode: POST plant=%s circuit=%s mode=%s",
+            plant_id, circuit_path, mode,
         )
         result = await self._request(
-            method,
+            "POST",
             f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
             plant_id=plant_id,
-            params=params,
         )
         _LOGGER.debug("set_circuit_mode: completed successfully")
+        return result
+
+    async def set_temporary_change(
+        self, plant_id: str, circuit_path: str, value: int
+    ) -> Any:
+        """Set a temporary air volume override (works with active time program).
+
+        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?value={airVolume}
+        """
+        _LOGGER.debug(
+            "set_temporary_change: plant=%s circuit=%s value=%s",
+            plant_id, circuit_path, value,
+        )
+        result = await self._request(
+            "POST",
+            f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
+            plant_id=plant_id,
+            params={"value": str(value)},
+        )
+        _LOGGER.debug("set_temporary_change: completed successfully")
         return result
 
     def invalidate_tokens(self) -> None:

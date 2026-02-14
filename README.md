@@ -22,8 +22,8 @@ Plants and circuits are discovered automatically from your account.
 ### What You Get
 
 **Fan entity** (per HV ventilation circuit) — single control:
-- Continuous speed slider: 0–100% (sets constant mode)
-- Turn on/off toggle (standby ↔ constant mode)
+- Continuous speed slider: 0–100% (temporary override, keeps time program active)
+- Turn on/off toggle (standby mode)
 - Debounced slider input (1.5s) to prevent API rate-limiting
 
 **Sensor entities** (8 per circuit):
