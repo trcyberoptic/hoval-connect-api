@@ -6,11 +6,11 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
-from .const import DOMAIN
+from .const import CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +26,11 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hoval Connect."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Get the options flow handler."""
+        return HovalConnectOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -104,4 +109,34 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+
+class HovalConnectOptionsFlow(OptionsFlow):
+    """Handle options for Hoval Connect."""
+
+    def __init__(self, config_entry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self.config_entry.options.get(
+            CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_OVERRIDE_DURATION,
+                        default=current,
+                    ): vol.All(int, vol.Range(min=1, max=1440)),
+                }
+            ),
         )

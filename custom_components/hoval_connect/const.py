@@ -34,3 +34,7 @@ SUPPORTED_CIRCUIT_TYPES = {CIRCUIT_TYPE_HV}
 
 # Hoval operation modes
 OPERATION_MODE_STANDBY = "standby"
+
+# Options defaults
+CONF_OVERRIDE_DURATION = "override_duration"
+DEFAULT_OVERRIDE_DURATION = 60  # minutes
