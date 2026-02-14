@@ -11,6 +11,7 @@ Reverse-engineered API documentation and **Home Assistant custom integration** f
 - `README.md` — API documentation + HA integration install instructions
 - `examples/` — Standalone Python and Bash API client examples
 - `custom_components/hoval_connect/` — Home Assistant integration (HACS-compatible)
+- `docs/openapi-v3.json` — Full OpenAPI 3.1 spec (~450KB, fetched from `/v3/api-docs`)
 - `hacs.json` — HACS repository metadata
 - `.github/workflows/` — CI: HACS/Hassfest validation, Ruff linting, automated releases on tags
 - `pyproject.toml` — Ruff linter config (Python 3.12+, 100-char lines)
@@ -23,12 +24,12 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 
 - `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy. Handles HTTP 204 No Content for PUT control endpoints.
 - `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` + `get_programs()` + `get_events()` every 60s. Skips API calls when plant is offline, invalidates PAT cache on reconnect. Provides `control_lock` (asyncio.Lock) to serialize control commands, and `resolve_fan_speed()` helper for smart fan speed resolution.
-- `config_flow.py` — UI config flow (email/password) + reauth flow
+- `config_flow.py` — UI config flow (email/password) + reauth flow + options flow (override duration dropdown)
 - `fan.py` — Fan entity: single control per circuit with 0–100% speed slider (`FanEntityFeature.SET_SPEED`), on/off toggle (standby ↔ temporary-change), debounced slider input (1.5s)
 - `sensor.py` — 8 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity actual/target, active week/day program, program air volume) + 4 plant-level event sensors (latest event type/message/time, active event count)
 - `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error status with problem class)
 - `diagnostics.py` — Diagnostic data export with automatic PII redaction
-- `const.py` — Constants: API URLs, OAuth client ID, token TTLs (25min ID, 12min PAT), polling interval (60s), circuit types, operation modes
+- `const.py` — Constants: API URLs, OAuth client ID, token TTLs (25min ID, 12min PAT), polling interval (60s), circuit types, operation modes, duration enums (FOUR/MIDNIGHT)
 - `__init__.py` — Entry setup, runtime data, platform forwarding (binary_sensor, fan, sensor)
 
 ### Entity architecture
@@ -69,16 +70,22 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 ## API Behavior Notes
 
 - Control endpoints return HTTP 204 No Content on success — no response body
-- `temporary-change` uses POST with `?value={int}&duration=PT{N}M` (ISO 8601 duration) — sets air volume override while keeping time program active
+- `temporary-change` uses POST with `?duration=FOUR|MIDNIGHT&value={airVolume}` — duration is an **enum** (FOUR = 4 hours, MIDNIGHT = until midnight), NOT a free-form number. Sets air volume override while keeping time program active.
+- `temporary-change/reset` uses POST (no body) to cancel an active override
 - `constant` mode (PUT) returns HTTP 500 when a time program (`tteControlled`) is active — use `temporary-change` instead
 - `standby`, `manual`, `reset` use POST (no body)
 - API always reports `operationMode='REGULAR'` regardless of actual device state — optimistic override needed for standby tracking
 - `get_weather()` method exists in `api.py` but is not currently used by any entity
+
+## HA Compatibility Notes
+
+- `OptionsFlow.config_entry` is a **read-only property** in modern HA — do NOT assign it in `__init__`. The base class sets it automatically.
+- `async_get_options_flow()` should return the flow instance without passing `config_entry`.
 
 ## Known Gaps
 
 - Temperature history (`/v3/api/statistics/temperature/`) requires `datapoints` param — valid IDs not yet discovered
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
-- Full OpenAPI 3.1 spec available at `/v3/api-docs` (~450KB, auth required)
+- Full OpenAPI 3.1 spec saved at `docs/openapi-v3.json` (also available live at `/v3/api-docs`, no auth required)
 - Non-HV circuit types (HK, BL, WW, FRIWA, SOL, SOLB, PS) have endpoint support in the API but no HA entities yet

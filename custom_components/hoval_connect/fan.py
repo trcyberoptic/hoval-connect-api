@@ -128,6 +128,8 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 value=percentage,
                 duration=self._override_duration,
             )
+            # Clear standby override — fan is now running
+            self.coordinator.set_mode_override(self._circuit_path, "REGULAR")
             self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
@@ -178,6 +180,8 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 value=value,
                 duration=self._override_duration,
             )
+            # Clear standby override — fan is now running
+            self.coordinator.set_mode_override(self._circuit_path, "REGULAR")
             self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
