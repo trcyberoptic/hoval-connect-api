@@ -26,6 +26,17 @@ Plants and circuits are discovered automatically from your account.
 - Automatic token management (ID token + Plant Access Token, refreshed transparently)
 - Polls every 60 seconds
 
+### Known Limitations
+
+- **Only HV (ventilation) circuits** are supported. Heating (HK), boiler (BL), warm water (WW), solar (SOL), and other circuit types are not yet implemented.
+- **Fan speed shows configured target**, not the time-program-active value. The API's live values endpoint returns `targetAirVolume` rather than the current program level — investigation ongoing.
+- **No time program editing.** Time programs can be read but not modified through the integration.
+- **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
+- **No weather entities.** Weather forecast data is available in the API but not exposed as HA entities.
+- **No event/notification entities.** Plant error events and notifications are not yet surfaced.
+- **No holiday mode control.**
+- **Single account only.** Each HA instance supports one Hoval Connect account.
+
 ### Requirements
 
 - A Hoval Connect account (same credentials as the Hoval Connect mobile app)
