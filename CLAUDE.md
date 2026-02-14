@@ -24,12 +24,13 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy. Handles HTTP 204 No Content for PUT control endpoints.
 - `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → `get_live_values()` + `get_programs()` + `get_events()` every 60s. Skips API calls when plant is offline, invalidates PAT cache on reconnect.
 - `config_flow.py` — UI config flow (email/password) + reauth flow
-- `climate.py` — Climate entity for HV ventilation (HVAC modes: Auto/Fan Only/Off, fan speed 20–100% in 5 levels, shows exhaust temp + humidity)
+- `climate.py` — Climate entity for HV ventilation (HVAC modes: Auto/Fan Only/Off, shows exhaust temp + humidity)
+- `fan.py` — Fan entity with continuous 0–100% speed slider (`FanEntityFeature.SET_SPEED`), turn on/off (standby)
 - `sensor.py` — 8 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity actual/target, active week/day program, program air volume) + 4 plant-level event sensors (latest event type/message/time, active event count)
 - `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error status with problem class)
 - `diagnostics.py` — Diagnostic data export with automatic PII redaction
 - `const.py` — Constants: API URLs, OAuth client ID, token TTLs (25min ID, 12min PAT), polling interval (60s), circuit types, operation modes
-- `__init__.py` — Entry setup, runtime data, platform forwarding (climate, sensor, binary_sensor)
+- `__init__.py` — Entry setup, runtime data, platform forwarding (binary_sensor, climate, fan, sensor)
 
 ### Entity architecture
 
