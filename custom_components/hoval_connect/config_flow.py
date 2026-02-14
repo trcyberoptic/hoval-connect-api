@@ -36,7 +36,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     def async_get_options_flow(config_entry):
         """Get the options flow handler."""
-        return HovalConnectOptionsFlow(config_entry)
+        return HovalConnectOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -120,10 +120,6 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class HovalConnectOptionsFlow(OptionsFlow):
     """Handle options for Hoval Connect."""
-
-    def __init__(self, config_entry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
