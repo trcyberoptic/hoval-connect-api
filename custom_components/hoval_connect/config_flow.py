@@ -12,10 +12,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import (
     CONF_OVERRIDE_DURATION,
+    CONF_TURN_ON_MODE,
     DEFAULT_OVERRIDE_DURATION,
+    DEFAULT_TURN_ON_MODE,
     DOMAIN,
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
+    TURN_ON_RESUME,
+    TURN_ON_WEEK1,
+    TURN_ON_WEEK2,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -128,16 +133,27 @@ class HovalConnectOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.options.get(
+        current_duration = self.config_entry.options.get(
             CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION
+        )
+        current_turn_on = self.config_entry.options.get(
+            CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE
         )
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required(
+                        CONF_TURN_ON_MODE,
+                        default=current_turn_on,
+                    ): vol.In({
+                        TURN_ON_RESUME: "Resume time program",
+                        TURN_ON_WEEK1: "Activate week 1",
+                        TURN_ON_WEEK2: "Activate week 2",
+                    }),
+                    vol.Required(
                         CONF_OVERRIDE_DURATION,
-                        default=current,
+                        default=current_duration,
                     ): vol.In({
                         DURATION_FOUR_HOURS: "4 hours",
                         DURATION_MIDNIGHT: "Until midnight",

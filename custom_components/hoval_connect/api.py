@@ -269,6 +269,43 @@ class HovalConnectApi:
         _LOGGER.debug("reset_temporary_change: completed successfully")
         return result
 
+    async def reset_circuit(self, plant_id: str, circuit_path: str) -> Any:
+        """Reset a TTE-controlled circuit (resumes the active time program).
+
+        POST /v1/plants/{plantId}/circuits/{circuitPath}/reset
+        """
+        _LOGGER.debug(
+            "reset_circuit: plant=%s circuit=%s",
+            plant_id, circuit_path,
+        )
+        result = await self._request(
+            "POST",
+            f"/v1/plants/{plant_id}/circuits/{circuit_path}/reset",
+            plant_id=plant_id,
+        )
+        _LOGGER.debug("reset_circuit: completed successfully")
+        return result
+
+    async def set_program(
+        self, plant_id: str, circuit_path: str, program: str
+    ) -> Any:
+        """Activate a specific program on a circuit.
+
+        POST /v3/plants/{plantExternalId}/circuits/{circuitPath}/programs/{program}
+        Program enum: constant, ecoMode, standby, week1, week2, manual, externalConstant.
+        """
+        _LOGGER.debug(
+            "set_program: plant=%s circuit=%s program=%s",
+            plant_id, circuit_path, program,
+        )
+        result = await self._request(
+            "POST",
+            f"/v3/plants/{plant_id}/circuits/{circuit_path}/programs/{program}",
+            plant_id=plant_id,
+        )
+        _LOGGER.debug("set_program: completed successfully")
+        return result
+
     def invalidate_tokens(self) -> None:
         """Force token refresh on next request."""
         self._id_token = None

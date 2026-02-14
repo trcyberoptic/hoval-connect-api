@@ -12,8 +12,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry
-from .const import CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION, DOMAIN, OPERATION_MODE_STANDBY
-from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_speed
+from .const import (
+    CONF_OVERRIDE_DURATION,
+    CONF_TURN_ON_MODE,
+    DEFAULT_OVERRIDE_DURATION,
+    DEFAULT_TURN_ON_MODE,
+    DOMAIN,
+    OPERATION_MODE_STANDBY,
+    TURN_ON_RESUME,
+)
+from .coordinator import HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +86,11 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     def _override_duration(self) -> str:
         """Get override duration enum from options (FOUR or MIDNIGHT)."""
         return self._entry.options.get(CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION)
+
+    @property
+    def _turn_on_mode(self) -> str:
+        """Get turn-on mode from options (resume, week1, week2)."""
+        return self._entry.options.get(CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE)
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -173,13 +186,16 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             await self.async_set_percentage(percentage)
             return
         async with self.coordinator.control_lock:
-            value = resolve_fan_speed(self._circuit)
-            await self.coordinator.api.set_temporary_change(
-                self._plant_id,
-                self._circuit_path,
-                value=value,
-                duration=self._override_duration,
-            )
+            mode = self._turn_on_mode
+            if mode == TURN_ON_RESUME:
+                await self.coordinator.api.reset_circuit(
+                    self._plant_id, self._circuit_path,
+                )
+            else:
+                # week1 or week2 — activate specific program
+                await self.coordinator.api.set_program(
+                    self._plant_id, self._circuit_path, mode,
+                )
             # Clear standby override — fan is now running
             self.coordinator.set_mode_override(self._circuit_path, "REGULAR")
             self.async_write_ha_state()
