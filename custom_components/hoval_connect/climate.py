@@ -25,7 +25,7 @@ from .const import (
     OPERATION_MODE_REGULAR,
     OPERATION_MODE_STANDBY,
 )
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .coordinator import HovalCircuitData, HovalDataCoordinator, resolve_fan_speed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -154,19 +154,16 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         if mode is None:
             _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
             return
-        # 'constant' mode requires the current air volume as value
-        value = None
-        if mode == OPERATION_MODE_CONSTANT:
-            circuit = self._circuit
-            if circuit:
-                val = circuit.live_values.get("airVolume") or circuit.target_air_volume
-                value = int(float(val)) if val is not None else 40
-            else:
-                value = 40
-        await self.coordinator.api.set_circuit_mode(
-            self._plant_id, self._circuit_path, mode, value=value
-        )
-        await asyncio.sleep(2)
-        await self.coordinator.async_request_refresh()
+        async with self.coordinator.control_lock:
+            # 'constant' mode requires the current air volume as value (min 1%)
+            value = None
+            if mode == OPERATION_MODE_CONSTANT:
+                circuit = self._circuit
+                value = resolve_fan_speed(circuit)
+            await self.coordinator.api.set_circuit_mode(
+                self._plant_id, self._circuit_path, mode, value=value
+            )
+            await asyncio.sleep(2)
+            await self.coordinator.async_request_refresh()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -114,6 +115,36 @@ class HovalData:
     plants: dict[str, HovalPlantData] = field(default_factory=dict)
 
 
+DEFAULT_FAN_SPEED = 40
+
+
+def resolve_fan_speed(circuit: HovalCircuitData | None) -> int:
+    """Resolve the best fan speed value for constant mode.
+
+    Fallback chain: live airVolume → targetAirVolume → program air volume → default.
+    Always returns at least 1 (API rejects value=0).
+    """
+    if circuit is None:
+        return DEFAULT_FAN_SPEED
+    # Try live sensor value first
+    val = circuit.live_values.get("airVolume")
+    if val is not None:
+        speed = int(float(val))
+        if speed >= 1:
+            return speed
+    # Try target from circuit config
+    if circuit.target_air_volume is not None:
+        speed = int(circuit.target_air_volume)
+        if speed >= 1:
+            return speed
+    # Try the currently active time program phase value
+    if circuit.program_air_volume is not None:
+        speed = int(circuit.program_air_volume)
+        if speed >= 1:
+            return speed
+    return DEFAULT_FAN_SPEED
+
+
 class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
     """Coordinator to fetch data from Hoval Connect API."""
 
@@ -132,6 +163,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.api = api
+        self.control_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
