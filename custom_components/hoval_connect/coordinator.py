@@ -156,6 +156,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                 # Skip all API calls when plant is offline
                 if not plant_data.is_online:
+                    # Invalidate cached PAT so we get a fresh token when back
+                    self.api._pat_cache.pop(plant_id, None)
                     data.plants[plant_id] = plant_data
                     continue
 
@@ -165,6 +167,16 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 except HovalApiError:
                     _LOGGER.debug("Circuits endpoint not available for plant")
                     circuits_raw = []
+
+                _LOGGER.debug(
+                    "Fetched %d circuits (%d supported)",
+                    len(circuits_raw),
+                    sum(
+                        1 for c in circuits_raw
+                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES
+                        and c.get("selectable")
+                    ),
+                )
 
                 for circuit in circuits_raw:
                     ctype = circuit.get("type", "")
