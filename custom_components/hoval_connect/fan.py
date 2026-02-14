@@ -87,7 +87,9 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        return circuit.operation_mode != OPERATION_MODE_STANDBY
+        override = self.coordinator.get_mode_override(self._circuit_path)
+        mode = override if override is not None else circuit.operation_mode
+        return mode != OPERATION_MODE_STANDBY
 
     @property
     def percentage(self) -> int | None:
@@ -115,6 +117,10 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 OPERATION_MODE_CONSTANT,
                 value=percentage,
             )
+            self.coordinator.set_mode_override(
+                self._circuit_path, OPERATION_MODE_CONSTANT
+            )
+            self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
 
@@ -136,6 +142,10 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 OPERATION_MODE_CONSTANT,
                 value=value,
             )
+            self.coordinator.set_mode_override(
+                self._circuit_path, OPERATION_MODE_CONSTANT
+            )
+            self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
 
@@ -147,5 +157,9 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 self._circuit_path,
                 OPERATION_MODE_STANDBY,
             )
+            self.coordinator.set_mode_override(
+                self._circuit_path, OPERATION_MODE_STANDBY
+            )
+            self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()

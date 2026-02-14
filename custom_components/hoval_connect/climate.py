@@ -106,15 +106,24 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         return super().available and self._circuit is not None
 
     @property
+    def _effective_mode(self) -> str | None:
+        """Return the effective operation mode (optimistic override or API value)."""
+        override = self.coordinator.get_mode_override(self._circuit_path)
+        if override is not None:
+            return override
+        circuit = self._circuit
+        return circuit.operation_mode if circuit else None
+
+    @property
     def hvac_mode(self) -> HVACMode:
         """Return current HVAC mode."""
-        circuit = self._circuit
-        if circuit is None:
+        if self._circuit is None:
             return HVACMode.OFF
-        mapped = HOVAL_TO_HVAC_MODE.get(circuit.operation_mode)
+        mode = self._effective_mode
+        mapped = HOVAL_TO_HVAC_MODE.get(mode)
         if mapped is None:
             _LOGGER.warning(
-                "Unknown operationMode %r, defaulting to AUTO", circuit.operation_mode
+                "Unknown operationMode %r, defaulting to AUTO", mode
             )
             return HVACMode.AUTO
         return mapped
@@ -122,10 +131,9 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     @property
     def hvac_action(self) -> HVACAction | None:
         """Return current HVAC action."""
-        circuit = self._circuit
-        if circuit is None:
+        if self._circuit is None:
             return None
-        if circuit.operation_mode == OPERATION_MODE_STANDBY:
+        if self._effective_mode == OPERATION_MODE_STANDBY:
             return HVACAction.OFF
         return HVACAction.FAN
 
@@ -163,6 +171,14 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             await self.coordinator.api.set_circuit_mode(
                 self._plant_id, self._circuit_path, mode, value=value
             )
+            # Set optimistic override (API always reports REGULAR for operationMode)
+            if mode == "reset":
+                self.coordinator.set_mode_override(
+                    self._circuit_path, OPERATION_MODE_REGULAR
+                )
+            else:
+                self.coordinator.set_mode_override(self._circuit_path, mode)
+            self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
 

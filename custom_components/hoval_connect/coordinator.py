@@ -164,9 +164,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         )
         self.api = api
         self.control_lock = asyncio.Lock()
+        # Optimistic mode override per circuit (set by control actions,
+        # cleared on next poll). Key: circuit_path, value: operation mode string.
+        self._mode_override: dict[str, str] = {}
+
+    def set_mode_override(self, circuit_path: str, mode: str) -> None:
+        """Set optimistic mode override after a control action."""
+        self._mode_override[circuit_path] = mode
+
+    def get_mode_override(self, circuit_path: str) -> str | None:
+        """Get the optimistic mode override for a circuit."""
+        return self._mode_override.get(circuit_path)
 
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
+        # Clear optimistic overrides — fresh data replaces them
+        self._mode_override.clear()
         data = HovalData()
 
         try:
