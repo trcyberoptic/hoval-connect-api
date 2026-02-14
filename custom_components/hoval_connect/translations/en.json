@@ -33,9 +33,11 @@
       "init": {
         "title": "Hoval Connect Options",
         "data": {
+          "turn_on_mode": "Turn-on mode",
           "override_duration": "Temporary override duration"
         },
         "data_description": {
+          "turn_on_mode": "What happens when the fan is turned on from standby.",
           "override_duration": "How long a manual fan speed change lasts before the time program resumes."
         }
       }

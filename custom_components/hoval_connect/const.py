@@ -40,3 +40,10 @@ DURATION_FOUR_HOURS = "FOUR"
 DURATION_MIDNIGHT = "MIDNIGHT"
 CONF_OVERRIDE_DURATION = "override_duration"
 DEFAULT_OVERRIDE_DURATION = DURATION_FOUR_HOURS
+
+# Turn-on mode options (what happens when fan is turned on from standby)
+TURN_ON_RESUME = "resume"
+TURN_ON_WEEK1 = "week1"
+TURN_ON_WEEK2 = "week2"
+CONF_TURN_ON_MODE = "turn_on_mode"
+DEFAULT_TURN_ON_MODE = TURN_ON_RESUME
