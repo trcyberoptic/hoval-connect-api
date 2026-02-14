@@ -167,8 +167,17 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         if mode is None:
             _LOGGER.warning("Unsupported HVAC mode: %s", hvac_mode)
             return
+        # 'constant' mode requires the current air volume as value
+        value = None
+        if mode == OPERATION_MODE_CONSTANT:
+            circuit = self._circuit
+            if circuit:
+                val = circuit.live_values.get("airVolume") or circuit.target_air_volume
+                value = int(float(val)) if val is not None else 40
+            else:
+                value = 40
         await self.coordinator.api.set_circuit_mode(
-            self._plant_id, self._circuit_path, mode
+            self._plant_id, self._circuit_path, mode, value=value
         )
         await self.coordinator.async_request_refresh()
 
