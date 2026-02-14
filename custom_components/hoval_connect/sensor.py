@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -26,7 +27,7 @@ from .coordinator import HovalCircuitData, HovalDataCoordinator
 class HovalSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval sensor entity."""
 
-    value_fn: Callable[[HovalCircuitData], str | None]
+    value_fn: Callable[[HovalCircuitData], Any | None]
 
 
 SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
@@ -69,6 +70,26 @@ SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda c: c.live_values.get("humidityTarget"),
+    ),
+    HovalSensorEntityDescription(
+        key="active_week_program",
+        translation_key="active_week_program",
+        icon="mdi:calendar-week",
+        value_fn=lambda c: c.active_week_name,
+    ),
+    HovalSensorEntityDescription(
+        key="active_day_program",
+        translation_key="active_day_program",
+        icon="mdi:calendar-today",
+        value_fn=lambda c: c.active_day_program_name,
+    ),
+    HovalSensorEntityDescription(
+        key="program_air_volume",
+        translation_key="program_air_volume",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:fan-clock",
+        value_fn=lambda c: c.program_air_volume,
     ),
 )
 
@@ -134,7 +155,7 @@ class HovalSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         return super().available and self._circuit is not None
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | str | None:
         """Return the sensor value."""
         circuit = self._circuit
         if circuit is None:
@@ -142,6 +163,9 @@ class HovalSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(circuit)
         if val is None:
             return None
+        # String sensors (program names) return as-is
+        if self.entity_description.native_unit_of_measurement is None:
+            return str(val)
         try:
             return float(val)
         except (ValueError, TypeError):

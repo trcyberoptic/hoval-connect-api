@@ -23,13 +23,13 @@ Plants and circuits are discovered automatically from your account.
 
 - **Climate entity** per HV (ventilation) circuit — mode control (Auto/Fan Only/Off), fan speed (20–100%), target humidity
 - **Sensor entities** per circuit — outside temperature, exhaust temperature, air volume, humidity, target humidity
+- **Time program sensors** — active week program, active day program, program air volume (current phase value)
 - Automatic token management (ID token + Plant Access Token, refreshed transparently)
 - Polls every 60 seconds
 
 ### Known Limitations
 
 - **Only HV (ventilation) circuits** are supported. Heating (HK), boiler (BL), warm water (WW), solar (SOL), and other circuit types are not yet implemented.
-- **Fan speed shows configured target**, not the time-program-active value. The API's live values endpoint returns `targetAirVolume` rather than the current program level — investigation ongoing.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No weather entities.** Weather forecast data is available in the API but not exposed as HA entities.
