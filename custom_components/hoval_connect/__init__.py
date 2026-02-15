@@ -49,12 +49,11 @@ def plant_device_info(plant_data: HovalPlantData) -> DeviceInfo:
 
 
 def circuit_device_info(
-    plant_id: str, circuit_data: HovalCircuitData,
+    plant_id: str,
+    circuit_data: HovalCircuitData,
 ) -> DeviceInfo:
     """Build DeviceInfo for a circuit device."""
-    model = CIRCUIT_TYPE_NAMES.get(
-        circuit_data.circuit_type, circuit_data.circuit_type
-    )
+    model = CIRCUIT_TYPE_NAMES.get(circuit_data.circuit_type, circuit_data.circuit_type)
     return DeviceInfo(
         identifiers={(DOMAIN, f"{plant_id}_{circuit_data.path}")},
         name=f"Hoval {circuit_data.name}",
@@ -102,7 +101,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
 
 
 async def _async_options_updated(
-    hass: HomeAssistant, entry: HovalConnectConfigEntry,
+    hass: HomeAssistant,
+    entry: HovalConnectConfigEntry,
 ) -> None:
     """Handle options update — adjust polling interval without reload."""
     coordinator = entry.runtime_data.coordinator

@@ -44,9 +44,7 @@ async def async_setup_entry(
     def _on_new_circuits() -> None:
         _add_new()
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
 class HovalPlantOnline(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntity):

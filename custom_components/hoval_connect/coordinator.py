@@ -264,9 +264,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     "Fetched %d circuits (%d supported)",
                     len(circuits_raw),
                     sum(
-                        1 for c in circuits_raw
-                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES
-                        and c.get("selectable")
+                        1
+                        for c in circuits_raw
+                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES and c.get("selectable")
                     ),
                 )
 
@@ -288,7 +288,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                 # Fetch live values + programs for all circuits in parallel
                 async def _fetch_circuit(
-                    path: str, ctype: str, circuit: dict,
+                    path: str,
+                    ctype: str,
+                    circuit: dict,
                     _plant_id: str = plant_id,
                 ) -> HovalCircuitData:
                     raw_program = circuit.get("activeProgram")
@@ -316,18 +318,19 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     if need_programs:
                         prog_task = self.api.get_programs(_plant_id, path)
                         results = await asyncio.gather(
-                            live_task, prog_task, return_exceptions=True,
+                            live_task,
+                            prog_task,
+                            return_exceptions=True,
                         )
                     else:
                         live_result = await asyncio.gather(
-                            live_task, return_exceptions=True,
+                            live_task,
+                            return_exceptions=True,
                         )
                         results = [live_result[0], cached_prog[0]]
 
                     if not isinstance(results[0], BaseException):
-                        circuit_data.live_values = {
-                            v["key"]: v["value"] for v in results[0]
-                        }
+                        circuit_data.live_values = {v["key"]: v["value"] for v in results[0]}
                         _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
                     else:
                         _LOGGER.debug("Live values not available for %s", path)
@@ -337,8 +340,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         if need_programs:
                             self._program_cache[path] = (programs, time.time())
                         now = dt_util.now()
-                        week_name, day_name, phase_value = (
-                            _resolve_active_program_value(programs, now)
+                        week_name, day_name, phase_value = _resolve_active_program_value(
+                            programs, now
                         )
                         circuit_data.active_week_name = week_name
                         circuit_data.active_day_program_name = day_name
@@ -357,8 +360,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                 # Run circuits, events, and weather all in parallel
                 all_tasks = [
-                    _fetch_circuit(path, ctype, circ)
-                    for path, ctype, circ in supported_circuits
+                    _fetch_circuit(path, ctype, circ) for path, ctype, circ in supported_circuits
                 ]
                 # Append plant-level tasks (events + weather)
                 latest_idx = len(all_tasks)
@@ -369,7 +371,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 all_tasks.append(self.api.get_weather(plant_id))
 
                 all_results = await asyncio.gather(
-                    *all_tasks, return_exceptions=True,
+                    *all_tasks,
+                    return_exceptions=True,
                 )
 
                 # Process circuit results
@@ -403,23 +406,21 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 events_result = all_results[events_idx]
                 if not isinstance(events_result, BaseException) and events_result:
                     for ev in events_result[:10]:
-                        plant_data.events.append(HovalEventData(
-                            event_type=ev.get("eventType"),
-                            message=ev.get("message"),
-                            timestamp=ev.get("timestamp"),
-                            circuit_path=ev.get("circuitPath"),
-                            is_active=ev.get("isActive", False),
-                        ))
+                        plant_data.events.append(
+                            HovalEventData(
+                                event_type=ev.get("eventType"),
+                                message=ev.get("message"),
+                                timestamp=ev.get("timestamp"),
+                                circuit_path=ev.get("circuitPath"),
+                                is_active=ev.get("isActive", False),
+                            )
+                        )
                     for ev in plant_data.events:
-                        if ev.is_active and ev.event_type in (
-                            "blocking", "locking"
-                        ):
+                        if ev.is_active and ev.event_type in ("blocking", "locking"):
                             plant_data.has_error = True
                             break
                 elif isinstance(events_result, BaseException):
-                    _LOGGER.debug(
-                        "Events list not available for %s", plant_id
-                    )
+                    _LOGGER.debug("Events list not available for %s", plant_id)
 
                 # Process weather forecast
                 weather_result = all_results[weather_idx]
@@ -437,17 +438,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 data.plants[plant_id] = plant_data
 
         except HovalAuthError as err:
-            raise ConfigEntryAuthFailed(
-                "Authentication failed — check credentials"
-            ) from err
+            raise ConfigEntryAuthFailed("Authentication failed — check credentials") from err
         except HovalApiError as err:
             raise UpdateFailed("Error fetching Hoval data") from err
 
         # Detect new circuits for dynamic entity discovery
         current_circuits = {
-            f"{pid}_{path}"
-            for pid, plant in data.plants.items()
-            for path in plant.circuits
+            f"{pid}_{path}" for pid, plant in data.plants.items() for path in plant.circuits
         }
         new_circuits = current_circuits - self._known_circuits
         if self._known_circuits and new_circuits:
