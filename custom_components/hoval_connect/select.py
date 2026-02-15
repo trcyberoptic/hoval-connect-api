@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from homeassistant.components.select import SelectEntity
@@ -136,18 +135,11 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         _LOGGER.debug(
             "Setting program to %s (%s) for %s", option, api_program, self._circuit_path,
         )
-        async with self.coordinator.control_lock:
-            await self.coordinator.api.set_program(
+        mode = OPERATION_MODE_REGULAR if api_program != "standby" else "standby"
+        await self.coordinator.async_control_and_refresh(
+            self.coordinator.api.set_program(
                 self._plant_id, self._circuit_path, api_program,
-            )
-            if api_program != "standby":
-                self.coordinator.set_mode_override(
-                    self._circuit_path, OPERATION_MODE_REGULAR,
-                )
-            else:
-                self.coordinator.set_mode_override(
-                    self._circuit_path, "standby",
-                )
-            self.async_write_ha_state()
-            await asyncio.sleep(2)
-            await self.coordinator.async_request_refresh()
+            ),
+            circuit_path=self._circuit_path,
+            mode_override=mode,
+        )

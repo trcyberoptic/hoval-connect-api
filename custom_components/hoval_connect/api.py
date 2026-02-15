@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -18,6 +19,11 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Retry configuration for transient errors
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 1.0  # seconds, doubled on each retry
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class HovalAuthError(Exception):
@@ -63,16 +69,14 @@ class HovalConnectApi:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as resp:
                 if resp.status in (400, 401, 403):
-                    _LOGGER.debug("IDP auth failed (HTTP %s)", resp.status)
+                    _LOGGER.warning("IDP auth failed (HTTP %s)", resp.status)
                     raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
                 resp.raise_for_status()
                 data = await resp.json()
         except HovalAuthError:
             raise
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             raise HovalApiError(f"Connection error during authentication: {err}") from err
-        except Exception as err:
-            raise HovalApiError(f"Unexpected error during authentication: {err}") from err
 
         if "id_token" not in data:
             _LOGGER.error("IDP response missing id_token. Keys: %s", list(data.keys()))
@@ -101,7 +105,7 @@ class HovalConnectApi:
                 data = await resp.json()
         except (HovalAuthError, HovalApiError):
             raise
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             raise HovalApiError(f"Connection error fetching plant token: {err}") from err
 
         token = data["token"]
@@ -126,47 +130,74 @@ class HovalConnectApi:
         json_data: Any = None,
         _retry: bool = True,
     ) -> Any:
-        """Make an authenticated API request with automatic token retry."""
+        """Make an authenticated API request with token retry and transient error backoff."""
         headers = await self._headers(plant_id)
         url = f"{BASE_URL}{path}"
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-        try:
-            async with self._session.request(
-                method, url, headers=headers, params=params, json=json_data,
-                timeout=timeout,
-            ) as resp:
-                _LOGGER.debug(
-                    "API %s %s → HTTP %s", method, path, resp.status
-                )
-                if resp.status == 401:
-                    self._id_token = None
-                    if plant_id:
-                        self._pat_cache.pop(plant_id, None)
-                    if _retry:
-                        _LOGGER.debug("Token expired, refreshing and retrying")
-                        return await self._request(
-                            method, path, plant_id, params, json_data,
-                            _retry=False,
-                        )
-                    raise HovalAuthError("Authentication failed")
-                if resp.status >= 400:
-                    body = await resp.text()
+        for attempt in range(_MAX_RETRIES):
+            try:
+                async with self._session.request(
+                    method, url, headers=headers, params=params, json=json_data,
+                    timeout=timeout,
+                ) as resp:
                     _LOGGER.debug(
-                        "API error body: %s", body[:500]
+                        "API %s %s → HTTP %s", method, path, resp.status
                     )
-                    raise HovalApiError(
-                        f"API request failed: HTTP {resp.status}"
+                    if resp.status == 401:
+                        self._id_token = None
+                        if plant_id:
+                            self._pat_cache.pop(plant_id, None)
+                        if _retry:
+                            _LOGGER.debug("Token expired, refreshing and retrying")
+                            return await self._request(
+                                method, path, plant_id, params, json_data,
+                                _retry=False,
+                            )
+                        raise HovalAuthError("Authentication failed")
+                    if resp.status in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES - 1:
+                        delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                        _LOGGER.warning(
+                            "Transient error HTTP %s on %s %s, retrying in %.1fs (%d/%d)",
+                            resp.status, method, path, delay, attempt + 1, _MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    if resp.status >= 400:
+                        body = await resp.text()
+                        _LOGGER.debug(
+                            "API error body: %s", body[:500]
+                        )
+                        raise HovalApiError(
+                            f"API request failed: HTTP {resp.status}"
+                        )
+                    if resp.status == 204:
+                        return None
+                    return await resp.json()
+            except (HovalAuthError, HovalApiError):
+                raise
+            except TimeoutError as err:
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    _LOGGER.warning(
+                        "Request timeout on %s %s, retrying in %.1fs (%d/%d)",
+                        method, path, delay, attempt + 1, _MAX_RETRIES,
                     )
-                if resp.status == 204:
-                    return None
-                return await resp.json()
-        except (HovalAuthError, HovalApiError):
-            raise
-        except aiohttp.ClientError as err:
-            raise HovalApiError(f"Connection error: {err}") from err
-        except Exception as err:
-            raise HovalApiError(f"Unexpected error: {err}") from err
+                    await asyncio.sleep(delay)
+                    continue
+                raise HovalApiError(f"Request timeout: {err}") from err
+            except aiohttp.ClientError as err:
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    _LOGGER.warning(
+                        "Connection error on %s %s, retrying in %.1fs (%d/%d)",
+                        method, path, delay, attempt + 1, _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise HovalApiError(f"Connection error: {err}") from err
+
+        raise HovalApiError(f"Request failed after {_MAX_RETRIES} retries")
 
     async def get_plants(self) -> list[dict[str, Any]]:
         """Get list of user's plants."""
@@ -174,14 +205,9 @@ class HovalConnectApi:
 
     async def get_plant_settings(self, plant_id: str) -> dict[str, Any]:
         """Get plant settings (also refreshes PAT as side effect)."""
-        headers = await self._headers()
-        url = f"{BASE_URL}/v1/plants/{plant_id}/settings"
-        try:
-            async with self._session.get(url, headers=headers) as resp:
-                resp.raise_for_status()
-                return await resp.json()
-        except aiohttp.ClientError as err:
-            raise HovalApiError(f"Failed to get plant settings: {err}") from err
+        return await self._request(
+            "GET", f"/v1/plants/{plant_id}/settings", plant_id=plant_id
+        )
 
     async def get_circuits(self, plant_id: str) -> list[dict[str, Any]]:
         """Get all circuits for a plant."""

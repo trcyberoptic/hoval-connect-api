@@ -206,6 +206,23 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """Get the optimistic mode override for a circuit."""
         return self._mode_override.get(circuit_path)
 
+    async def async_control_and_refresh(
+        self,
+        coro: Any,
+        circuit_path: str,
+        mode_override: str,
+    ) -> None:
+        """Execute a control command with lock, optimistic state, and refresh.
+
+        Serializes the API call via control_lock, sets the optimistic mode
+        override, and triggers a coordinator refresh after a short delay.
+        """
+        async with self.control_lock:
+            await coro
+            self.set_mode_override(circuit_path, mode_override)
+            await asyncio.sleep(2)
+            await self.async_request_refresh()
+
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
         # Clear optimistic overrides — fresh data replaces them
@@ -240,7 +257,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 try:
                     circuits_raw = await self.api.get_circuits(plant_id)
                 except HovalApiError:
-                    _LOGGER.debug("Circuits endpoint not available for plant")
+                    _LOGGER.warning("Circuits endpoint not available for plant %s", plant_id)
                     circuits_raw = []
 
                 _LOGGER.debug(
@@ -338,15 +355,25 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                     return circuit_data
 
-                # Run all circuit fetches in parallel
-                circuit_results = await asyncio.gather(
-                    *[
-                        _fetch_circuit(path, ctype, circ)
-                        for path, ctype, circ in supported_circuits
-                    ],
-                    return_exceptions=True,
+                # Run circuits, events, and weather all in parallel
+                all_tasks = [
+                    _fetch_circuit(path, ctype, circ)
+                    for path, ctype, circ in supported_circuits
+                ]
+                # Append plant-level tasks (events + weather)
+                latest_idx = len(all_tasks)
+                all_tasks.append(self.api.get_latest_event(plant_id))
+                events_idx = len(all_tasks)
+                all_tasks.append(self.api.get_events(plant_id))
+                weather_idx = len(all_tasks)
+                all_tasks.append(self.api.get_weather(plant_id))
+
+                all_results = await asyncio.gather(
+                    *all_tasks, return_exceptions=True,
                 )
-                for result in circuit_results:
+
+                # Process circuit results
+                for result in all_results[:latest_idx]:
                     if isinstance(result, BaseException):
                         _LOGGER.debug("Circuit fetch failed: %s", result)
                         continue
@@ -354,35 +381,28 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         plant_data.has_error = True
                     plant_data.circuits[result.path] = result
 
-                # Fetch plant events + weather in parallel
-                latest_task = self.api.get_latest_event(plant_id)
-                events_task = self.api.get_events(plant_id)
-                weather_task = self.api.get_weather(plant_id)
-                ev_results = await asyncio.gather(
-                    latest_task, events_task, weather_task,
-                    return_exceptions=True,
-                )
-
-                if not isinstance(ev_results[0], BaseException) and ev_results[0]:
-                    latest_raw = ev_results[0]
+                # Process latest event
+                latest_result = all_results[latest_idx]
+                if not isinstance(latest_result, BaseException) and latest_result:
                     plant_data.latest_event = HovalEventData(
-                        event_type=latest_raw.get("eventType"),
-                        message=latest_raw.get("message"),
-                        timestamp=latest_raw.get("timestamp"),
-                        circuit_path=latest_raw.get("circuitPath"),
-                        is_active=latest_raw.get("isActive", False),
+                        event_type=latest_result.get("eventType"),
+                        message=latest_result.get("message"),
+                        timestamp=latest_result.get("timestamp"),
+                        circuit_path=latest_result.get("circuitPath"),
+                        is_active=latest_result.get("isActive", False),
                     )
                     _LOGGER.debug(
                         "Latest event: type=%s active=%s",
-                        latest_raw.get("eventType"),
-                        latest_raw.get("isActive"),
+                        latest_result.get("eventType"),
+                        latest_result.get("isActive"),
                     )
-                elif isinstance(ev_results[0], BaseException):
+                elif isinstance(latest_result, BaseException):
                     _LOGGER.debug("Events endpoint not available for %s", plant_id)
 
-                if not isinstance(ev_results[1], BaseException) and ev_results[1]:
-                    events_raw = ev_results[1]
-                    for ev in events_raw[:10]:
+                # Process events list
+                events_result = all_results[events_idx]
+                if not isinstance(events_result, BaseException) and events_result:
+                    for ev in events_result[:10]:
                         plant_data.events.append(HovalEventData(
                             event_type=ev.get("eventType"),
                             message=ev.get("message"),
@@ -396,23 +416,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         ):
                             plant_data.has_error = True
                             break
-                elif isinstance(ev_results[1], BaseException):
+                elif isinstance(events_result, BaseException):
                     _LOGGER.debug(
                         "Events list not available for %s", plant_id
                     )
 
-                # Weather forecast (index 2)
-                if not isinstance(ev_results[2], BaseException) and ev_results[2]:
-                    weather_list = ev_results[2]
-                    # First entry is current/nearest forecast
-                    if isinstance(weather_list, list) and weather_list:
-                        w = weather_list[0]
+                # Process weather forecast
+                weather_result = all_results[weather_idx]
+                if not isinstance(weather_result, BaseException) and weather_result:
+                    if isinstance(weather_result, list) and weather_result:
+                        w = weather_result[0]
                         plant_data.weather = HovalWeatherData(
                             weather_type=w.get("weatherType"),
                             outside_temperature=w.get("outsideTemperature"),
                             outside_temperature_min=w.get("outsideTemperatureMin"),
                         )
-                elif isinstance(ev_results[2], BaseException):
+                elif isinstance(weather_result, BaseException):
                     _LOGGER.debug("Weather not available for %s", plant_id)
 
                 data.plants[plant_id] = plant_data
