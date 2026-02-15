@@ -6,14 +6,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import HovalConnectConfigEntry
-from .const import DOMAIN
-from .coordinator import HovalDataCoordinator, HovalPlantData
+from . import HovalConnectConfigEntry, plant_device_info
+from .coordinator import SIGNAL_NEW_CIRCUITS, HovalDataCoordinator, HovalPlantData
 
 
 async def async_setup_entry(
@@ -23,13 +22,31 @@ async def async_setup_entry(
 ) -> None:
     """Set up Hoval binary sensor entities."""
     coordinator = entry.runtime_data.coordinator
+    known: set[str] = set()
 
-    entities: list[BinarySensorEntity] = []
-    for plant_id, plant_data in coordinator.data.plants.items():
-        entities.append(HovalPlantOnline(coordinator, plant_id, plant_data))
-        entities.append(HovalPlantError(coordinator, plant_id, plant_data))
+    def _add_new() -> None:
+        entities: list[BinarySensorEntity] = []
+        for plant_id, plant_data in coordinator.data.plants.items():
+            uid_online = f"{plant_id}_online"
+            uid_error = f"{plant_id}_error"
+            if uid_online not in known:
+                known.add(uid_online)
+                entities.append(HovalPlantOnline(coordinator, plant_id, plant_data))
+            if uid_error not in known:
+                known.add(uid_error)
+                entities.append(HovalPlantError(coordinator, plant_id, plant_data))
+        if entities:
+            async_add_entities(entities)
 
-    async_add_entities(entities)
+    _add_new()
+
+    @callback
+    def _on_new_circuits() -> None:
+        _add_new()
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
+    )
 
 
 class HovalPlantOnline(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntity):
@@ -49,12 +66,7 @@ class HovalPlantOnline(CoordinatorEntity[HovalDataCoordinator], BinarySensorEnti
         super().__init__(coordinator)
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_online"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
+        self._attr_device_info = plant_device_info(plant_data)
 
     @property
     def is_on(self) -> bool | None:
@@ -82,12 +94,7 @@ class HovalPlantError(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntit
         super().__init__(coordinator)
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_error"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
+        self._attr_device_info = plant_device_info(plant_data)
 
     @property
     def is_on(self) -> bool | None:
