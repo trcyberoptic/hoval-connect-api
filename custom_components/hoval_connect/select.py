@@ -17,16 +17,17 @@ from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordin
 
 _LOGGER = logging.getLogger(__name__)
 
-# Mapping: HA option key (lowercase) → API program name
-OPTION_TO_API = {
-    "week1": "week1",
-    "week2": "week2",
-    "eco_mode": "ecoMode",
-    "standby": "standby",
-    "constant": "constant",
+# API program keys in display order
+API_PROGRAMS = ["week1", "week2", "ecoMode", "standby", "constant"]
+
+# Fallback display names when API doesn't provide custom names
+DEFAULT_NAMES: dict[str, str] = {
+    "week1": "Week 1",
+    "week2": "Week 2",
+    "ecoMode": "Eco mode",
+    "standby": "Standby",
+    "constant": "Constant",
 }
-API_TO_OPTION = {v: k for k, v in OPTION_TO_API.items()}
-PROGRAM_OPTIONS = list(OPTION_TO_API.keys())
 
 
 async def async_setup_entry(
@@ -69,7 +70,6 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "program"
     _attr_icon = "mdi:format-list-bulleted"
-    _attr_options = PROGRAM_OPTIONS
 
     def __init__(
         self,
@@ -93,6 +93,30 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
             return None
         return plant.circuits.get(self._circuit_path)
 
+    def _display_name(self, api_key: str) -> str:
+        """Get display name for an API program key."""
+        circuit = self._circuit
+        if circuit and api_key in circuit.program_names:
+            return circuit.program_names[api_key]
+        return DEFAULT_NAMES.get(api_key, api_key)
+
+    def _api_key_from_display(self, display: str) -> str:
+        """Reverse-lookup: display name → API key."""
+        circuit = self._circuit
+        if circuit:
+            for key, name in circuit.program_names.items():
+                if name == display:
+                    return key
+        for key, name in DEFAULT_NAMES.items():
+            if name == display:
+                return key
+        return display
+
+    @property
+    def options(self) -> list[str]:
+        """Return list of program display names."""
+        return [self._display_name(k) for k in API_PROGRAMS]
+
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -100,15 +124,15 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """Return the currently active program."""
+        """Return the currently active program's display name."""
         circuit = self._circuit
-        if circuit is None:
+        if circuit is None or circuit.active_program is None:
             return None
-        return API_TO_OPTION.get(circuit.active_program, circuit.active_program)
+        return self._display_name(circuit.active_program)
 
     async def async_select_option(self, option: str) -> None:
         """Set the active program."""
-        api_program = OPTION_TO_API.get(option, option)
+        api_program = self._api_key_from_display(option)
         _LOGGER.debug(
             "Setting program to %s (%s) for %s", option, api_program, self._circuit_path,
         )
@@ -116,7 +140,7 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
             await self.coordinator.api.set_program(
                 self._plant_id, self._circuit_path, api_program,
             )
-            if option != "standby":
+            if api_program != "standby":
                 self.coordinator.set_mode_override(
                     self._circuit_path, OPERATION_MODE_REGULAR,
                 )
