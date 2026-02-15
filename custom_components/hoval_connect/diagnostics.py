@@ -14,6 +14,7 @@ REDACT_CONFIG = {"password", "email"}
 REDACT_COORDINATOR = {
     "token", "id_token", "plant_access_token",
     "plant_id", "plantExternalId",
+    "name", "description", "circuit_path", "message",
 }
 
 

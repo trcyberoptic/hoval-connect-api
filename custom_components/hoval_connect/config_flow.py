@@ -63,9 +63,6 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             except HovalApiError as err:
                 _LOGGER.error("Hoval API error during setup: %s", err)
                 errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception during config flow")
-                errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(user_input["email"].lower())
                 self._abort_if_unique_id_configured()
@@ -106,9 +103,6 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except HovalApiError:
                 errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected exception during reauth")
-                errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(
                     self._get_reauth_entry(),

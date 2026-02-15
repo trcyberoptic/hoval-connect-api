@@ -18,3 +18,15 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["custom_components.hoval_connect"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components/hoval_connect"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 50

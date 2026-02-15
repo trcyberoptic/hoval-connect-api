@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from homeassistant.components.climate import (
@@ -177,24 +176,22 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
         try:
-            async with self.coordinator.control_lock:
-                if hvac_mode == HVACMode.OFF:
-                    await self.coordinator.api.set_circuit_mode(
+            if hvac_mode == HVACMode.OFF:
+                await self.coordinator.async_control_and_refresh(
+                    self.coordinator.api.set_circuit_mode(
                         self._plant_id, self._circuit_path, OPERATION_MODE_STANDBY,
-                    )
-                    self.coordinator.set_mode_override(
-                        self._circuit_path, OPERATION_MODE_STANDBY,
-                    )
-                elif hvac_mode in (HVACMode.AUTO, HVACMode.HEAT):
-                    await self.coordinator.api.reset_circuit(
+                    ),
+                    circuit_path=self._circuit_path,
+                    mode_override=OPERATION_MODE_STANDBY,
+                )
+            elif hvac_mode in (HVACMode.AUTO, HVACMode.HEAT):
+                await self.coordinator.async_control_and_refresh(
+                    self.coordinator.api.reset_circuit(
                         self._plant_id, self._circuit_path,
-                    )
-                    self.coordinator.set_mode_override(
-                        self._circuit_path, OPERATION_MODE_REGULAR,
-                    )
-                self.async_write_ha_state()
-                await asyncio.sleep(2)
-                await self.coordinator.async_request_refresh()
+                    ),
+                    circuit_path=self._circuit_path,
+                    mode_override=OPERATION_MODE_REGULAR,
+                )
         except HovalApiError as err:
             raise HomeAssistantError(f"Failed to set HVAC mode: {err}") from err
 
@@ -207,18 +204,15 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION,
         )
         try:
-            async with self.coordinator.control_lock:
-                await self.coordinator.api.set_temporary_change(
+            await self.coordinator.async_control_and_refresh(
+                self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
                     value=int(temperature * 10),  # API uses tenths of degree for HK
                     duration=duration,
-                )
-                self.coordinator.set_mode_override(
-                    self._circuit_path, OPERATION_MODE_REGULAR,
-                )
-                self.async_write_ha_state()
-                await asyncio.sleep(2)
-                await self.coordinator.async_request_refresh()
+                ),
+                circuit_path=self._circuit_path,
+                mode_override=OPERATION_MODE_REGULAR,
+            )
         except HovalApiError as err:
             raise HomeAssistantError(f"Failed to set temperature: {err}") from err

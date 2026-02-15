@@ -93,11 +93,16 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._debounce_task: asyncio.Task | None = None
         self._pending_percentage: int | None = None
 
+    def _cancel_debounce(self) -> None:
+        """Cancel any pending debounce task safely."""
+        task = self._debounce_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._debounce_task = None
+
     async def async_will_remove_from_hass(self) -> None:
         """Cancel pending debounce task on removal."""
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
-            self._debounce_task = None
+        self._cancel_debounce()
         await super().async_will_remove_from_hass()
 
     @property
@@ -152,18 +157,16 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     async def _send_percentage(self, percentage: int) -> None:
         """Actually send the percentage to the API (called after debounce)."""
         self._pending_percentage = None
-        async with self.coordinator.control_lock:
-            await self.coordinator.api.set_temporary_change(
+        await self.coordinator.async_control_and_refresh(
+            self.coordinator.api.set_temporary_change(
                 self._plant_id,
                 self._circuit_path,
                 value=percentage,
                 duration=self._override_duration,
-            )
-            # Clear standby override — fan is now running
-            self.coordinator.set_mode_override(self._circuit_path, OPERATION_MODE_REGULAR)
-            self.async_write_ha_state()
-            await asyncio.sleep(2)
-            await self.coordinator.async_request_refresh()
+            ),
+            circuit_path=self._circuit_path,
+            mode_override=OPERATION_MODE_REGULAR,
+        )
 
     async def _debounced_set(self, percentage: int) -> None:
         """Wait for debounce period, then send the latest percentage."""
@@ -175,19 +178,15 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         """Set the speed percentage of the fan (debounced)."""
         _LOGGER.debug("async_set_percentage called: %d%%", percentage)
         if percentage == 0:
-            # Cancel any pending debounce
-            if self._debounce_task and not self._debounce_task.done():
-                self._debounce_task.cancel()
-                self._debounce_task = None
-                self._pending_percentage = None
+            self._cancel_debounce()
+            self._pending_percentage = None
             await self.async_turn_off()
             return
         # Store pending value and update UI immediately
         self._pending_percentage = percentage
         self.async_write_ha_state()
         # Cancel previous debounce timer
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
+        self._cancel_debounce()
         # Start new debounce timer
         self._debounce_task = self.hass.async_create_task(
             self._debounced_set(percentage)
@@ -203,34 +202,29 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         if percentage is not None:
             await self.async_set_percentage(percentage)
             return
-        async with self.coordinator.control_lock:
-            mode = self._turn_on_mode
-            if mode == TURN_ON_RESUME:
-                await self.coordinator.api.reset_circuit(
-                    self._plant_id, self._circuit_path,
-                )
-            else:
-                # week1 or week2 — activate specific program
-                await self.coordinator.api.set_program(
-                    self._plant_id, self._circuit_path, mode,
-                )
-            # Clear standby override — fan is now running
-            self.coordinator.set_mode_override(self._circuit_path, OPERATION_MODE_REGULAR)
-            self.async_write_ha_state()
-            await asyncio.sleep(2)
-            await self.coordinator.async_request_refresh()
+        mode = self._turn_on_mode
+        if mode == TURN_ON_RESUME:
+            coro = self.coordinator.api.reset_circuit(
+                self._plant_id, self._circuit_path,
+            )
+        else:
+            coro = self.coordinator.api.set_program(
+                self._plant_id, self._circuit_path, mode,
+            )
+        await self.coordinator.async_control_and_refresh(
+            coro,
+            circuit_path=self._circuit_path,
+            mode_override=OPERATION_MODE_REGULAR,
+        )
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off the fan (standby mode)."""
-        async with self.coordinator.control_lock:
-            await self.coordinator.api.set_circuit_mode(
+        await self.coordinator.async_control_and_refresh(
+            self.coordinator.api.set_circuit_mode(
                 self._plant_id,
                 self._circuit_path,
                 OPERATION_MODE_STANDBY,
-            )
-            self.coordinator.set_mode_override(
-                self._circuit_path, OPERATION_MODE_STANDBY
-            )
-            self.async_write_ha_state()
-            await asyncio.sleep(2)
-            await self.coordinator.async_request_refresh()
+            ),
+            circuit_path=self._circuit_path,
+            mode_override=OPERATION_MODE_STANDBY,
+        )
