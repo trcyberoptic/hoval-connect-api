@@ -21,36 +21,57 @@ Plants and circuits are discovered automatically from your account.
 
 ### What You Get
 
-**Fan entity** (per HV ventilation circuit) — single control:
+**Fan entity** (per HV ventilation circuit):
 - Continuous speed slider: 0–100% (temporary override, keeps time program active)
 - Turn on/off toggle (standby mode)
+- Configurable turn-on mode: resume last program, or activate week1/week2
 - Debounced slider input (1.5s) to prevent API rate-limiting
 
-**Sensor entities** (8 per circuit):
+**Climate entity** (per HK heating circuit):
+- Target temperature control
+- HVAC modes: Heat / Auto / Off (standby)
+- HVAC action reflects actual circuit status
+
+**Program select** (per HV/HK circuit):
+- Switch between week1, week2, eco mode, standby, constant
+- Shows user-defined program names from the Hoval app
+- Current program pre-selected
+
+**Sensor entities** (per circuit):
 - Outside temperature, exhaust temperature
 - Air volume, humidity (actual), humidity (target)
-- Active week program, active day program, program air volume (current time program phase)
+- Operation mode, active week program, active day program, program air volume
 
-**Plant status** (per plant):
-- Online/offline binary sensor (connectivity class)
-- Error binary sensor (problem class, detects blocking/locking events)
-- Latest event type, message, and timestamp sensors
-- Active event count sensor
+**Plant-level sensors:**
+- Weather condition and forecast temperature
+- Latest event type, message, and timestamp
+- Active event count
+
+**Binary sensors** (per plant):
+- Online/offline (connectivity class)
+- Error status (problem class, detects blocking/locking events)
 
 **Diagnostics:**
 - Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs)
 
+**Options** (configurable per integration entry):
+- Turn-on mode: resume / week1 / week2
+- Temporary override duration: 4 hours / until midnight
+- Polling interval (default: 60s)
+
 **Under the hood:**
 - 2-step token management (ID token + Plant Access Token) with TTL caching and auto-refresh
 - Skips API calls when plant is offline, invalidates token cache on reconnect
-- Polls every 60 seconds
+- Parallel API fetches for circuits, live values, programs, events, and weather
+- Program cache (5min TTL) reduces API calls
+- Dynamic entity discovery — new circuits added without restart
+- v1 API `activeProgram` values normalized to v3 enum for consistent entity state
 
 ### Known Limitations
 
-- **Only HV (ventilation) circuits** are supported. Heating (HK), boiler (BL), warm water (WW), solar (SOL), and other circuit types are not yet implemented.
+- **HV and HK circuits only.** Boiler (BL), warm water (WW), solar (SOL), and other circuit types are not yet implemented.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
-- **No weather entities.** Weather forecast data is available in the API but not exposed as HA entities.
 - **No holiday mode control.**
 - **Single account only.** Each HA instance supports one Hoval Connect account.
 
