@@ -16,8 +16,16 @@ from .coordinator import HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Programs available via the API
-PROGRAM_OPTIONS = ["week1", "week2", "ecoMode", "standby", "constant"]
+# Mapping: HA option key (lowercase) → API program name
+OPTION_TO_API = {
+    "week1": "week1",
+    "week2": "week2",
+    "eco_mode": "ecoMode",
+    "standby": "standby",
+    "constant": "constant",
+}
+API_TO_OPTION = {v: k for k, v in OPTION_TO_API.items()}
+PROGRAM_OPTIONS = list(OPTION_TO_API.keys())
 
 
 async def async_setup_entry(
@@ -79,16 +87,17 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        return circuit.active_program
+        return API_TO_OPTION.get(circuit.active_program, circuit.active_program)
 
     async def async_select_option(self, option: str) -> None:
         """Set the active program."""
+        api_program = OPTION_TO_API.get(option, option)
         _LOGGER.debug(
-            "Setting program to %s for %s", option, self._circuit_path,
+            "Setting program to %s (%s) for %s", option, api_program, self._circuit_path,
         )
         async with self.coordinator.control_lock:
             await self.coordinator.api.set_program(
-                self._plant_id, self._circuit_path, option,
+                self._plant_id, self._circuit_path, api_program,
             )
             if option != "standby":
                 self.coordinator.set_mode_override(
