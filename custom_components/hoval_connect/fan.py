@@ -48,9 +48,7 @@ async def async_setup_entry(
                 if circuit.circuit_type != CIRCUIT_TYPE_HV or uid in known:
                     continue
                 known.add(uid)
-                entities.append(
-                    HovalFan(coordinator, entry, plant_id, path, circuit)
-                )
+                entities.append(HovalFan(coordinator, entry, plant_id, path, circuit))
         if entities:
             async_add_entities(entities)
 
@@ -60,9 +58,7 @@ async def async_setup_entry(
     def _on_new_circuits() -> None:
         _add_new()
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
 class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
@@ -71,9 +67,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "ventilation"
     _attr_supported_features = (
-        FanEntityFeature.SET_SPEED
-        | FanEntityFeature.TURN_ON
-        | FanEntityFeature.TURN_OFF
+        FanEntityFeature.SET_SPEED | FanEntityFeature.TURN_ON | FanEntityFeature.TURN_OFF
     )
     _attr_speed_count = 100
 
@@ -193,9 +187,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         # Cancel previous debounce timer
         self._cancel_debounce()
         # Start new debounce timer
-        self._debounce_task = self.hass.async_create_task(
-            self._debounced_set(percentage)
-        )
+        self._debounce_task = self.hass.async_create_task(self._debounced_set(percentage))
 
     async def async_turn_on(
         self,
@@ -210,11 +202,14 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         mode = self._turn_on_mode
         if mode == TURN_ON_RESUME:
             coro = self.coordinator.api.reset_circuit(
-                self._plant_id, self._circuit_path,
+                self._plant_id,
+                self._circuit_path,
             )
         else:
             coro = self.coordinator.api.set_program(
-                self._plant_id, self._circuit_path, mode,
+                self._plant_id,
+                self._circuit_path,
+                mode,
             )
         try:
             await self.coordinator.async_control_and_refresh(

@@ -47,7 +47,9 @@ def _make_response(status: int, json_data=None, text: str = "") -> MagicMock:
     resp.raise_for_status = MagicMock()
     if status >= 400:
         resp.raise_for_status.side_effect = aiohttp.ClientResponseError(
-            request_info=MagicMock(), history=(), status=status,
+            request_info=MagicMock(),
+            history=(),
+            status=status,
         )
     # Make it work as async context manager
     resp.__aenter__ = AsyncMock(return_value=resp)

@@ -44,21 +44,27 @@ class TestResolveFanSpeed:
 
     def test_live_air_volume(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             live_values={"airVolume": "65"},
         )
         assert resolve_fan_speed(circuit) == 65
 
     def test_live_air_volume_float(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             live_values={"airVolume": "72.5"},
         )
         assert resolve_fan_speed(circuit) == 72
 
     def test_live_zero_falls_through(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             live_values={"airVolume": "0"},
             target_air_volume=50,
         )
@@ -66,27 +72,35 @@ class TestResolveFanSpeed:
 
     def test_target_air_volume_fallback(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             target_air_volume=80,
         )
         assert resolve_fan_speed(circuit) == 80
 
     def test_program_air_volume_fallback(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             program_air_volume=55.0,
         )
         assert resolve_fan_speed(circuit) == 55
 
     def test_all_none_returns_default(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
         )
         assert resolve_fan_speed(circuit) == 40
 
     def test_minimum_is_one(self):
         circuit = HovalCircuitData(
-            circuit_type="HV", path="1.2.3", name="Test",
+            circuit_type="HV",
+            path="1.2.3",
+            name="Test",
             live_values={"airVolume": "0"},
             target_air_volume=0,
             program_air_volume=0.0,
@@ -98,13 +112,23 @@ class TestResolveActiveProgramValue:
     """Tests for _resolve_active_program_value()."""
 
     def _make_programs(
-        self, phases: list[dict] | None = None, day_name: str = "Normal",
+        self,
+        phases: list[dict] | None = None,
+        day_name: str = "Normal",
     ) -> dict:
         """Build a minimal programs structure."""
         if phases is None:
             phases = [
-                {"start": {"hours": 6, "minutes": 0}, "end": {"hours": 22, "minutes": 0}, "value": 60},
-                {"start": {"hours": 22, "minutes": 0}, "end": {"hours": 23, "minutes": 59}, "value": 30},
+                {
+                    "start": {"hours": 6, "minutes": 0},
+                    "end": {"hours": 22, "minutes": 0},
+                    "value": 60,
+                },
+                {
+                    "start": {"hours": 22, "minutes": 0},
+                    "end": {"hours": 23, "minutes": 59},
+                    "value": 30,
+                },
             ]
         return {
             "week1": {
@@ -114,9 +138,17 @@ class TestResolveActiveProgramValue:
             "dayPrograms": {
                 "dayConfigurations": [
                     {"id": 1, "name": day_name, "phases": phases},
-                    {"id": 2, "name": "Weekend", "phases": [
-                        {"start": {"hours": 8, "minutes": 0}, "end": {"hours": 22, "minutes": 0}, "value": 50},
-                    ]},
+                    {
+                        "id": 2,
+                        "name": "Weekend",
+                        "phases": [
+                            {
+                                "start": {"hours": 8, "minutes": 0},
+                                "end": {"hours": 22, "minutes": 0},
+                                "value": 50,
+                            },
+                        ],
+                    },
                 ],
             },
         }

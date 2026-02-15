@@ -175,9 +175,7 @@ async def async_setup_entry(
                         continue
                     known.add(uid)
                     entities.append(
-                        HovalCircuitSensor(
-                            coordinator, plant_id, path, circuit, description
-                        )
+                        HovalCircuitSensor(coordinator, plant_id, path, circuit, description)
                     )
 
             # Plant-level sensors
@@ -186,9 +184,7 @@ async def async_setup_entry(
                 if uid in known:
                     continue
                 known.add(uid)
-                entities.append(
-                    HovalPlantSensor(coordinator, plant_id, plant_data, description)
-                )
+                entities.append(HovalPlantSensor(coordinator, plant_id, plant_data, description))
 
         if entities:
             async_add_entities(entities)
@@ -199,9 +195,7 @@ async def async_setup_entry(
     def _on_new_circuits() -> None:
         _add_new()
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
 class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
@@ -296,7 +290,9 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(plant)
         if val is None:
             return None
-        if self.entity_description.native_unit_of_measurement is None and not isinstance(val, (int, float)):
+        if self.entity_description.native_unit_of_measurement is None and not isinstance(
+            val, (int, float)
+        ):
             return str(val)
         try:
             return float(val) if isinstance(val, (int, float)) else val

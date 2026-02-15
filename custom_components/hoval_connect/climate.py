@@ -48,9 +48,7 @@ async def async_setup_entry(
                 if circuit.circuit_type != CIRCUIT_TYPE_HK or uid in known:
                     continue
                 known.add(uid)
-                entities.append(
-                    HovalClimate(coordinator, entry, plant_id, path, circuit)
-                )
+                entities.append(HovalClimate(coordinator, entry, plant_id, path, circuit))
         if entities:
             async_add_entities(entities)
 
@@ -60,9 +58,7 @@ async def async_setup_entry(
     def _on_new_circuits() -> None:
         _add_new()
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
 class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
@@ -114,7 +110,9 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         if circuit is None:
             return None
         # Try live value first, fall back to circuit data
-        val = circuit.live_values.get("actualTemperature") or circuit.live_values.get("roomTemperature")
+        val = circuit.live_values.get("actualTemperature") or circuit.live_values.get(
+            "roomTemperature"
+        )
         if val is not None:
             try:
                 return float(val)
@@ -176,7 +174,9 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             if hvac_mode == HVACMode.OFF:
                 await self.coordinator.async_control_and_refresh(
                     self.coordinator.api.set_circuit_mode(
-                        self._plant_id, self._circuit_path, OPERATION_MODE_STANDBY,
+                        self._plant_id,
+                        self._circuit_path,
+                        OPERATION_MODE_STANDBY,
                     ),
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_STANDBY,
@@ -184,7 +184,8 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             elif hvac_mode in (HVACMode.AUTO, HVACMode.HEAT):
                 await self.coordinator.async_control_and_refresh(
                     self.coordinator.api.reset_circuit(
-                        self._plant_id, self._circuit_path,
+                        self._plant_id,
+                        self._circuit_path,
                     ),
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_REGULAR,
@@ -198,7 +199,8 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         if temperature is None:
             return
         duration = self._entry.options.get(
-            CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION,
+            CONF_OVERRIDE_DURATION,
+            DEFAULT_OVERRIDE_DURATION,
         )
         try:
             await self.coordinator.async_control_and_refresh(

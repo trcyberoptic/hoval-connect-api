@@ -28,13 +28,16 @@ class HovalClient:
         if self._id_token and time.time() < self._id_token_exp - 60:
             return self._id_token
 
-        resp = requests.post(self.IDP_URL, data={
-            "grant_type": "password",
-            "client_id": self.CLIENT_ID,
-            "username": self.email,
-            "password": self.password,
-            "scope": "openid",
-        })
+        resp = requests.post(
+            self.IDP_URL,
+            data={
+                "grant_type": "password",
+                "client_id": self.CLIENT_ID,
+                "username": self.email,
+                "password": self.password,
+                "scope": "openid",
+            },
+        )
         resp.raise_for_status()
         data = resp.json()
         self._id_token = data["id_token"]
@@ -113,6 +116,7 @@ class HovalClient:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 3:
         print(f"Usage: python {sys.argv[0]} <email> <password>")
         sys.exit(1)

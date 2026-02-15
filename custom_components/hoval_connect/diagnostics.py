@@ -12,9 +12,15 @@ from . import HovalConnectConfigEntry
 
 REDACT_CONFIG = {"password", "email"}
 REDACT_COORDINATOR = {
-    "token", "id_token", "plant_access_token",
-    "plant_id", "plantExternalId",
-    "name", "description", "circuit_path", "message",
+    "token",
+    "id_token",
+    "plant_access_token",
+    "plant_id",
+    "plantExternalId",
+    "name",
+    "description",
+    "circuit_path",
+    "message",
 }
 
 
@@ -26,7 +32,5 @@ async def async_get_config_entry_diagnostics(
 
     return {
         "config_entry": async_redact_data(dict(entry.data), REDACT_CONFIG),
-        "coordinator_data": async_redact_data(
-            asdict(coordinator.data), REDACT_COORDINATOR
-        ),
+        "coordinator_data": async_redact_data(asdict(coordinator.data), REDACT_COORDINATOR),
     }

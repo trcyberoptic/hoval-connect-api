@@ -48,9 +48,7 @@ async def async_setup_entry(
                 if circuit.circuit_type not in (CIRCUIT_TYPE_HV, CIRCUIT_TYPE_HK) or uid in known:
                     continue
                 known.add(uid)
-                entities.append(
-                    HovalProgramSelect(coordinator, plant_id, path, circuit)
-                )
+                entities.append(HovalProgramSelect(coordinator, plant_id, path, circuit))
         if entities:
             async_add_entities(entities)
 
@@ -60,9 +58,7 @@ async def async_setup_entry(
     def _on_new_circuits() -> None:
         _add_new()
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
 class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
@@ -135,13 +131,18 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         """Set the active program."""
         api_program = self._api_key_from_display(option)
         _LOGGER.debug(
-            "Setting program to %s (%s) for %s", option, api_program, self._circuit_path,
+            "Setting program to %s (%s) for %s",
+            option,
+            api_program,
+            self._circuit_path,
         )
         mode = OPERATION_MODE_REGULAR if api_program != "standby" else "standby"
         try:
             await self.coordinator.async_control_and_refresh(
                 self.coordinator.api.set_program(
-                    self._plant_id, self._circuit_path, api_program,
+                    self._plant_id,
+                    self._circuit_path,
+                    api_program,
                 ),
                 circuit_path=self._circuit_path,
                 mode_override=mode,

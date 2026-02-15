@@ -138,12 +138,14 @@ class HovalConnectApi:
         for attempt in range(_MAX_RETRIES):
             try:
                 async with self._session.request(
-                    method, url, headers=headers, params=params, json=json_data,
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json_data,
                     timeout=timeout,
                 ) as resp:
-                    _LOGGER.debug(
-                        "API %s %s → HTTP %s", method, path, resp.status
-                    )
+                    _LOGGER.debug("API %s %s → HTTP %s", method, path, resp.status)
                     if resp.status == 401:
                         self._id_token = None
                         if plant_id:
@@ -151,26 +153,31 @@ class HovalConnectApi:
                         if _retry:
                             _LOGGER.debug("Token expired, refreshing and retrying")
                             return await self._request(
-                                method, path, plant_id, params, json_data,
+                                method,
+                                path,
+                                plant_id,
+                                params,
+                                json_data,
                                 _retry=False,
                             )
                         raise HovalAuthError("Authentication failed")
                     if resp.status in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES - 1:
-                        delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                        delay = _RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
                             "Transient error HTTP %s on %s %s, retrying in %.1fs (%d/%d)",
-                            resp.status, method, path, delay, attempt + 1, _MAX_RETRIES,
+                            resp.status,
+                            method,
+                            path,
+                            delay,
+                            attempt + 1,
+                            _MAX_RETRIES,
                         )
                         await asyncio.sleep(delay)
                         continue
                     if resp.status >= 400:
                         body = await resp.text()
-                        _LOGGER.debug(
-                            "API error body: %s", body[:500]
-                        )
-                        raise HovalApiError(
-                            f"API request failed: HTTP {resp.status}"
-                        )
+                        _LOGGER.debug("API error body: %s", body[:500])
+                        raise HovalApiError(f"API request failed: HTTP {resp.status}")
                     if resp.status == 204:
                         return None
                     return await resp.json()
@@ -178,20 +185,28 @@ class HovalConnectApi:
                 raise
             except TimeoutError as err:
                 if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    delay = _RETRY_BASE_DELAY * (2**attempt)
                     _LOGGER.warning(
                         "Request timeout on %s %s, retrying in %.1fs (%d/%d)",
-                        method, path, delay, attempt + 1, _MAX_RETRIES,
+                        method,
+                        path,
+                        delay,
+                        attempt + 1,
+                        _MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
                     continue
                 raise HovalApiError(f"Request timeout: {err}") from err
             except aiohttp.ClientError as err:
                 if attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    delay = _RETRY_BASE_DELAY * (2**attempt)
                     _LOGGER.warning(
                         "Connection error on %s %s, retrying in %.1fs (%d/%d)",
-                        method, path, delay, attempt + 1, _MAX_RETRIES,
+                        method,
+                        path,
+                        delay,
+                        attempt + 1,
+                        _MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -205,9 +220,7 @@ class HovalConnectApi:
 
     async def get_plant_settings(self, plant_id: str) -> dict[str, Any]:
         """Get plant settings (also refreshes PAT as side effect)."""
-        return await self._request(
-            "GET", f"/v1/plants/{plant_id}/settings", plant_id=plant_id
-        )
+        return await self._request("GET", f"/v1/plants/{plant_id}/settings", plant_id=plant_id)
 
     async def get_circuits(self, plant_id: str) -> list[dict[str, Any]]:
         """Get all circuits for a plant."""
@@ -242,20 +255,18 @@ class HovalConnectApi:
 
     async def get_weather(self, plant_id: str) -> list[dict[str, Any]]:
         """Get weather forecast for plant location."""
-        return await self._request(
-            "GET", f"/v2/api/weather/forecast/{plant_id}", plant_id=plant_id
-        )
+        return await self._request("GET", f"/v2/api/weather/forecast/{plant_id}", plant_id=plant_id)
 
-    async def set_circuit_mode(
-        self, plant_id: str, circuit_path: str, mode: str
-    ) -> Any:
+    async def set_circuit_mode(self, plant_id: str, circuit_path: str, mode: str) -> Any:
         """Set circuit operation mode (standby, manual, reset).
 
         Uses POST for state transitions.
         """
         _LOGGER.debug(
             "set_circuit_mode: POST plant=%s circuit=%s mode=%s",
-            plant_id, circuit_path, mode,
+            plant_id,
+            circuit_path,
+            mode,
         )
         result = await self._request(
             "POST",
@@ -275,7 +286,10 @@ class HovalConnectApi:
         """
         _LOGGER.debug(
             "set_temporary_change: plant=%s circuit=%s value=%s duration=%s",
-            plant_id, circuit_path, value, duration,
+            plant_id,
+            circuit_path,
+            value,
+            duration,
         )
         result = await self._request(
             "POST",
@@ -286,16 +300,15 @@ class HovalConnectApi:
         _LOGGER.debug("set_temporary_change: completed successfully")
         return result
 
-    async def reset_temporary_change(
-        self, plant_id: str, circuit_path: str
-    ) -> Any:
+    async def reset_temporary_change(self, plant_id: str, circuit_path: str) -> Any:
         """Cancel an active temporary override, resume time program.
 
         POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change/reset
         """
         _LOGGER.debug(
             "reset_temporary_change: plant=%s circuit=%s",
-            plant_id, circuit_path,
+            plant_id,
+            circuit_path,
         )
         result = await self._request(
             "POST",
@@ -312,7 +325,8 @@ class HovalConnectApi:
         """
         _LOGGER.debug(
             "reset_circuit: plant=%s circuit=%s",
-            plant_id, circuit_path,
+            plant_id,
+            circuit_path,
         )
         result = await self._request(
             "POST",
@@ -322,9 +336,7 @@ class HovalConnectApi:
         _LOGGER.debug("reset_circuit: completed successfully")
         return result
 
-    async def set_program(
-        self, plant_id: str, circuit_path: str, program: str
-    ) -> Any:
+    async def set_program(self, plant_id: str, circuit_path: str, program: str) -> Any:
         """Activate a specific program on a circuit.
 
         POST /v3/plants/{plantExternalId}/circuits/{circuitPath}/programs/{program}
@@ -332,7 +344,9 @@ class HovalConnectApi:
         """
         _LOGGER.debug(
             "set_program: plant=%s circuit=%s program=%s",
-            plant_id, circuit_path, program,
+            plant_id,
+            circuit_path,
+            program,
         )
         result = await self._request(
             "POST",

@@ -45,9 +45,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         """Get the options flow handler."""
         return HovalConnectOptionsFlow()
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -81,9 +79,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Handle reauth when tokens are rejected."""
         return await self.async_step_reauth_confirm()
 
@@ -122,9 +118,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 class HovalConnectOptionsFlow(OptionsFlow):
     """Handle options for Hoval Connect."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -132,12 +126,8 @@ class HovalConnectOptionsFlow(OptionsFlow):
         current_duration = self.config_entry.options.get(
             CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION
         )
-        current_turn_on = self.config_entry.options.get(
-            CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE
-        )
-        current_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL, 60
-        )
+        current_turn_on = self.config_entry.options.get(CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE)
+        current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL, 60)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -145,18 +135,22 @@ class HovalConnectOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_TURN_ON_MODE,
                         default=current_turn_on,
-                    ): vol.In({
-                        TURN_ON_RESUME: "Resume time program",
-                        TURN_ON_WEEK1: "Activate week 1",
-                        TURN_ON_WEEK2: "Activate week 2",
-                    }),
+                    ): vol.In(
+                        {
+                            TURN_ON_RESUME: "Resume time program",
+                            TURN_ON_WEEK1: "Activate week 1",
+                            TURN_ON_WEEK2: "Activate week 2",
+                        }
+                    ),
                     vol.Required(
                         CONF_OVERRIDE_DURATION,
                         default=current_duration,
-                    ): vol.In({
-                        DURATION_FOUR_HOURS: "4 hours",
-                        DURATION_MIDNIGHT: "Until midnight",
-                    }),
+                    ): vol.In(
+                        {
+                            DURATION_FOUR_HOURS: "4 hours",
+                            DURATION_MIDNIGHT: "Until midnight",
+                        }
+                    ),
                     vol.Required(
                         CONF_SCAN_INTERVAL,
                         default=current_interval,
