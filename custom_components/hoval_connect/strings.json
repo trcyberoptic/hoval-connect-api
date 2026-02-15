@@ -33,10 +33,14 @@
       "init": {
         "title": "Hoval Connect Options",
         "data": {
-          "override_duration": "Temporary override duration"
+          "turn_on_mode": "Turn-on mode",
+          "override_duration": "Temporary override duration",
+          "scan_interval": "Polling interval"
         },
         "data_description": {
-          "override_duration": "How long a manual fan speed change lasts before the time program resumes."
+          "turn_on_mode": "What happens when the fan is turned on from standby.",
+          "override_duration": "How long a manual fan speed change lasts before the time program resumes.",
+          "scan_interval": "How often to poll the Hoval API for updates."
         }
       }
     }
@@ -66,6 +70,9 @@
       "humidity_target": {
         "name": "Target humidity"
       },
+      "operation_mode": {
+        "name": "Operation mode"
+      },
       "active_week_program": {
         "name": "Week program"
       },
@@ -86,6 +93,24 @@
       },
       "active_events": {
         "name": "Active events"
+      },
+      "weather_condition": {
+        "name": "Weather"
+      },
+      "weather_temperature": {
+        "name": "Forecast temperature"
+      }
+    },
+    "select": {
+      "program": {
+        "name": "Program",
+        "state": {
+          "week1": "Week 1",
+          "week2": "Week 2",
+          "ecoMode": "Eco mode",
+          "standby": "Standby",
+          "constant": "Constant"
+        }
       }
     }
   }

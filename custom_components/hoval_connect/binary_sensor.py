@@ -7,12 +7,10 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import HovalConnectConfigEntry
-from .const import DOMAIN
+from . import HovalConnectConfigEntry, plant_device_info
 from .coordinator import HovalDataCoordinator, HovalPlantData
 
 
@@ -49,12 +47,7 @@ class HovalPlantOnline(CoordinatorEntity[HovalDataCoordinator], BinarySensorEnti
         super().__init__(coordinator)
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_online"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
+        self._attr_device_info = plant_device_info(plant_data)
 
     @property
     def is_on(self) -> bool | None:
@@ -82,12 +75,7 @@ class HovalPlantError(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntit
         super().__init__(coordinator)
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_error"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
+        self._attr_device_info = plant_device_info(plant_data)
 
     @property
     def is_on(self) -> bool | None:

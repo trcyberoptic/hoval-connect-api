@@ -14,6 +14,7 @@ from .const import (
     ID_TOKEN_TTL,
     IDP_URL,
     PLANT_TOKEN_TTL,
+    REQUEST_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,14 +124,17 @@ class HovalConnectApi:
         plant_id: str | None = None,
         params: dict[str, str] | None = None,
         json_data: Any = None,
+        _retry: bool = True,
     ) -> Any:
-        """Make an authenticated API request."""
+        """Make an authenticated API request with automatic token retry."""
         headers = await self._headers(plant_id)
         url = f"{BASE_URL}{path}"
+        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
         try:
             async with self._session.request(
-                method, url, headers=headers, params=params, json=json_data
+                method, url, headers=headers, params=params, json=json_data,
+                timeout=timeout,
             ) as resp:
                 _LOGGER.debug(
                     "API %s %s → HTTP %s", method, path, resp.status
@@ -139,6 +143,12 @@ class HovalConnectApi:
                     self._id_token = None
                     if plant_id:
                         self._pat_cache.pop(plant_id, None)
+                    if _retry:
+                        _LOGGER.debug("Token expired, refreshing and retrying")
+                        return await self._request(
+                            method, path, plant_id, params, json_data,
+                            _retry=False,
+                        )
                     raise HovalAuthError("Authentication failed")
                 if resp.status >= 400:
                     body = await resp.text()
@@ -305,6 +315,10 @@ class HovalConnectApi:
         )
         _LOGGER.debug("set_program: completed successfully")
         return result
+
+    def invalidate_plant_token(self, plant_id: str) -> None:
+        """Invalidate the cached PAT for a specific plant."""
+        self._pat_cache.pop(plant_id, None)
 
     def invalidate_tokens(self) -> None:
         """Force token refresh on next request."""
