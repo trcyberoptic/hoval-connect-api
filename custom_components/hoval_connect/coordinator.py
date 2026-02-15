@@ -97,6 +97,8 @@ class HovalCircuitData:
     active_week_name: str | None = None
     active_day_program_name: str | None = None
     program_air_volume: float | None = None
+    # User-defined program names: API key → display name (e.g. "week1" → "Normal")
+    program_names: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -314,6 +316,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         circuit_data.active_week_name = week_name
                         circuit_data.active_day_program_name = day_name
                         circuit_data.program_air_volume = phase_value
+                        # Extract user-defined program names
+                        w1 = programs.get("week1", {})
+                        w2 = programs.get("week2", {})
+                        if w1.get("name"):
+                            circuit_data.program_names["week1"] = w1["name"]
+                        if w2.get("name"):
+                            circuit_data.program_names["week2"] = w2["name"]
                     else:
                         _LOGGER.debug("Programs not available for %s", path)
 

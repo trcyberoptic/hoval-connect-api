@@ -113,14 +113,7 @@
     },
     "select": {
       "program": {
-        "name": "Program",
-        "state": {
-          "week1": "Week 1",
-          "week2": "Week 2",
-          "eco_mode": "Eco mode",
-          "standby": "Standby",
-          "constant": "Constant"
-        }
+        "name": "Program"
       }
     }
   }
