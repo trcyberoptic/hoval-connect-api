@@ -6,12 +6,14 @@ import asyncio
 import logging
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
 from .const import (
+    CIRCUIT_TYPE_HV,
     CONF_OVERRIDE_DURATION,
     CONF_TURN_ON_MODE,
     DEFAULT_OVERRIDE_DURATION,
@@ -20,7 +22,7 @@ from .const import (
     OPERATION_MODE_STANDBY,
     TURN_ON_RESUME,
 )
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,22 +36,38 @@ async def async_setup_entry(
 ) -> None:
     """Set up Hoval fan entities."""
     coordinator = entry.runtime_data.coordinator
+    known: set[str] = set()
 
-    entities: list[HovalFan] = []
-    for plant_id, plant_data in coordinator.data.plants.items():
-        for path, circuit in plant_data.circuits.items():
-            entities.append(
-                HovalFan(coordinator, entry, plant_id, path, circuit)
-            )
+    def _add_new() -> None:
+        entities: list[HovalFan] = []
+        for plant_id, plant_data in coordinator.data.plants.items():
+            for path, circuit in plant_data.circuits.items():
+                uid = f"{plant_id}_{path}_fan"
+                if circuit.circuit_type != CIRCUIT_TYPE_HV or uid in known:
+                    continue
+                known.add(uid)
+                entities.append(
+                    HovalFan(coordinator, entry, plant_id, path, circuit)
+                )
+        if entities:
+            async_add_entities(entities)
 
-    async_add_entities(entities)
+    _add_new()
+
+    @callback
+    def _on_new_circuits() -> None:
+        _add_new()
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
+    )
 
 
 class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     """Hoval ventilation fan entity with percentage speed control."""
 
     _attr_has_entity_name = True
-    _attr_name = "Ventilation"
+    _attr_translation_key = "ventilation"
     _attr_supported_features = (
         FanEntityFeature.SET_SPEED
         | FanEntityFeature.TURN_ON

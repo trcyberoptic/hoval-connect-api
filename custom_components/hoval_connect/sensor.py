@@ -13,12 +13,13 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
-from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
+from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -161,25 +162,46 @@ async def async_setup_entry(
 ) -> None:
     """Set up Hoval sensor entities."""
     coordinator = entry.runtime_data.coordinator
+    known: set[str] = set()
 
-    entities: list[SensorEntity] = []
-    for plant_id, plant_data in coordinator.data.plants.items():
-        # Circuit-level sensors
-        for path, circuit in plant_data.circuits.items():
-            for description in CIRCUIT_SENSOR_DESCRIPTIONS:
-                entities.append(
-                    HovalCircuitSensor(
-                        coordinator, plant_id, path, circuit, description
+    def _add_new() -> None:
+        entities: list[SensorEntity] = []
+        for plant_id, plant_data in coordinator.data.plants.items():
+            # Circuit-level sensors
+            for path, circuit in plant_data.circuits.items():
+                for description in CIRCUIT_SENSOR_DESCRIPTIONS:
+                    uid = f"{plant_id}_{path}_{description.key}"
+                    if uid in known:
+                        continue
+                    known.add(uid)
+                    entities.append(
+                        HovalCircuitSensor(
+                            coordinator, plant_id, path, circuit, description
+                        )
                     )
+
+            # Plant-level sensors
+            for description in PLANT_SENSOR_DESCRIPTIONS:
+                uid = f"{plant_id}_{description.key}"
+                if uid in known:
+                    continue
+                known.add(uid)
+                entities.append(
+                    HovalPlantSensor(coordinator, plant_id, plant_data, description)
                 )
 
-        # Plant-level sensors
-        for description in PLANT_SENSOR_DESCRIPTIONS:
-            entities.append(
-                HovalPlantSensor(coordinator, plant_id, plant_data, description)
-            )
+        if entities:
+            async_add_entities(entities)
 
-    async_add_entities(entities)
+    _add_new()
+
+    @callback
+    def _on_new_circuits() -> None:
+        _add_new()
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
+    )
 
 
 class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
