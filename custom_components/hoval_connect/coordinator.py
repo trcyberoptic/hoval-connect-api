@@ -23,6 +23,15 @@ SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
 _LOGGER = logging.getLogger(__name__)
 
+# v1 API returns different activeProgram values than v3.
+# Normalize so entities always see v3 enum keys.
+_V1_PROGRAM_MAP: dict[str, str] = {
+    "tteControlled": "week1",  # time program active (v1 doesn't say which week)
+    "timePrograms": "week1",
+    "nightReduction": "week1",
+    "dayCooling": "week1",
+}
+
 
 def _resolve_active_program_value(
     programs: dict[str, Any], now: datetime
@@ -265,12 +274,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     path: str, ctype: str, circuit: dict,
                     _plant_id: str = plant_id,
                 ) -> HovalCircuitData:
+                    raw_program = circuit.get("activeProgram")
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
                         name=circuit.get("name") or ctype,
                         operation_mode=circuit.get("operationMode"),
-                        active_program=circuit.get("activeProgram"),
+                        active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
                         target_air_volume=circuit.get("targetAirVolume"),
                         target_air_humidity=circuit.get("targetAirHumidity"),
                         is_air_quality_guided=circuit.get("isAirQualityGuided", False),

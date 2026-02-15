@@ -29,6 +29,7 @@ sys.modules["voluptuous"] = ha_mock
 
 # Now we can import the pure functions and dataclasses
 from custom_components.hoval_connect.coordinator import (  # noqa: E402
+    _V1_PROGRAM_MAP,
     HovalCircuitData,
     _resolve_active_program_value,
     resolve_fan_speed,
@@ -179,3 +180,20 @@ class TestResolveActiveProgramValue:
         now = datetime(2024, 1, 8, 22, 0)  # Exactly at phase end/next start
         week, day, value = _resolve_active_program_value(programs, now)
         assert value == 30
+
+
+class TestV1ProgramMap:
+    """Tests for _V1_PROGRAM_MAP normalization."""
+
+    def test_tte_controlled_maps_to_week1(self):
+        assert _V1_PROGRAM_MAP.get("tteControlled", "tteControlled") == "week1"
+
+    def test_time_programs_maps_to_week1(self):
+        assert _V1_PROGRAM_MAP.get("timePrograms", "timePrograms") == "week1"
+
+    def test_v3_values_pass_through(self):
+        for v3_key in ("week1", "week2", "ecoMode", "standby", "constant"):
+            assert _V1_PROGRAM_MAP.get(v3_key, v3_key) == v3_key
+
+    def test_none_passes_through(self):
+        assert _V1_PROGRAM_MAP.get(None, None) is None
