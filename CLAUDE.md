@@ -24,11 +24,11 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 ### Key files
 
 - `api.py` — Async aiohttp client: 2-step auth (ID token + Plant Access Token), auto-refresh with TTL caching, automatic token retry on 401, request timeout (30s), robust error handling with `HovalAuthError`/`HovalApiError` exception hierarchy. Handles HTTP 204 No Content for PUT control endpoints.
-- `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → parallel `get_live_values()` + `get_programs()` + `get_events()` + `get_weather()`. Skips API calls when plant is offline, invalidates PAT cache on reconnect. Program cache (5min TTL) reduces API calls. Provides `control_lock` (asyncio.Lock) to serialize control commands, and `resolve_fan_speed()` helper for smart fan speed resolution.
+- `coordinator.py` — `DataUpdateCoordinator`: polls `get_plants()` → `get_circuits()` → parallel `get_live_values()` + `get_programs()` + `get_events()` + `get_weather()`. Skips API calls when plant is offline, invalidates PAT cache on reconnect. Program cache (5min TTL) reduces API calls. Provides `control_lock` (asyncio.Lock) to serialize control commands, `resolve_fan_speed()` helper for smart fan speed resolution, and `_V1_PROGRAM_MAP` to normalize v1 `activeProgram` values (`tteControlled` → `week1`) to v3 enum keys. Emits `SIGNAL_NEW_CIRCUITS` for dynamic entity discovery.
 - `config_flow.py` — UI config flow (email/password) + reauth flow + options flow (turn-on mode, override duration, polling interval)
-- `climate.py` — Climate entity for HK heating circuits: target temperature, HVAC modes (heat/auto/off), HVAC action from circuit status
-- `fan.py` — Fan entity for HV ventilation: 0–100% speed slider (`FanEntityFeature.SET_SPEED`), on/off toggle (standby ↔ temporary-change), debounced slider input (1.5s), proper cleanup via `async_will_remove_from_hass`
-- `select.py` — Select entity for program selection (week1/week2/ecoMode/standby/constant)
+- `climate.py` — Climate entity for HK heating circuits: target temperature, HVAC modes (heat/auto/off), HVAC action from circuit status. API errors wrapped in `HomeAssistantError`. Only created for HK circuits.
+- `fan.py` — Fan entity for HV ventilation: 0–100% speed slider (`FanEntityFeature.SET_SPEED`), on/off toggle (standby ↔ temporary-change), debounced slider input (1.5s), proper cleanup via `async_will_remove_from_hass`. Only created for HV circuits.
+- `select.py` — Select entity for program selection (week1/week2/ecoMode/standby/constant). Shows user-defined program names from the API (`circuit.program_names`), falls back to `DEFAULT_NAMES`. Bidirectional mapping via `_display_name()` / `_api_key_from_display()`. Only created for HV/HK circuits.
 - `sensor.py` — 9 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity actual/target, operation mode, active week/day program, program air volume) + 6 plant-level sensors (latest event type/message/time, active event count, weather condition/temperature). Diagnostic sensors use `EntityCategory.DIAGNOSTIC`.
 - `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error status with problem class)
 - `diagnostics.py` — Diagnostic data export with automatic PII redaction
@@ -44,6 +44,9 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - Fan entity uses `coordinator.control_lock` to serialize API control commands (prevents race conditions)
 - Fan speed resolution uses smart fallback chain: live airVolume → targetAirVolume → program air volume → default 40% (API rejects value=0)
 - DeviceInfo construction centralized in `__init__.py` helper functions, used by all entity platforms
+- All entity platforms use `translation_key` for entity names (not hardcoded `_attr_name`)
+- Dynamic entity discovery: all platforms listen to `SIGNAL_NEW_CIRCUITS` dispatcher signal to add entities at runtime without restart
+- v1 API `activeProgram` values (`tteControlled`, `timePrograms`, etc.) are normalized to v3 enum keys (`week1`, `week2`, `ecoMode`, `standby`, `constant`) via `_V1_PROGRAM_MAP` in the coordinator
 
 ## Running Tests
 
@@ -85,6 +88,9 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 - `constant` mode (PUT) returns HTTP 500 when a time program (`tteControlled`) is active — use `temporary-change` instead
 - `standby`, `manual`, `reset` use POST (no body)
 - API always reports `operationMode='REGULAR'` regardless of actual device state — optimistic override needed for standby tracking
+- v1 `activeProgram` enum: `constant`, `nightReduction`, `dayCooling`, `timePrograms`, `standby`, `manual`, `externalConstant`, `tteControlled`
+- v3 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`
+- The integration fetches circuits via v1 but controls via v3 — coordinator normalizes v1 values to v3 via `_V1_PROGRAM_MAP`
 - Weather forecast available via `get_weather()` — returns condition + temperature
 
 ## HA Compatibility Notes
