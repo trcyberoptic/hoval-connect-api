@@ -134,9 +134,6 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
                 return float(val)
             except (ValueError, TypeError):
                 pass
-        # Fall back to program value (temperature for HK circuits)
-        if circuit.program_air_volume is not None:
-            return float(circuit.program_air_volume)
         return None
 
     @property

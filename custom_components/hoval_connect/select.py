@@ -6,11 +6,13 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
+from .api import HovalApiError
 from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, OPERATION_MODE_REGULAR
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
@@ -136,10 +138,13 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
             "Setting program to %s (%s) for %s", option, api_program, self._circuit_path,
         )
         mode = OPERATION_MODE_REGULAR if api_program != "standby" else "standby"
-        await self.coordinator.async_control_and_refresh(
-            self.coordinator.api.set_program(
-                self._plant_id, self._circuit_path, api_program,
-            ),
-            circuit_path=self._circuit_path,
-            mode_override=mode,
-        )
+        try:
+            await self.coordinator.async_control_and_refresh(
+                self.coordinator.api.set_program(
+                    self._plant_id, self._circuit_path, api_program,
+                ),
+                circuit_path=self._circuit_path,
+                mode_override=mode,
+            )
+        except HovalApiError as err:
+            raise HomeAssistantError(f"Failed to set program: {err}") from err

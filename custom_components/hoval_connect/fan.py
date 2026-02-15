@@ -7,11 +7,13 @@ import logging
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
+from .api import HovalApiError
 from .const import (
     CIRCUIT_TYPE_HV,
     CONF_OVERRIDE_DURATION,
@@ -157,16 +159,19 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     async def _send_percentage(self, percentage: int) -> None:
         """Actually send the percentage to the API (called after debounce)."""
         self._pending_percentage = None
-        await self.coordinator.async_control_and_refresh(
-            self.coordinator.api.set_temporary_change(
-                self._plant_id,
-                self._circuit_path,
-                value=percentage,
-                duration=self._override_duration,
-            ),
-            circuit_path=self._circuit_path,
-            mode_override=OPERATION_MODE_REGULAR,
-        )
+        try:
+            await self.coordinator.async_control_and_refresh(
+                self.coordinator.api.set_temporary_change(
+                    self._plant_id,
+                    self._circuit_path,
+                    value=percentage,
+                    duration=self._override_duration,
+                ),
+                circuit_path=self._circuit_path,
+                mode_override=OPERATION_MODE_REGULAR,
+            )
+        except HovalApiError as err:
+            raise HomeAssistantError(f"Failed to set fan speed: {err}") from err
 
     async def _debounced_set(self, percentage: int) -> None:
         """Wait for debounce period, then send the latest percentage."""
@@ -211,20 +216,26 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             coro = self.coordinator.api.set_program(
                 self._plant_id, self._circuit_path, mode,
             )
-        await self.coordinator.async_control_and_refresh(
-            coro,
-            circuit_path=self._circuit_path,
-            mode_override=OPERATION_MODE_REGULAR,
-        )
+        try:
+            await self.coordinator.async_control_and_refresh(
+                coro,
+                circuit_path=self._circuit_path,
+                mode_override=OPERATION_MODE_REGULAR,
+            )
+        except HovalApiError as err:
+            raise HomeAssistantError(f"Failed to turn on fan: {err}") from err
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off the fan (standby mode)."""
-        await self.coordinator.async_control_and_refresh(
-            self.coordinator.api.set_circuit_mode(
-                self._plant_id,
-                self._circuit_path,
-                OPERATION_MODE_STANDBY,
-            ),
-            circuit_path=self._circuit_path,
-            mode_override=OPERATION_MODE_STANDBY,
-        )
+        try:
+            await self.coordinator.async_control_and_refresh(
+                self.coordinator.api.set_circuit_mode(
+                    self._plant_id,
+                    self._circuit_path,
+                    OPERATION_MODE_STANDBY,
+                ),
+                circuit_path=self._circuit_path,
+                mode_override=OPERATION_MODE_STANDBY,
+            )
+        except HovalApiError as err:
+            raise HomeAssistantError(f"Failed to turn off fan: {err}") from err
