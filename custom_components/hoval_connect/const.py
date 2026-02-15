@@ -17,6 +17,14 @@ PLANT_TOKEN_TTL = timedelta(minutes=12)
 
 # Polling interval
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=60)
+CONF_SCAN_INTERVAL = "scan_interval"
+SCAN_INTERVAL_OPTIONS = {30: "30 seconds", 60: "60 seconds", 120: "2 minutes", 300: "5 minutes"}
+
+# Program cache TTL — programs change rarely, no need to fetch every poll
+PROGRAM_CACHE_TTL = timedelta(minutes=5)
+
+# HTTP request timeout (seconds)
+REQUEST_TIMEOUT = 30
 
 # Circuit types
 CIRCUIT_TYPE_HV = "HV"
@@ -30,9 +38,23 @@ CIRCUIT_TYPE_PS = "PS"
 CIRCUIT_TYPE_GW = "GW"
 
 # Supported circuit types for this integration
-SUPPORTED_CIRCUIT_TYPES = {CIRCUIT_TYPE_HV}
+SUPPORTED_CIRCUIT_TYPES = {CIRCUIT_TYPE_HV, CIRCUIT_TYPE_HK}
+
+# Human-readable names for circuit types
+CIRCUIT_TYPE_NAMES = {
+    CIRCUIT_TYPE_HV: "HomeVent",
+    CIRCUIT_TYPE_HK: "Heating Circuit",
+    CIRCUIT_TYPE_BL: "Boiler",
+    CIRCUIT_TYPE_WW: "Hot Water",
+    CIRCUIT_TYPE_FRIWA: "Fresh Water",
+    CIRCUIT_TYPE_SOL: "Solar",
+    CIRCUIT_TYPE_SOLB: "Solar Buffer",
+    CIRCUIT_TYPE_PS: "Pool",
+    CIRCUIT_TYPE_GW: "Gateway",
+}
 
 # Hoval operation modes
+OPERATION_MODE_REGULAR = "REGULAR"
 OPERATION_MODE_STANDBY = "standby"
 
 # Temporary change duration options (API enum)

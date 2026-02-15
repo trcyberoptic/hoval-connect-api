@@ -6,22 +6,23 @@ import asyncio
 import logging
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import HovalConnectConfigEntry
+from . import HovalConnectConfigEntry, circuit_device_info
 from .const import (
+    CIRCUIT_TYPE_HV,
     CONF_OVERRIDE_DURATION,
     CONF_TURN_ON_MODE,
     DEFAULT_OVERRIDE_DURATION,
     DEFAULT_TURN_ON_MODE,
-    DOMAIN,
+    OPERATION_MODE_REGULAR,
     OPERATION_MODE_STANDBY,
     TURN_ON_RESUME,
 )
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,22 +36,38 @@ async def async_setup_entry(
 ) -> None:
     """Set up Hoval fan entities."""
     coordinator = entry.runtime_data.coordinator
+    known: set[str] = set()
 
-    entities: list[HovalFan] = []
-    for plant_id, plant_data in coordinator.data.plants.items():
-        for path, circuit in plant_data.circuits.items():
-            entities.append(
-                HovalFan(coordinator, entry, plant_id, path, circuit)
-            )
+    def _add_new() -> None:
+        entities: list[HovalFan] = []
+        for plant_id, plant_data in coordinator.data.plants.items():
+            for path, circuit in plant_data.circuits.items():
+                uid = f"{plant_id}_{path}_fan"
+                if circuit.circuit_type != CIRCUIT_TYPE_HV or uid in known:
+                    continue
+                known.add(uid)
+                entities.append(
+                    HovalFan(coordinator, entry, plant_id, path, circuit)
+                )
+        if entities:
+            async_add_entities(entities)
 
-    async_add_entities(entities)
+    _add_new()
+
+    @callback
+    def _on_new_circuits() -> None:
+        _add_new()
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
+    )
 
 
 class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
     """Hoval ventilation fan entity with percentage speed control."""
 
     _attr_has_entity_name = True
-    _attr_name = "Ventilation"
+    _attr_translation_key = "ventilation"
     _attr_supported_features = (
         FanEntityFeature.SET_SPEED
         | FanEntityFeature.TURN_ON
@@ -72,15 +89,16 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._plant_id = plant_id
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_fan"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{plant_id}_{circuit_path}")},
-            name=f"Hoval {circuit_data.name}",
-            manufacturer="Hoval",
-            model=f"HomeVent ({circuit_data.circuit_type})",
-            via_device=(DOMAIN, plant_id),
-        )
+        self._attr_device_info = circuit_device_info(plant_id, circuit_data)
         self._debounce_task: asyncio.Task | None = None
         self._pending_percentage: int | None = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel pending debounce task on removal."""
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+            self._debounce_task = None
+        await super().async_will_remove_from_hass()
 
     @property
     def _override_duration(self) -> str:
@@ -142,7 +160,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 duration=self._override_duration,
             )
             # Clear standby override — fan is now running
-            self.coordinator.set_mode_override(self._circuit_path, "REGULAR")
+            self.coordinator.set_mode_override(self._circuit_path, OPERATION_MODE_REGULAR)
             self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
@@ -171,7 +189,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         if self._debounce_task and not self._debounce_task.done():
             self._debounce_task.cancel()
         # Start new debounce timer
-        self._debounce_task = asyncio.ensure_future(
+        self._debounce_task = self.hass.async_create_task(
             self._debounced_set(percentage)
         )
 
@@ -197,7 +215,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                     self._plant_id, self._circuit_path, mode,
                 )
             # Clear standby override — fan is now running
-            self.coordinator.set_mode_override(self._circuit_path, "REGULAR")
+            self.coordinator.set_mode_override(self._circuit_path, OPERATION_MODE_REGULAR)
             self.async_write_ha_state()
             await asyncio.sleep(2)
             await self.coordinator.async_request_refresh()
