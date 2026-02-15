@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -15,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, SUPPORTED_CIRCUIT_TYPES
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PROGRAM_CACHE_TTL, SUPPORTED_CIRCUIT_TYPES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,6 +97,15 @@ class HovalCircuitData:
 
 
 @dataclass
+class HovalWeatherData:
+    """Parsed weather forecast data for a plant."""
+
+    weather_type: str | None = None
+    outside_temperature: float | None = None
+    outside_temperature_min: float | None = None
+
+
+@dataclass
 class HovalPlantData:
     """Parsed data for a single plant."""
 
@@ -106,6 +116,7 @@ class HovalPlantData:
     circuits: dict[str, HovalCircuitData] = field(default_factory=dict)
     latest_event: HovalEventData | None = None
     events: list[HovalEventData] = field(default_factory=list)
+    weather: HovalWeatherData | None = None
 
 
 @dataclass
@@ -167,6 +178,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # Optimistic mode override per circuit (set by control actions,
         # cleared on next poll). Key: circuit_path, value: operation mode string.
         self._mode_override: dict[str, str] = {}
+        # Program cache: key=circuit_path, value=(programs_data, timestamp)
+        self._program_cache: dict[str, tuple[Any, float]] = {}
+        self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
 
     def set_mode_override(self, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -202,7 +216,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 # Skip all API calls when plant is offline
                 if not plant_data.is_online:
                     # Invalidate cached PAT so we get a fresh token when back
-                    self.api._pat_cache.pop(plant_id, None)
+                    self.api.invalidate_plant_token(plant_id)
                     data.plants[plant_id] = plant_data
                     continue
 
@@ -223,19 +237,27 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     ),
                 )
 
+                # Build list of supported circuits
+                supported_circuits: list[tuple[str, str, dict]] = []
                 for circuit in circuits_raw:
                     ctype = circuit.get("type", "")
                     if ctype not in SUPPORTED_CIRCUIT_TYPES:
                         continue
                     if not circuit.get("selectable", False):
                         continue
-
                     path = circuit["path"]
                     _LOGGER.debug(
                         "Circuit %s raw: %s",
                         path,
                         {k: v for k, v in circuit.items() if k != "name"},
                     )
+                    supported_circuits.append((path, ctype, circuit))
+
+                # Fetch live values + programs for all circuits in parallel
+                async def _fetch_circuit(
+                    path: str, ctype: str, circuit: dict,
+                    _plant_id: str = plant_id,
+                ) -> HovalCircuitData:
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
@@ -248,20 +270,38 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         has_error=circuit.get("hasError", False),
                     )
 
-                    try:
-                        live_values = await self.api.get_live_values(
-                            plant_id, path, ctype
+                    # Check program cache
+                    cached_prog = self._program_cache.get(path)
+                    need_programs = (
+                        cached_prog is None
+                        or time.time() - cached_prog[1] > self._program_cache_ttl
+                    )
+
+                    # Fetch live values (always) + programs (only if cache expired)
+                    live_task = self.api.get_live_values(_plant_id, path, ctype)
+                    if need_programs:
+                        prog_task = self.api.get_programs(_plant_id, path)
+                        results = await asyncio.gather(
+                            live_task, prog_task, return_exceptions=True,
                         )
+                    else:
+                        live_result = await asyncio.gather(
+                            live_task, return_exceptions=True,
+                        )
+                        results = [live_result[0], cached_prog[0]]
+
+                    if not isinstance(results[0], BaseException):
                         circuit_data.live_values = {
-                            v["key"]: v["value"] for v in live_values
+                            v["key"]: v["value"] for v in results[0]
                         }
                         _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
-                    except HovalApiError:
+                    else:
                         _LOGGER.debug("Live values not available for %s", path)
 
-                    # Fetch time programs to resolve currently active phase
-                    try:
-                        programs = await self.api.get_programs(plant_id, path)
+                    programs = results[1]
+                    if not isinstance(programs, BaseException):
+                        if need_programs:
+                            self._program_cache[path] = (programs, time.time())
                         now = dt_util.now()
                         week_name, day_name, phase_value = (
                             _resolve_active_program_value(programs, now)
@@ -269,56 +309,87 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         circuit_data.active_week_name = week_name
                         circuit_data.active_day_program_name = day_name
                         circuit_data.program_air_volume = phase_value
-                    except HovalApiError:
-                        _LOGGER.debug("Programs endpoint not available for %s", path)
+                    else:
+                        _LOGGER.debug("Programs not available for %s", path)
 
-                    if circuit_data.has_error:
+                    return circuit_data
+
+                # Run all circuit fetches in parallel
+                circuit_results = await asyncio.gather(
+                    *[
+                        _fetch_circuit(path, ctype, circ)
+                        for path, ctype, circ in supported_circuits
+                    ],
+                    return_exceptions=True,
+                )
+                for result in circuit_results:
+                    if isinstance(result, BaseException):
+                        _LOGGER.debug("Circuit fetch failed: %s", result)
+                        continue
+                    if result.has_error:
                         plant_data.has_error = True
+                    plant_data.circuits[result.path] = result
 
-                    plant_data.circuits[path] = circuit_data
+                # Fetch plant events + weather in parallel
+                latest_task = self.api.get_latest_event(plant_id)
+                events_task = self.api.get_events(plant_id)
+                weather_task = self.api.get_weather(plant_id)
+                ev_results = await asyncio.gather(
+                    latest_task, events_task, weather_task,
+                    return_exceptions=True,
+                )
 
-                # Fetch plant events
-                try:
-                    latest_raw = await self.api.get_latest_event(plant_id)
-                    if latest_raw:
-                        plant_data.latest_event = HovalEventData(
-                            event_type=latest_raw.get("eventType"),
-                            message=latest_raw.get("message"),
-                            timestamp=latest_raw.get("timestamp"),
-                            circuit_path=latest_raw.get("circuitPath"),
-                            is_active=latest_raw.get("isActive", False),
-                        )
-                        _LOGGER.debug(
-                            "Latest event: type=%s active=%s",
-                            latest_raw.get("eventType"),
-                            latest_raw.get("isActive"),
-                        )
-                except HovalApiError:
+                if not isinstance(ev_results[0], BaseException) and ev_results[0]:
+                    latest_raw = ev_results[0]
+                    plant_data.latest_event = HovalEventData(
+                        event_type=latest_raw.get("eventType"),
+                        message=latest_raw.get("message"),
+                        timestamp=latest_raw.get("timestamp"),
+                        circuit_path=latest_raw.get("circuitPath"),
+                        is_active=latest_raw.get("isActive", False),
+                    )
+                    _LOGGER.debug(
+                        "Latest event: type=%s active=%s",
+                        latest_raw.get("eventType"),
+                        latest_raw.get("isActive"),
+                    )
+                elif isinstance(ev_results[0], BaseException):
                     _LOGGER.debug("Events endpoint not available for %s", plant_id)
 
-                try:
-                    events_raw = await self.api.get_events(plant_id)
-                    if events_raw:
-                        # Keep only the most recent 10 events
-                        for ev in events_raw[:10]:
-                            plant_data.events.append(HovalEventData(
-                                event_type=ev.get("eventType"),
-                                message=ev.get("message"),
-                                timestamp=ev.get("timestamp"),
-                                circuit_path=ev.get("circuitPath"),
-                                is_active=ev.get("isActive", False),
-                            ))
-                        # Set has_error if any active blocking/locking event
-                        for ev in plant_data.events:
-                            if ev.is_active and ev.event_type in (
-                                "blocking", "locking"
-                            ):
-                                plant_data.has_error = True
-                                break
-                except HovalApiError:
+                if not isinstance(ev_results[1], BaseException) and ev_results[1]:
+                    events_raw = ev_results[1]
+                    for ev in events_raw[:10]:
+                        plant_data.events.append(HovalEventData(
+                            event_type=ev.get("eventType"),
+                            message=ev.get("message"),
+                            timestamp=ev.get("timestamp"),
+                            circuit_path=ev.get("circuitPath"),
+                            is_active=ev.get("isActive", False),
+                        ))
+                    for ev in plant_data.events:
+                        if ev.is_active and ev.event_type in (
+                            "blocking", "locking"
+                        ):
+                            plant_data.has_error = True
+                            break
+                elif isinstance(ev_results[1], BaseException):
                     _LOGGER.debug(
-                        "Events list endpoint not available for %s", plant_id
+                        "Events list not available for %s", plant_id
                     )
+
+                # Weather forecast (index 2)
+                if not isinstance(ev_results[2], BaseException) and ev_results[2]:
+                    weather_list = ev_results[2]
+                    # First entry is current/nearest forecast
+                    if isinstance(weather_list, list) and weather_list:
+                        w = weather_list[0]
+                        plant_data.weather = HovalWeatherData(
+                            weather_type=w.get("weatherType"),
+                            outside_temperature=w.get("outsideTemperature"),
+                            outside_temperature_min=w.get("outsideTemperatureMin"),
+                        )
+                elif isinstance(ev_results[2], BaseException):
+                    _LOGGER.debug("Weather not available for %s", plant_id)
 
                 data.plants[plant_id] = plant_data
 

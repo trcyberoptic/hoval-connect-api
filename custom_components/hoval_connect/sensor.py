@@ -12,14 +12,12 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import HovalConnectConfigEntry
-from .const import DOMAIN
+from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
 from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
@@ -79,15 +77,24 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         value_fn=lambda c: c.live_values.get("humidityTarget"),
     ),
     HovalSensorEntityDescription(
+        key="operation_mode",
+        translation_key="operation_mode",
+        icon="mdi:cog",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c: c.operation_mode,
+    ),
+    HovalSensorEntityDescription(
         key="active_week_program",
         translation_key="active_week_program",
         icon="mdi:calendar-week",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.active_week_name,
     ),
     HovalSensorEntityDescription(
         key="active_day_program",
         translation_key="active_day_program",
         icon="mdi:calendar-today",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.active_day_program_name,
     ),
     HovalSensorEntityDescription(
@@ -96,6 +103,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:fan-clock",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.program_air_volume,
     ),
 )
@@ -105,18 +113,21 @@ PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
         key="latest_event_type",
         translation_key="latest_event_type",
         icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda p: p.latest_event.event_type if p.latest_event else None,
     ),
     HovalPlantSensorEntityDescription(
         key="latest_event_message",
         translation_key="latest_event_message",
         icon="mdi:message-alert-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda p: p.latest_event.message if p.latest_event else None,
     ),
     HovalPlantSensorEntityDescription(
         key="latest_event_time",
         translation_key="latest_event_time",
         device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda p: p.latest_event.timestamp if p.latest_event else None,
     ),
     HovalPlantSensorEntityDescription(
@@ -125,6 +136,20 @@ PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
         icon="mdi:alert",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda p: sum(1 for e in p.events if e.is_active),
+    ),
+    HovalPlantSensorEntityDescription(
+        key="weather_condition",
+        translation_key="weather_condition",
+        icon="mdi:weather-partly-cloudy",
+        value_fn=lambda p: p.weather.weather_type if p.weather else None,
+    ),
+    HovalPlantSensorEntityDescription(
+        key="weather_temperature",
+        translation_key="weather_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda p: p.weather.outside_temperature if p.weather else None,
     ),
 )
 
@@ -177,13 +202,7 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         self._plant_id = plant_id
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{plant_id}_{circuit_path}")},
-            name=f"Hoval {circuit_data.name}",
-            manufacturer="Hoval",
-            model=f"HomeVent ({circuit_data.circuit_type})",
-            via_device=(DOMAIN, plant_id),
-        )
+        self._attr_device_info = circuit_device_info(plant_id, circuit_data)
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -207,7 +226,7 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(circuit)
         if val is None:
             return None
-        # String sensors (program names) return as-is
+        # String sensors (program names, operation mode) return as-is
         if self.entity_description.native_unit_of_measurement is None:
             return str(val)
         try:
@@ -234,12 +253,7 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         self.entity_description = description
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
+        self._attr_device_info = plant_device_info(plant_data)
 
     @property
     def _plant(self) -> HovalPlantData | None:

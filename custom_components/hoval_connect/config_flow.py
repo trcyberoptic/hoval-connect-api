@@ -12,12 +12,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import (
     CONF_OVERRIDE_DURATION,
+    CONF_SCAN_INTERVAL,
     CONF_TURN_ON_MODE,
     DEFAULT_OVERRIDE_DURATION,
     DEFAULT_TURN_ON_MODE,
     DOMAIN,
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
+    SCAN_INTERVAL_OPTIONS,
     TURN_ON_RESUME,
     TURN_ON_WEEK1,
     TURN_ON_WEEK2,
@@ -139,6 +141,9 @@ class HovalConnectOptionsFlow(OptionsFlow):
         current_turn_on = self.config_entry.options.get(
             CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE
         )
+        current_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL, 60
+        )
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -158,6 +163,10 @@ class HovalConnectOptionsFlow(OptionsFlow):
                         DURATION_FOUR_HOURS: "4 hours",
                         DURATION_MIDNIGHT: "Until midnight",
                     }),
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=current_interval,
+                    ): vol.In(SCAN_INTERVAL_OPTIONS),
                 }
             ),
         )
