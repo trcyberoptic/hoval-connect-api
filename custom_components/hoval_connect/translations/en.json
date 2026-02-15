@@ -101,6 +101,16 @@
         "name": "Forecast temperature"
       }
     },
+    "climate": {
+      "heating": {
+        "name": "Heating"
+      }
+    },
+    "fan": {
+      "ventilation": {
+        "name": "Ventilation"
+      }
+    },
     "select": {
       "program": {
         "name": "Program",

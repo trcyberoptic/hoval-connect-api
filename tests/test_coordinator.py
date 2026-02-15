@@ -21,6 +21,7 @@ sys.modules["homeassistant.helpers"] = ha_mock
 sys.modules["homeassistant.helpers.update_coordinator"] = ha_mock
 sys.modules["homeassistant.helpers.aiohttp_client"] = ha_mock
 sys.modules["homeassistant.helpers.device_registry"] = ha_mock
+sys.modules["homeassistant.helpers.dispatcher"] = ha_mock
 sys.modules["homeassistant.util"] = ha_mock
 sys.modules["homeassistant.util.dt"] = ha_mock
 sys.modules["aiohttp"] = ha_mock

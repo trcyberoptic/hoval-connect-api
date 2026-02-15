@@ -12,11 +12,14 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PROGRAM_CACHE_TTL, SUPPORTED_CIRCUIT_TYPES
+
+SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -181,6 +184,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # Program cache: key=circuit_path, value=(programs_data, timestamp)
         self._program_cache: dict[str, tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
+        # Track known circuits for dynamic entity discovery
+        self._known_circuits: set[str] = set()
 
     def set_mode_override(self, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -399,5 +404,17 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             ) from err
         except HovalApiError as err:
             raise UpdateFailed("Error fetching Hoval data") from err
+
+        # Detect new circuits for dynamic entity discovery
+        current_circuits = {
+            f"{pid}_{path}"
+            for pid, plant in data.plants.items()
+            for path in plant.circuits
+        }
+        new_circuits = current_circuits - self._known_circuits
+        if self._known_circuits and new_circuits:
+            _LOGGER.info("New circuits discovered: %s", new_circuits)
+            async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)
+        self._known_circuits = current_circuits
 
         return data

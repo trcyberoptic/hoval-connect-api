@@ -6,13 +6,14 @@ import asyncio
 import logging
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
-from .const import OPERATION_MODE_REGULAR
-from .coordinator import HovalCircuitData, HovalDataCoordinator
+from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, OPERATION_MODE_REGULAR
+from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,15 +36,31 @@ async def async_setup_entry(
 ) -> None:
     """Set up Hoval select entities."""
     coordinator = entry.runtime_data.coordinator
+    known: set[str] = set()
 
-    entities: list[HovalProgramSelect] = []
-    for plant_id, plant_data in coordinator.data.plants.items():
-        for path, circuit in plant_data.circuits.items():
-            entities.append(
-                HovalProgramSelect(coordinator, plant_id, path, circuit)
-            )
+    def _add_new() -> None:
+        entities: list[HovalProgramSelect] = []
+        for plant_id, plant_data in coordinator.data.plants.items():
+            for path, circuit in plant_data.circuits.items():
+                uid = f"{plant_id}_{path}_program"
+                if circuit.circuit_type not in (CIRCUIT_TYPE_HV, CIRCUIT_TYPE_HK) or uid in known:
+                    continue
+                known.add(uid)
+                entities.append(
+                    HovalProgramSelect(coordinator, plant_id, path, circuit)
+                )
+        if entities:
+            async_add_entities(entities)
 
-    async_add_entities(entities)
+    _add_new()
+
+    @callback
+    def _on_new_circuits() -> None:
+        _add_new()
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits)
+    )
 
 
 class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
