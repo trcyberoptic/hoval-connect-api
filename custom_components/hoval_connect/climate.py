@@ -152,7 +152,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             return HVACMode.OFF
         # If a time program is active, show as AUTO
         prog = circuit.active_program
-        if prog in ("week1", "week2", "ecoMode", "tteControlled", "timePrograms"):
+        if prog in ("week1", "week2", "ecoMode"):
             return HVACMode.AUTO
         return HVACMode.HEAT
 
