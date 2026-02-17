@@ -49,5 +49,4 @@ class TestRedactionSets:
         """Verify that names/descriptions that could identify the user are redacted."""
         assert "name" in REDACT_COORDINATOR
         assert "description" in REDACT_COORDINATOR
-        assert "circuit_path" in REDACT_COORDINATOR
-        assert "message" in REDACT_COORDINATOR
+        assert "source_path" in REDACT_COORDINATOR

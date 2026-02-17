@@ -30,7 +30,7 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - `fan.py` — Fan entity for HV ventilation: 0–100% speed slider (`FanEntityFeature.SET_SPEED`), on/off toggle (standby ↔ temporary-change), debounced slider input (1.5s), proper cleanup via `async_will_remove_from_hass`. Only created for HV circuits.
 - `select.py` — Select entity for program selection (week1/week2/ecoMode/standby/constant). Shows user-defined program names from the API (`circuit.program_names`), falls back to `DEFAULT_NAMES`. Bidirectional mapping via `_display_name()` / `_api_key_from_display()`. Only created for HV/HK circuits.
 - `sensor.py` — 9 sensor entities per circuit (outside temp, exhaust temp, air volume, humidity actual/target, operation mode, active week/day program, program air volume) + 6 plant-level sensors (latest event type/message/time, active event count, weather condition/temperature). Diagnostic sensors use `EntityCategory.DIAGNOSTIC`.
-- `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error status with problem class)
+- `binary_sensor.py` — 2 binary sensors per plant (online status with connectivity class, error/warning status with problem class — triggers on active blocking/locking/warning events)
 - `diagnostics.py` — Diagnostic data export with automatic PII redaction
 - `const.py` — Constants: API URLs, OAuth client ID, token TTLs (25min ID, 12min PAT), polling interval (configurable, default 60s), circuit types + human-readable names, operation modes, duration enums (FOUR/MIDNIGHT)
 - `__init__.py` — Entry setup, runtime data, platform forwarding (binary_sensor, climate, fan, select, sensor), DeviceInfo helpers (`plant_device_info`, `circuit_device_info`), options update listener for dynamic polling interval changes
@@ -92,6 +92,8 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 - v3 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`
 - The integration fetches circuits via v1 but controls via v3 — coordinator normalizes v1 values to v3 via `_V1_PROGRAM_MAP`
 - Weather forecast available via `get_weather()` — returns condition + temperature
+- `PlantEventDTO` fields: `eventType`, `description`, `timeOccurred`, `timeResolved`, `sourcePath`, `code`, `module`, `functionGroup`, `function`, `category` — event is active when `timeResolved` is null
+- Event types: `locking`, `blocking`, `warning`, `info`, `offline`, `ok` — the error binary sensor triggers on active `blocking`, `locking`, or `warning` events
 
 ## HA Compatibility Notes
 

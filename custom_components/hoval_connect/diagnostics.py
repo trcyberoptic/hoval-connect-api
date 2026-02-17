@@ -19,8 +19,7 @@ REDACT_COORDINATOR = {
     "plantExternalId",
     "name",
     "description",
-    "circuit_path",
-    "message",
+    "source_path",
 }
 
 
