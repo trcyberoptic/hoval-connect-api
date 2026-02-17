@@ -122,14 +122,14 @@ PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
         translation_key="latest_event_message",
         icon="mdi:message-alert-outline",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda p: p.latest_event.message if p.latest_event else None,
+        value_fn=lambda p: p.latest_event.description if p.latest_event else None,
     ),
     HovalPlantSensorEntityDescription(
         key="latest_event_time",
         translation_key="latest_event_time",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda p: p.latest_event.timestamp if p.latest_event else None,
+        value_fn=lambda p: p.latest_event.time_occurred if p.latest_event else None,
     ),
     HovalPlantSensorEntityDescription(
         key="active_events",

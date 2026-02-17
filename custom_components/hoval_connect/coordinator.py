@@ -83,10 +83,16 @@ class HovalEventData:
     """Parsed data for a plant event."""
 
     event_type: str | None = None
-    message: str | None = None
-    timestamp: str | None = None
-    circuit_path: str | None = None
-    is_active: bool = False
+    description: str | None = None
+    time_occurred: str | None = None
+    time_resolved: str | None = None
+    source_path: str | None = None
+    code: int | None = None
+
+    @property
+    def is_active(self) -> bool:
+        """Event is active when it has not been resolved."""
+        return self.time_resolved is None
 
 
 @dataclass
@@ -138,6 +144,18 @@ class HovalData:
     """Top-level data returned by the coordinator."""
 
     plants: dict[str, HovalPlantData] = field(default_factory=dict)
+
+
+def _parse_event(raw: dict) -> HovalEventData:
+    """Parse a PlantEventDTO dict into HovalEventData."""
+    return HovalEventData(
+        event_type=raw.get("eventType"),
+        description=raw.get("description"),
+        time_occurred=raw.get("timeOccurred"),
+        time_resolved=raw.get("timeResolved"),
+        source_path=raw.get("sourcePath"),
+        code=raw.get("code"),
+    )
 
 
 DEFAULT_FAN_SPEED = 40
@@ -387,17 +405,12 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 # Process latest event
                 latest_result = all_results[latest_idx]
                 if not isinstance(latest_result, BaseException) and latest_result:
-                    plant_data.latest_event = HovalEventData(
-                        event_type=latest_result.get("eventType"),
-                        message=latest_result.get("message"),
-                        timestamp=latest_result.get("timestamp"),
-                        circuit_path=latest_result.get("circuitPath"),
-                        is_active=latest_result.get("isActive", False),
-                    )
+                    plant_data.latest_event = _parse_event(latest_result)
                     _LOGGER.debug(
-                        "Latest event: type=%s active=%s",
-                        latest_result.get("eventType"),
-                        latest_result.get("isActive"),
+                        "Latest event: type=%s active=%s desc=%s",
+                        plant_data.latest_event.event_type,
+                        plant_data.latest_event.is_active,
+                        plant_data.latest_event.description,
                     )
                 elif isinstance(latest_result, BaseException):
                     _LOGGER.debug("Events endpoint not available for %s", plant_id)
@@ -406,17 +419,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 events_result = all_results[events_idx]
                 if not isinstance(events_result, BaseException) and events_result:
                     for ev in events_result[:10]:
-                        plant_data.events.append(
-                            HovalEventData(
-                                event_type=ev.get("eventType"),
-                                message=ev.get("message"),
-                                timestamp=ev.get("timestamp"),
-                                circuit_path=ev.get("circuitPath"),
-                                is_active=ev.get("isActive", False),
-                            )
-                        )
+                        plant_data.events.append(_parse_event(ev))
                     for ev in plant_data.events:
-                        if ev.is_active and ev.event_type in ("blocking", "locking"):
+                        if ev.is_active and ev.event_type in (
+                            "blocking",
+                            "locking",
+                            "warning",
+                        ):
                             plant_data.has_error = True
                             break
                 elif isinstance(events_result, BaseException):

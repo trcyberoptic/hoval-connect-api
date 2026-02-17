@@ -31,6 +31,8 @@ sys.modules["voluptuous"] = ha_mock
 from custom_components.hoval_connect.coordinator import (  # noqa: E402
     _V1_PROGRAM_MAP,
     HovalCircuitData,
+    HovalEventData,
+    _parse_event,
     _resolve_active_program_value,
     resolve_fan_speed,
 )
@@ -229,3 +231,56 @@ class TestV1ProgramMap:
 
     def test_none_passes_through(self):
         assert _V1_PROGRAM_MAP.get(None, None) is None
+
+
+class TestParseEvent:
+    """Tests for _parse_event() and HovalEventData."""
+
+    def test_parse_full_event(self):
+        raw = {
+            "eventType": "warning",
+            "description": "Filterwechsel erforderlich",
+            "timeOccurred": "2026-02-17T10:30:00Z",
+            "timeResolved": None,
+            "sourcePath": "520.50.0",
+            "code": 12345,
+        }
+        ev = _parse_event(raw)
+        assert ev.event_type == "warning"
+        assert ev.description == "Filterwechsel erforderlich"
+        assert ev.time_occurred == "2026-02-17T10:30:00Z"
+        assert ev.time_resolved is None
+        assert ev.source_path == "520.50.0"
+        assert ev.code == 12345
+
+    def test_active_when_not_resolved(self):
+        ev = _parse_event({"eventType": "warning", "timeResolved": None})
+        assert ev.is_active is True
+
+    def test_inactive_when_resolved(self):
+        ev = _parse_event({"eventType": "warning", "timeResolved": "2026-02-17T12:00:00Z"})
+        assert ev.is_active is False
+
+    def test_active_when_time_resolved_missing(self):
+        """If API doesn't return timeResolved at all, event is active."""
+        ev = _parse_event({"eventType": "blocking"})
+        assert ev.is_active is True
+
+    def test_parse_empty_dict(self):
+        ev = _parse_event({})
+        assert ev.event_type is None
+        assert ev.description is None
+        assert ev.time_occurred is None
+        assert ev.time_resolved is None
+        assert ev.source_path is None
+        assert ev.code is None
+        assert ev.is_active is True  # no timeResolved → active
+
+    def test_default_event_data_is_active(self):
+        """Default HovalEventData has no timeResolved so is active."""
+        ev = HovalEventData()
+        assert ev.is_active is True
+
+    def test_resolved_event_data(self):
+        ev = HovalEventData(time_resolved="2026-02-17T12:00:00Z")
+        assert ev.is_active is False
