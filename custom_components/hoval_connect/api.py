@@ -178,7 +178,7 @@ class HovalConnectApi:
                         body = await resp.text()
                         _LOGGER.debug("API error body: %s", body[:500])
                         raise HovalApiError(f"API request failed: HTTP {resp.status}")
-                    if resp.status == 204:
+                    if resp.status == 204 or resp.content_length == 0:
                         return None
                     return await resp.json()
             except (HovalAuthError, HovalApiError):
