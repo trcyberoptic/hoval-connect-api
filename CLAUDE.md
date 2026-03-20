@@ -83,6 +83,7 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 ## API Behavior Notes
 
 - Control endpoints return HTTP 204 No Content on success — no response body
+- Some GET endpoints (e.g. `/v1/plant-events/latest/`) return HTTP 200 with Content-Length: 0 (empty body) instead of 204 or empty JSON when no data exists — `_request` handles this via `content_length == 0` check
 - `temporary-change` uses POST with `?duration=FOUR|MIDNIGHT&value={airVolume}` — duration is an **enum** (FOUR = 4 hours, MIDNIGHT = until midnight), NOT a free-form number. Sets air volume/temperature override while keeping time program active.
 - `temporary-change/reset` uses POST (no body) to cancel an active override
 - `constant` mode (PUT) returns HTTP 500 when a time program (`tteControlled`) is active — use `temporary-change` instead
@@ -99,6 +100,10 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 
 - `OptionsFlow.config_entry` is a **read-only property** in modern HA — do NOT assign it in `__init__`. The base class sets it automatically.
 - `async_get_options_flow()` should return the flow instance without passing `config_entry`.
+
+## Known Pitfalls
+
+- `aiohttp.resp.json()` on empty body throws `ContentTypeError` (subclass of `ClientError`) — easily misidentified as connection error in generic exception handlers
 
 ## Known Gaps
 
