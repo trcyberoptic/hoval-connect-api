@@ -25,6 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
+from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
@@ -33,6 +34,7 @@ class HovalSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval sensor entity."""
 
     value_fn: Callable[[HovalCircuitData], Any | None]
+    circuit_types: frozenset[str] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -57,6 +59,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.live_values.get("exhaustTemp"),
     ),
     HovalSensorEntityDescription(
@@ -65,6 +68,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:fan",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.live_values.get("airVolume"),
     ),
     HovalSensorEntityDescription(
@@ -73,6 +77,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.HUMIDITY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.live_values.get("humidityActual"),
     ),
     HovalSensorEntityDescription(
@@ -81,6 +86,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.HUMIDITY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.live_values.get("humidityTarget"),
     ),
     HovalSensorEntityDescription(
@@ -111,6 +117,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:fan-clock",
         entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.program_air_volume,
     ),
     # HK additional sensors
@@ -120,6 +127,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
         value_fn=lambda c: c.live_values.get("outgoingTempActual"),
     ),
     HovalSensorEntityDescription(
@@ -128,6 +136,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
         value_fn=lambda c: c.live_values.get("outgoingTempTarget"),
     ),
     HovalSensorEntityDescription(
@@ -136,6 +145,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
         value_fn=lambda c: c.live_values.get("roomTempTarget"),
     ),
     # BL (Boiler/Heat Pump) sensors
@@ -145,6 +155,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("tempActual"),
     ),
     HovalSensorEntityDescription(
@@ -153,6 +164,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("tempTarget"),
     ),
     HovalSensorEntityDescription(
@@ -161,6 +173,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("returnTemperature"),
     ),
     HovalSensorEntityDescription(
@@ -169,6 +182,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.HOURS,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:clock-outline",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("operatingHours"),
     ),
     HovalSensorEntityDescription(
@@ -177,6 +191,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.HOURS,
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:clock-fast",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("operatingHoursOver50"),
     ),
     HovalSensorEntityDescription(
@@ -184,6 +199,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         translation_key="operation_cycles",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:counter",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("operationCycles"),
     ),
     HovalSensorEntityDescription(
@@ -192,6 +208,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("heatAmount"),
     ),
     HovalSensorEntityDescription(
@@ -200,6 +217,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("totalEnergy"),
     ),
     # WW (Warm Water) sensors
@@ -209,6 +227,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_WW}),
         value_fn=lambda c: c.live_values.get("tempTarget"),
     ),
     HovalSensorEntityDescription(
@@ -217,6 +236,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_WW}),
         value_fn=lambda c: c.live_values.get("tempSf1Actual"),
     ),
     HovalSensorEntityDescription(
@@ -225,6 +245,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_WW}),
         value_fn=lambda c: c.live_values.get("tempSf2Actual"),
     ),
 )
@@ -290,6 +311,11 @@ async def async_setup_entry(
             # Circuit-level sensors
             for path, circuit in plant_data.circuits.items():
                 for description in CIRCUIT_SENSOR_DESCRIPTIONS:
+                    if (
+                        description.circuit_types is not None
+                        and circuit.circuit_type not in description.circuit_types
+                    ):
+                        continue
                     uid = f"{plant_id}_{path}_{description.key}"
                     if uid in known:
                         continue
