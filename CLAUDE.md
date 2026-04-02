@@ -29,7 +29,7 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - `climate.py` — HK heating: target temp, HVAC modes (heat/auto/off)
 - `fan.py` — HV ventilation: speed slider 0–100%, on/off (standby ↔ temporary-change), debounced 1.5s
 - `select.py` — Program selection (week1/week2/ecoMode/standby/constant) with user-defined names
-- `sensor.py` — 9 per circuit + 6 plant-level sensors (events, weather)
+- `sensor.py` — Circuit-type-filtered sensors (HV/HK/BL/WW) + 6 plant-level sensors (events, weather)
 - `binary_sensor.py` — Plant online status + error/warning status
 - `diagnostics.py` — Diagnostic export with PII redaction
 - `const.py` — API URLs, OAuth client ID, token TTLs, polling interval, circuit types, duration enums
@@ -40,7 +40,8 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - Entities use `CoordinatorEntity` — no direct API calls, all data comes from the coordinator
 - Device hierarchy: one parent device per plant, one child device per plant+circuit (linked via `via_device`)
 - Circuit devices identified by `{plantId}_{circuitPath}`
-- Supports HV (ventilation) and HK (heating) circuit types (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
+- Supports HV (ventilation), HK (heating), BL (boiler), and WW (warm water) circuit types (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
+- Sensor descriptions use `circuit_types: frozenset[str] | None` to filter which sensors appear on which circuit types (`None` = all types)
 - Fan speed resolution uses smart fallback chain: live airVolume → targetAirVolume → program air volume → default 40% (API rejects value=0)
 - All entity platforms use `translation_key` for entity names (not hardcoded `_attr_name`)
 - Dynamic entity discovery: all platforms listen to `SIGNAL_NEW_CIRCUITS` dispatcher signal to add entities at runtime without restart
@@ -115,5 +116,6 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
 - Full OpenAPI 3.1 spec saved at `docs/openapi-v3.json` (also available live at `/v3/api-docs`, no auth required)
-- Non-supported circuit types (BL, WW, FRIWA, SOL, SOLB, PS) have endpoint support in the API but no HA entities yet
+- Non-supported circuit types (FRIWA, SOL, SOLB, PS) have endpoint support in the API but no HA entities yet
+- BL energy sensors (`heatAmount`, `totalEnergy`) use MWh — unit not verified against raw API values
 - HK climate entity: `set_temperature` sends value as integer — may need adjustment for different HK circuit models (some use tenths of degree)

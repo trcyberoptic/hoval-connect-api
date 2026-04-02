@@ -37,10 +37,12 @@ Plants and circuits are discovered automatically from your account.
 - Shows user-defined program names from the Hoval app
 - Current program pre-selected
 
-**Sensor entities** (per circuit):
-- Outside temperature, exhaust temperature
-- Air volume, humidity (actual), humidity (target)
-- Operation mode, active week program, active day program, program air volume
+**Sensor entities** (per circuit, filtered by type):
+- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume
+- **HK:** Outside temperature, flow temperature (actual/target), room temperature setpoint
+- **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed
+- **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
+- **All:** Operation mode, active week program, active day program
 
 **Plant-level sensors:**
 - Weather condition and forecast temperature
@@ -69,7 +71,8 @@ Plants and circuits are discovered automatically from your account.
 
 ### Known Limitations
 
-- **HV and HK circuits only.** Boiler (BL), warm water (WW), solar (SOL), and other circuit types are not yet implemented.
+- **HV, HK, BL, and WW circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
+- **BL energy sensors (MWh):** Heat produced and electrical energy consumed are displayed in MWh — unit not yet verified against all Hoval models, may need adjustment.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
