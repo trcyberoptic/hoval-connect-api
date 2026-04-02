@@ -12,7 +12,13 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -106,6 +112,120 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         icon="mdi:fan-clock",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.program_air_volume,
+    ),
+    # HK additional sensors
+    HovalSensorEntityDescription(
+        key="flow_temp_actual",
+        translation_key="flow_temp_actual",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("outgoingTempActual"),
+    ),
+    HovalSensorEntityDescription(
+        key="flow_temp_target",
+        translation_key="flow_temp_target",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("outgoingTempTarget"),
+    ),
+    HovalSensorEntityDescription(
+        key="room_temp_target",
+        translation_key="room_temp_target",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("roomTempTarget"),
+    ),
+    # BL (Boiler/Heat Pump) sensors
+    HovalSensorEntityDescription(
+        key="boiler_temp_actual",
+        translation_key="boiler_temp_actual",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("tempActual"),
+    ),
+    HovalSensorEntityDescription(
+        key="boiler_temp_target",
+        translation_key="boiler_temp_target",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("tempTarget"),
+    ),
+    HovalSensorEntityDescription(
+        key="return_temperature",
+        translation_key="return_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("returnTemperature"),
+    ),
+    HovalSensorEntityDescription(
+        key="operating_hours",
+        translation_key="operating_hours",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:clock-outline",
+        value_fn=lambda c: c.live_values.get("operatingHours"),
+    ),
+    HovalSensorEntityDescription(
+        key="operating_hours_over_50",
+        translation_key="operating_hours_over_50",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:clock-fast",
+        value_fn=lambda c: c.live_values.get("operatingHoursOver50"),
+    ),
+    HovalSensorEntityDescription(
+        key="operation_cycles",
+        translation_key="operation_cycles",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        value_fn=lambda c: c.live_values.get("operationCycles"),
+    ),
+    HovalSensorEntityDescription(
+        key="heat_amount",
+        translation_key="heat_amount",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.live_values.get("heatAmount"),
+    ),
+    HovalSensorEntityDescription(
+        key="total_energy",
+        translation_key="total_energy",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.live_values.get("totalEnergy"),
+    ),
+    # WW (Warm Water) sensors
+    HovalSensorEntityDescription(
+        key="ww_temp_target",
+        translation_key="ww_temp_target",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("tempTarget"),
+    ),
+    HovalSensorEntityDescription(
+        key="ww_temp_top",
+        translation_key="ww_temp_top",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("tempSf1Actual"),
+    ),
+    HovalSensorEntityDescription(
+        key="ww_temp_bottom",
+        translation_key="ww_temp_bottom",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.live_values.get("tempSf2Actual"),
     ),
 )
 
