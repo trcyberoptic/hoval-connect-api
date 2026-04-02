@@ -17,7 +17,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PROGRAM_CACHE_TTL, SUPPORTED_CIRCUIT_TYPES
+from .const import (
+    CIRCUIT_TYPE_BL,
+    CIRCUIT_TYPE_WW,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    PROGRAM_CACHE_TTL,
+    SUPPORTED_CIRCUIT_TYPES,
+)
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
@@ -278,13 +285,17 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     _LOGGER.warning("Circuits endpoint not available for plant %s", plant_id)
                     circuits_raw = []
 
+                # BL/WW circuits have selectable=False but still provide live values
+                _non_selectable_types = {CIRCUIT_TYPE_BL, CIRCUIT_TYPE_WW}
+
                 _LOGGER.debug(
                     "Fetched %d circuits (%d supported)",
                     len(circuits_raw),
                     sum(
                         1
                         for c in circuits_raw
-                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES and c.get("selectable")
+                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES
+                        and (c.get("selectable") or c.get("type") in _non_selectable_types)
                     ),
                 )
 
@@ -294,7 +305,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     ctype = circuit.get("type", "")
                     if ctype not in SUPPORTED_CIRCUIT_TYPES:
                         continue
-                    if not circuit.get("selectable", False):
+                    if not circuit.get("selectable", False) and ctype not in _non_selectable_types:
                         continue
                     path = circuit["path"]
                     _LOGGER.debug(
