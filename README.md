@@ -72,7 +72,7 @@ Plants and circuits are discovered automatically from your account.
 ### Known Limitations
 
 - **HV, HK, BL, and WW circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
-- **BL energy sensors (MWh):** Heat produced and electrical energy consumed are displayed in MWh — unit not yet verified against all Hoval models, may need adjustment.
+- **BL energy sensors:** Heat produced and electrical energy consumed are in MWh (verified on UltraSource B Compact).
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
