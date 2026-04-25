@@ -67,7 +67,7 @@ Plants and circuits are discovered automatically from your account.
 - Parallel API fetches for circuits, live values, programs, events, and weather
 - Program cache (5min TTL) reduces API calls
 - Dynamic entity discovery — new circuits added without restart
-- v1 API `activeProgram` values normalized to v3 enum for consistent entity state
+- All circuit reads/writes use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 
 ### Known Limitations
 
@@ -283,17 +283,18 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 | PS | Pool/Swimming |
 | GW | Gateway |
 
+> **API change (2026-04-21):** Hoval removed every `/v1/plants/{id}/circuits/...` endpoint and now returns `HTTP 404 "No static resource ..."`. All circuit reads and writes now use `/v3` (or `/v4` for the newer temporary-change variant). See `docs/openapi-v3.json` for the live spec.
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/plants/{plantId}/circuits` | 🔑🏭 | All circuits with details |
-| GET | `/v1/plants/{plantId}/circuits/{circuitPath}` | 🔑🏭 | Single circuit detail |
-| GET | `/v3/plants/{plantId}/circuits` | 🔑🏭 | Circuit overview (v3) |
-| GET | `/v3/plants/{plantId}/circuits/{circuitPath}` | 🔑🏭 | Single circuit (v3) |
-| GET | `/v3/plants/{plantId}/circuits/{circuitPath}/programs` | 🔑🏭 | Time programs for circuit |
-| GET | `/business/plants/{plantId}/circuits` | 🔑🏭 | Circuit paths list |
-| GET | `/business/plants/{plantId}/heat-generators` | 🔑🏭 | Heat generator info |
+| GET | `/v3/plants/{plantId}/circuits` | 🔑🏭 | All circuits with overview data |
+| GET | `/v3/plants/{plantId}/circuits/{circuitPath}` | 🔑🏭 | Single circuit detail (limits, schedule, plant time) |
+| GET | `/v3/plants/{plantId}/circuits/{circuitPath}/programs` | 🔑🏭 | Constant / eco / week1 / week2 program definitions |
+| GET,PATCH | `/v3/plants/{plantId}/circuits/{circuitPath}/settings` | 🔑🏭 | Read or rename circuit (`circuitName`) |
+| GET | `/business/plants/{plantId}/circuits` | 🔑🏭 | Circuit paths list (partner only) |
+| GET | `/business/plants/{plantId}/heat-generators` | 🔑🏭 | Heat generator info (partner only) |
 
-#### GET `/v1/plants/{plantId}/circuits`
+#### GET `/v3/plants/{plantId}/circuits`
 ```json
 [
   {
@@ -301,43 +302,87 @@ Circuits represent the controllable components of a plant (heating, ventilation,
     "moduleType": "GW",
     "path": "1153.0.0",
     "name": null,
+    "isSelectable": false,
     "selectable": false,
-    "configuredCorrectly": true,
     "hasError": false,
-    "operationMode": null
+    "activeProgram": null,
+    "operationMode": null,
+    "targetValue": 0.0,
+    "actualValue": null,
+    "airQuality": null,
+    "manualValue": null,
+    "holidayEnd": null,
+    "isAdditionalBoiler": false,
+    "additionalBoiler": false,
+    "week1OrWeek2Active": false
   },
   {
     "type": "HV",
     "moduleType": "HV",
     "path": "520.50.0",
     "name": "Lüftung",
-    "activeProgram": "tteControlled",
-    "targetAirVolume": 40,
-    "targetAirHumidity": 50,
-    "isAirQualityGuided": false,
+    "isSelectable": true,
     "selectable": true,
-    "homeVent": true,
+    "activeProgram": "week2",
+    "activeWeekProgramName": "Sommer",
+    "activeDayProgramName": "Früh+Abend",
+    "circuitStatus": "active",
+    "operationMode": "ventilation",
+    "targetValue": 60.0,
+    "actualValue": null,
+    "manualValue": null,
+    "airQuality": {
+      "isAirQualityGuided": false,
+      "hasAirQualitySensor": false,
+      "actualRoomAirQuality": null,
+      "airQualityGuided": false
+    },
+    "holidayEnd": null,
+    "isAdditionalBoiler": false,
     "hasError": false,
-    "operationMode": "REGULAR",
-    "plantTime": "2026-02-10T13:24:17+01:00"
+    "week1OrWeek2Active": true
   }
 ]
 ```
 
-#### Circuit Control Endpoints (PUT/POST)
+`activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`. `targetValue` is the percentage for HV and degrees Celsius for HK.
 
-> **Note:** PUT control endpoints return **HTTP 204 No Content** on success (no response body).
+#### GET `/v3/plants/{plantId}/circuits/{circuitPath}`
+```json
+{
+  "week1Name": "Winter",
+  "week2Name": "Sommer",
+  "plantTime": "2026-04-26T00:10:53+02:00",
+  "constantValue": 50.0,
+  "ecoModeValue": 60.0,
+  "activeProgramConfiguration": {
+    "baseValue": 40.0,
+    "phases": [
+      { "phaseValue": 60.0, "start": {"hours": 0, "minutes": 0}, "end": {"hours": 9, "minutes": 0} },
+      { "phaseValue": 40.0, "start": {"hours": 9, "minutes": 0}, "end": {"hours": 19, "minutes": 0} },
+      { "phaseValue": 60.0, "start": {"hours": 19, "minutes": 0}, "end": {"hours": 24, "minutes": 0} }
+    ],
+    "limits": null
+  },
+  "temporaryChangeLimits": { "max": 100.0, "min": 15.0, "step": 1.0 }
+}
+```
+
+#### Circuit Control Endpoints
+
+> **Note:** Control endpoints return **HTTP 204 No Content** on success (no response body).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change?duration=FOUR\|MIDNIGHT&value={airVolume}` | 🔑🏭 | Temporary air volume override (keeps time program active) |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/temporary-change/reset` | 🔑🏭 | Cancel active temporary override, resume time program |
-| ~~PUT~~ | ~~`/v1/plants/{plantId}/circuits/{circuitPath}/constant?value={airVolume}`~~ | 🔑🏭 | ~~Set constant mode~~ (HTTP 500 when time program is active — use `temporary-change` instead) |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/standby` | 🔑🏭 | Set standby mode |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/manual` | 🔑🏭 | Set manual mode |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/time-programs` | 🔑🏭 | Set time programs |
-| POST | `/v1/plants/{plantId}/circuits/{circuitPath}/reset` | 🔑🏭 | Reset to auto |
-| ~~PUT~~ | ~~`/v3/plants/{plantId}/circuits/{circuitPath}/settings`~~ | 🔑🏭 | ~~Update circuit settings~~ (returns 405 — not supported for HV circuits) |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary value override. JSON body: `{"value": <float>, "duration": "fourHours"\|"midnight"}` |
+| DELETE | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Cancel active temporary override |
+| POST | `/v4/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Newer variant. JSON body: `{"type": "endOfPhase"\|"duration", "value": <float>, "duration": <hours>\|null}` — supports arbitrary durations |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/programs/{program}` | 🔑🏭 | Activate program. `{program}` ∈ `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant` |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/air-quality-guided` | 🔑🏭 | Toggle air-quality-guided mode (HV only, requires sensor) |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/semi-automatic-cooling` | 🔑🏭 | Toggle semi-automatic cooling |
+| POST,DELETE | `/v2/api/holiday/{plantId}` | 🔑🏭 | Activate/cancel holiday mode for selected circuits |
+
+Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs}` endpoints have all been removed; use `programs/{program}` instead. The old `temporary-change/reset` POST has been replaced by `DELETE /v3/.../temporary-change`.
 
 ---
 
