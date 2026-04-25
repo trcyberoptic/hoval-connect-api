@@ -89,14 +89,15 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 
 - Control endpoints return HTTP 204 No Content on success — no response body
 - Some GET endpoints (e.g. `/v1/plant-events/latest/`) return HTTP 200 with Content-Length: 0 (empty body) instead of 204 or empty JSON when no data exists — `_request` handles this via `content_length == 0` check
-- `temporary-change` uses POST with `?duration=FOUR|MIDNIGHT&value={airVolume}` — duration is an **enum** (FOUR = 4 hours, MIDNIGHT = until midnight), NOT a free-form number. Sets air volume/temperature override while keeping time program active.
-- `temporary-change/reset` uses POST (no body) to cancel an active override
-- `constant` mode (PUT) returns HTTP 500 when a time program (`tteControlled`) is active — use `temporary-change` instead
-- `standby`, `manual`, `reset` use POST (no body)
+- **Around 2026-04-21 Hoval removed every `/v1/plants/{id}/circuits/...` endpoint** (list, mode setters, `temporary-change`, `reset`). The integration uses `/v3/plants/{id}/circuits` everywhere now. The cloud responds to v1 paths with HTTP 404 `{"detail":"No static resource ..."}`. Restoring those paths is not expected.
+- `temporary-change` (v3): `POST /v3/.../temporary-change` with JSON body `{"value": <float>, "duration": "fourHours"|"midnight"}`. The HV value is a percentage; the HK value is degrees Celsius (no tenths). Stored option values `FOUR`/`MIDNIGHT` from older configs are translated to the v3 camelCase form inside `set_temporary_change`.
+- `temporary-change/reset` (v3): `DELETE /v3/.../temporary-change` (no body). Replaces the removed v1 POST `/temporary-change/reset`.
+- Mode endpoints `/v1/.../{standby|manual|constant|reset|cooling|time-programs}` are gone. Use `POST /v3/.../programs/{program}` where program ∈ {`constant`,`ecoMode`,`standby`,`week1`,`week2`,`manual`,`externalConstant`}.
+- v1 had a separate `/reset` endpoint that auto-resumed the configured time program. v3 has no such auto-pick — `reset_circuit()` defaults to `week1`; pass `program="week2"` for the second weekly schedule.
 - API always reports `operationMode='REGULAR'` regardless of actual device state — optimistic override needed for standby tracking
-- v1 `activeProgram` enum: `constant`, `nightReduction`, `dayCooling`, `timePrograms`, `standby`, `manual`, `externalConstant`, `tteControlled`
+- v1 `activeProgram` enum (legacy, only relevant if Hoval rolls back): `constant`, `nightReduction`, `dayCooling`, `timePrograms`, `standby`, `manual`, `externalConstant`, `tteControlled`
 - v3 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`
-- The integration fetches circuits via v1 but controls via v3 — coordinator normalizes v1 values to v3 via `_V1_PROGRAM_MAP`
+- v3 circuit list field renames vs the old v1 shape: `targetAirVolume` → `targetValue` (now `float`, percentage for HV / degrees for HK), `isAirQualityGuided` is now nested under `airQuality.isAirQualityGuided`, `targetAirHumidity` is no longer in the list (humidity comes from `live-values`).
 - Weather forecast available via `get_weather()` — returns condition + temperature
 - `PlantEventDTO` fields: `eventType`, `description`, `timeOccurred`, `timeResolved`, `sourcePath`, `code`, `module`, `functionGroup`, `function`, `category` — event is active when `timeResolved` is null
 - Event types: `locking`, `blocking`, `warning`, `info`, `offline`, `ok` — the error binary sensor triggers on active `blocking`, `locking`, or `warning` events

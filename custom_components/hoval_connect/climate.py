@@ -207,7 +207,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
                 self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
-                    value=int(temperature * 10),  # API uses tenths of degree for HK
+                    value=float(temperature),
                     duration=duration,
                 ),
                 circuit_path=self._circuit_path,

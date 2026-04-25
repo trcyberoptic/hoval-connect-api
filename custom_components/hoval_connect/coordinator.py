@@ -111,8 +111,9 @@ class HovalCircuitData:
     name: str
     operation_mode: str | None = None
     active_program: str | None = None
-    target_air_volume: int | None = None
-    target_air_humidity: int | None = None
+    # HV: air-volume percentage; HK: target temperature in °C. Coming from the
+    # circuit list endpoint's `targetValue` (renamed from v1 `targetAirVolume`).
+    target_value: float | None = None
     is_air_quality_guided: bool = False
     has_error: bool = False
     live_values: dict[str, str] = field(default_factory=dict)
@@ -171,7 +172,7 @@ DEFAULT_FAN_SPEED = 40
 def resolve_fan_speed(circuit: HovalCircuitData | None) -> int:
     """Resolve the best fan speed value for constant mode.
 
-    Fallback chain: live airVolume → targetAirVolume → program air volume → default.
+    Fallback chain: live airVolume → targetValue → program air volume → default.
     Always returns at least 1 (API rejects value=0).
     """
     if circuit is None:
@@ -183,8 +184,8 @@ def resolve_fan_speed(circuit: HovalCircuitData | None) -> int:
         if speed >= 1:
             return speed
     # Try target from circuit config
-    if circuit.target_air_volume is not None:
-        speed = int(circuit.target_air_volume)
+    if circuit.target_value is not None:
+        speed = int(circuit.target_value)
         if speed >= 1:
             return speed
     # Try the currently active time program phase value
@@ -278,12 +279,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     data.plants[plant_id] = plant_data
                     continue
 
-                # Fetch circuits
+                # Fetch circuits. A persistent failure here is the most common
+                # symptom of an upstream API change (the v1 endpoint removal in
+                # April 2026 was masked for days because we used to swallow this
+                # error). Log loudly and let DataUpdateCoordinator surface the
+                # failure to the user as `unavailable` entities.
                 try:
                     circuits_raw = await self.api.get_circuits(plant_id)
-                except HovalApiError:
-                    _LOGGER.warning("Circuits endpoint not available for plant %s", plant_id)
-                    circuits_raw = []
+                except HovalApiError as err:
+                    _LOGGER.error(
+                        "Circuits endpoint failed for plant %s: %s — entities will go "
+                        "unavailable until the cloud API recovers or the integration is "
+                        "updated.",
+                        plant_id,
+                        err,
+                    )
+                    raise
 
                 # BL/WW circuits have selectable=False but still provide live values
                 _non_selectable_types = {CIRCUIT_TYPE_BL, CIRCUIT_TYPE_WW}
@@ -323,15 +334,15 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     _plant_id: str = plant_id,
                 ) -> HovalCircuitData:
                     raw_program = circuit.get("activeProgram")
+                    air_quality = circuit.get("airQuality") or {}
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
                         name=circuit.get("name") or ctype,
                         operation_mode=circuit.get("operationMode"),
                         active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
-                        target_air_volume=circuit.get("targetAirVolume"),
-                        target_air_humidity=circuit.get("targetAirHumidity"),
-                        is_air_quality_guided=circuit.get("isAirQualityGuided", False),
+                        target_value=circuit.get("targetValue"),
+                        is_air_quality_guided=bool(air_quality.get("isAirQualityGuided")),
                         has_error=circuit.get("hasError", False),
                     )
 
