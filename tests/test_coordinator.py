@@ -32,6 +32,7 @@ from custom_components.hoval_connect.coordinator import (  # noqa: E402
     _V1_PROGRAM_MAP,
     HovalCircuitData,
     HovalEventData,
+    _is_problem_event,
     _parse_event,
     _resolve_active_program_value,
     resolve_fan_speed,
@@ -284,3 +285,30 @@ class TestParseEvent:
     def test_resolved_event_data(self):
         ev = HovalEventData(time_resolved="2026-02-17T12:00:00Z")
         assert ev.is_active is False
+
+
+class TestIsProblemEvent:
+    """Tests for problem event classification."""
+
+    def test_active_blocking_is_problem(self):
+        assert _is_problem_event(HovalEventData(event_type="blocking")) is True
+
+    def test_active_locking_is_problem(self):
+        assert _is_problem_event(HovalEventData(event_type="locking")) is True
+
+    def test_active_warning_is_problem(self):
+        assert _is_problem_event(HovalEventData(event_type="warning")) is True
+
+    def test_resolved_warning_is_not_problem(self):
+        ev = HovalEventData(event_type="warning", time_resolved="2026-02-17T12:00:00Z")
+        assert _is_problem_event(ev) is False
+
+    def test_info_and_offline_are_not_problem(self):
+        assert _is_problem_event(HovalEventData(event_type="info")) is False
+        assert _is_problem_event(HovalEventData(event_type="offline")) is False
+
+    def test_none_is_not_problem(self):
+        assert _is_problem_event(None) is False
+
+    def test_none_event_type_is_not_problem(self):
+        assert _is_problem_event(HovalEventData(event_type=None)) is False

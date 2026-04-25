@@ -166,6 +166,20 @@ def _parse_event(raw: dict) -> HovalEventData:
     )
 
 
+def _is_problem_event(event: HovalEventData | None) -> bool:
+    """Return True if event is active and represents a fault (blocking/locking/warning)."""
+    return bool(
+        event
+        and event.is_active
+        and event.event_type
+        in (
+            "blocking",
+            "locking",
+            "warning",
+        )
+    )
+
+
 DEFAULT_FAN_SPEED = 40
 
 
@@ -428,6 +442,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 latest_result = all_results[latest_idx]
                 if not isinstance(latest_result, BaseException) and latest_result:
                     plant_data.latest_event = _parse_event(latest_result)
+                    if _is_problem_event(plant_data.latest_event):
+                        plant_data.has_error = True
                     _LOGGER.debug(
                         "Latest event: type=%s active=%s desc=%s",
                         plant_data.latest_event.event_type,
@@ -443,11 +459,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     for ev in events_result[:10]:
                         plant_data.events.append(_parse_event(ev))
                     for ev in plant_data.events:
-                        if ev.is_active and ev.event_type in (
-                            "blocking",
-                            "locking",
-                            "warning",
-                        ):
+                        if _is_problem_event(ev):
                             plant_data.has_error = True
                             break
                 elif isinstance(events_result, BaseException):
