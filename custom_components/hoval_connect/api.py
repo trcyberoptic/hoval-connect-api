@@ -223,8 +223,12 @@ class HovalConnectApi:
         return await self._request("GET", f"/v1/plants/{plant_id}/settings", plant_id=plant_id)
 
     async def get_circuits(self, plant_id: str) -> list[dict[str, Any]]:
-        """Get all circuits for a plant."""
-        return await self._request("GET", f"/v1/plants/{plant_id}/circuits", plant_id=plant_id)
+        """Get all circuits for a plant.
+
+        Hoval removed the v1 endpoint around 2026-04-21; v3 is the only path that
+        still works. Response shape changed: see coordinator field mapping.
+        """
+        return await self._request("GET", f"/v3/plants/{plant_id}/circuits", plant_id=plant_id)
 
     async def get_programs(self, plant_id: str, circuit_path: str) -> Any:
         """Get time programs for a circuit."""
@@ -258,52 +262,56 @@ class HovalConnectApi:
         return await self._request("GET", f"/v2/api/weather/forecast/{plant_id}", plant_id=plant_id)
 
     async def set_circuit_mode(self, plant_id: str, circuit_path: str, mode: str) -> Any:
-        """Set circuit operation mode (standby, manual, reset).
+        """Set circuit operation mode (standby or manual).
 
-        Uses POST for state transitions.
+        v1 had separate endpoints per mode (.../standby, .../manual, .../reset).
+        v3 unifies them under .../programs/{program}. The 'reset' mode no longer
+        exists; use reset_circuit() to resume the schedule.
         """
-        _LOGGER.debug(
-            "set_circuit_mode: POST plant=%s circuit=%s mode=%s",
-            plant_id,
-            circuit_path,
-            mode,
-        )
-        result = await self._request(
-            "POST",
-            f"/v1/plants/{plant_id}/circuits/{circuit_path}/{mode}",
-            plant_id=plant_id,
-        )
-        _LOGGER.debug("set_circuit_mode: completed successfully")
-        return result
+        if mode == "reset":
+            raise HovalApiError(
+                "set_circuit_mode('reset') is no longer supported by the cloud API; "
+                "call reset_circuit() to resume the time program."
+            )
+        return await self.set_program(plant_id, circuit_path, mode)
 
     async def set_temporary_change(
-        self, plant_id: str, circuit_path: str, value: int, duration: str = "FOUR"
+        self, plant_id: str, circuit_path: str, value: float, duration: str = "FOUR"
     ) -> Any:
-        """Set a temporary air volume override (works with active time program).
+        """Set a temporary value override (works alongside an active time program).
 
-        v1: POST .../{circuitPath}/temporary-change?duration=FOUR|MIDNIGHT&value={airVolume}
-        Duration enum: FOUR (4 hours) or MIDNIGHT (until midnight).
+        v3: POST .../{circuitPath}/temporary-change with JSON body
+            {"value": <float>, "duration": "fourHours" | "midnight"}
+        For HV the value is the air volume percentage (15..100); for HK it is the
+        temperature in degrees Celsius (e.g. 21.5).
+
+        The historical FOUR / MIDNIGHT enum values from stored options are accepted
+        for backwards compatibility and translated to the v3 camelCase form.
         """
+        duration_v3 = {"FOUR": "fourHours", "MIDNIGHT": "midnight"}.get(
+            duration, duration[:1].lower() + duration[1:]
+        )
+        body = {"value": value, "duration": duration_v3}
         _LOGGER.debug(
-            "set_temporary_change: plant=%s circuit=%s value=%s duration=%s",
+            "set_temporary_change: plant=%s circuit=%s body=%s",
             plant_id,
             circuit_path,
-            value,
-            duration,
+            body,
         )
         result = await self._request(
             "POST",
-            f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
+            f"/v3/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
-            params={"duration": duration, "value": str(value)},
+            json_data=body,
         )
         _LOGGER.debug("set_temporary_change: completed successfully")
         return result
 
     async def reset_temporary_change(self, plant_id: str, circuit_path: str) -> Any:
-        """Cancel an active temporary override, resume time program.
+        """Cancel an active temporary override and resume the underlying program.
 
-        POST /v1/plants/{plantId}/circuits/{circuitPath}/temporary-change/reset
+        v3: DELETE /v3/plants/{plantId}/circuits/{circuitPath}/temporary-change
+        Replaces the removed v1 .../temporary-change/reset POST.
         """
         _LOGGER.debug(
             "reset_temporary_change: plant=%s circuit=%s",
@@ -311,30 +319,21 @@ class HovalConnectApi:
             circuit_path,
         )
         result = await self._request(
-            "POST",
-            f"/v1/plants/{plant_id}/circuits/{circuit_path}/temporary-change/reset",
+            "DELETE",
+            f"/v3/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
         )
         _LOGGER.debug("reset_temporary_change: completed successfully")
         return result
 
-    async def reset_circuit(self, plant_id: str, circuit_path: str) -> Any:
-        """Reset a TTE-controlled circuit (resumes the active time program).
+    async def reset_circuit(self, plant_id: str, circuit_path: str, program: str = "week1") -> Any:
+        """Resume a configured time program (defaults to week1).
 
-        POST /v1/plants/{plantId}/circuits/{circuitPath}/reset
+        The v1 POST .../{circuitPath}/reset endpoint that auto-picked the active
+        time program no longer exists. v3 requires the caller to choose a specific
+        program. Pass program="week2" to switch to the second weekly schedule.
         """
-        _LOGGER.debug(
-            "reset_circuit: plant=%s circuit=%s",
-            plant_id,
-            circuit_path,
-        )
-        result = await self._request(
-            "POST",
-            f"/v1/plants/{plant_id}/circuits/{circuit_path}/reset",
-            plant_id=plant_id,
-        )
-        _LOGGER.debug("reset_circuit: completed successfully")
-        return result
+        return await self.set_program(plant_id, circuit_path, program)
 
     async def set_program(self, plant_id: str, circuit_path: str, program: str) -> Any:
         """Activate a specific program on a circuit.

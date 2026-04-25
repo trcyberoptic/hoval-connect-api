@@ -68,16 +68,16 @@ class TestResolveFanSpeed:
             path="1.2.3",
             name="Test",
             live_values={"airVolume": "0"},
-            target_air_volume=50,
+            target_value=50,
         )
         assert resolve_fan_speed(circuit) == 50
 
-    def test_target_air_volume_fallback(self):
+    def test_target_value_fallback(self):
         circuit = HovalCircuitData(
             circuit_type="HV",
             path="1.2.3",
             name="Test",
-            target_air_volume=80,
+            target_value=80,
         )
         assert resolve_fan_speed(circuit) == 80
 
@@ -104,7 +104,7 @@ class TestResolveFanSpeed:
             path="1.2.3",
             name="Test",
             live_values={"airVolume": "0"},
-            target_air_volume=0,
+            target_value=0,
             program_air_volume=0.0,
         )
         assert resolve_fan_speed(circuit) == 40  # falls through to default

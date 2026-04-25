@@ -145,7 +145,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             return None
         val = circuit.live_values.get("airVolume")
         if val is None:
-            val = circuit.target_air_volume
+            val = circuit.target_value
         if val is None:
             return None
         return max(0, min(100, int(float(val))))
