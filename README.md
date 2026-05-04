@@ -69,6 +69,12 @@ Plants and circuits are discovered automatically from your account.
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads/writes use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 
+### Troubleshooting
+
+- **Circuit entities (fan, climate, select, circuit-level sensors) stuck on "unavailable" after upgrade or HA restart** — reload the config entry: *Settings → Devices & Services → Hoval Connect → ⋮ → Reload*. The plant-level entities (weather, events, online status) staying available while every circuit-level entity is unavailable is the giveaway. Fixed in **v0.14.2** (the dispatcher now catches up if the first poll after boot came back without circuits); earlier versions need the manual reload once.
+- **All entities `unavailable`, with `Circuits endpoint failed for plant …` in the log** — the cloud rejected the circuit list call; usually a transient outage. v0.14.0+ surfaces the failure as `unavailable` rather than silently keeping stale values, so wait for the next poll.
+- **Auth keeps failing** — re-trigger the reauth flow from the integration settings; ID-token caching means a stale password is re-tried for ~30 min before the integration prompts.
+
 ### Known Limitations
 
 - **HV, HK, BL, and WW circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
