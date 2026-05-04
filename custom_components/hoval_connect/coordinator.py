@@ -485,12 +485,19 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         except HovalApiError as err:
             raise UpdateFailed("Error fetching Hoval data") from err
 
-        # Detect new circuits for dynamic entity discovery
+        # Detect new circuits for dynamic entity discovery.
+        # Fire on any newly seen circuit, including the first one. Skipping the
+        # initial set (when `_known_circuits` was still empty) used to leave
+        # circuits stranded if the very first refresh came back without them
+        # — async_setup_entry's _add_new() ran against an empty circuits dict
+        # and the dispatcher then suppressed the catch-up signal. Each platform
+        # already deduplicates via its `known` set, so firing on the first
+        # discovery is a no-op when entities are already present.
         current_circuits = {
             f"{pid}_{path}" for pid, plant in data.plants.items() for path in plant.circuits
         }
         new_circuits = current_circuits - self._known_circuits
-        if self._known_circuits and new_circuits:
+        if new_circuits:
             _LOGGER.info("New circuits discovered: %s", new_circuits)
             async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)
         self._known_circuits = current_circuits
