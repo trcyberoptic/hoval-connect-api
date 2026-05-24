@@ -32,7 +32,8 @@ The integration side ships one supporting service (already implemented in v0.15.
 |---|---|---|
 | Boost mechanism | `fan.set_percentage` → temp-change override; end via `hoval_connect.reset_temporary_change` | Hoval `temporary-change` preserves the underlying program; the new HA service lets us cancel cleanly without re-applying the program. |
 | Outside-temp check | Both `outside < 25 °C` AND `outside < indoor_max` | The fixed cap covers "absolute moderate"; the dynamic check prevents blowing warmer air into a cooler house. |
-| Hysteresis | 0.5 °C buffer on both room and outside thresholds | Avoid flapping when a sensor sits on the threshold. |
+| Room exit threshold | Comfort target (`room_target`, default 21.0 °C) — boost ends when ALL non-excluded rooms are below it | The user wants the HV to actively cool the house, not just stop boosting the moment a room dips below 23 °C. The 2 °C gap from the 23 °C trigger doubles as natural hysteresis (no flapping). |
+| Outside hysteresis | 0.5 °C buffer (on 25.0, off 25.5) | Avoid flapping when outside sits on the threshold. |
 | Min boost duration | 15 minutes | Once started, suppress immediate re-toggle if a sensor dips for a few seconds. |
 | Standby handling | Don't boost if HV is in `standby` program | Honors the user's "no ventilation" intent (e.g. when away). |
 | User-override respect | If fan % ≠ boost % while we believe boost is active → release | Don't fight the user; they have priority. |
@@ -63,8 +64,8 @@ The integration side ships one supporting service (already implemented in v0.15.
 |---|---|---|---|
 | `window_start` | time | `09:00:00` | Local time. |
 | `window_end` | time | `22:30:00` | Local time. |
-| `room_high` | number | `23.0` °C | Boost-on threshold. |
-| `room_low` | number | `22.5` °C | Boost-off threshold (hysteresis). |
+| `room_high` | number | `23.0` °C | Boost-on threshold — any non-excluded room above this triggers a boost. |
+| `room_target` | number | `21.0` °C | Comfort target — boost ends only when ALL non-excluded rooms drop below this. Lower value = more aggressive cooling. The gap to `room_high` doubles as hysteresis. |
 | `outside_high` | number | `25.0` °C | Hard cap. |
 | `outside_low` | number | `25.5` °C | Hysteresis upper bound — boost ends if outside rises above this. |
 | `min_duration_minutes` | number | `15` | Suppress release within this many minutes after start, except on user-override. |
@@ -130,7 +131,7 @@ else:  # boost_active == off
 
 - `now > window_end` OR `now < window_start`
 - `outside_temp` unavailable OR `outside_temp > outside_low`
-- All non-excluded room sensors that are numbers satisfy `room_temp < room_low` (none of them are warm anymore)
+- All non-excluded room sensors that are numbers satisfy `room_temp < room_target` (every room has been cooled below the comfort target)
 - `program_select` becomes one of `excluded_programs`
 
 ### 5.7 Notifications
@@ -138,7 +139,7 @@ else:  # boost_active == off
 Both notifications go through `{{ notify_service }}` (rendered as a template at call time so the user can put `notify.mobile_app_pixel_8` etc).
 
 - **Start**: title "HV Boost gestartet", message includes the hottest non-excluded room (name + temp) and the current outside temp.
-- **End**: title "HV Boost beendet", message includes the exit reason (`"Außentemp zu warm"` / `"alle Räume abgekühlt"` / `"Zeitfenster vorbei"` / `"HV im Standby"`) and the current program from `program_select`.
+- **End**: title "HV Boost beendet", message includes the exit reason (`"Außentemp zu warm"` / `"Komforttemperatur erreicht"` / `"Zeitfenster vorbei"` / `"HV im Standby"`) and the current program from `program_select`.
 
 The user-override branch deliberately does NOT send a notification — the user just touched the slider and seeing a notification immediately after would be noise.
 
@@ -180,7 +181,7 @@ When the Blueprint is implemented:
 
 - **Cold start** (boost off, conditions met): triggering one room above 23 °C with outside at e.g. 22 °C → automation sets fan to 90 %, `boost_active` flips on, notify fires.
 - **Outside crosses 25.0 °C** while boost active and inside still hot: boost continues until outside crosses 25.5 °C (hysteresis), then exit.
-- **Min duration gate**: start boost, immediately move all rooms below 22.5 °C — boost should remain on for the configured minutes, then exit.
+- **Min duration gate**: start boost, immediately move all rooms below `room_target` — boost should remain on for the configured minutes, then exit.
 - **User override**: during boost, set fan to 50 % via the slider → `boost_active` flips off, no reset call, no notification.
 - **Restart**: start boost, restart HA, confirm `boost_active = on` and `boost_started_at` survived; next tick continues from there.
 - **Outside sensor unavailable**: pull the integration cable / mark sensor unavailable — boost ends if active.
