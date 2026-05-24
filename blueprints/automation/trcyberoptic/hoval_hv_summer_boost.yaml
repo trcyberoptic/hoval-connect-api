@@ -253,7 +253,9 @@ variables:
 
   exit_reason: >-
     {% if not now_in_window %}Zeitfenster vorbei
-    {% elif not outside_temp_ok or outside_temp > (outside_low | float) %}Außentemp zu warm
+    {% elif not outside_temp_ok %}Außentemp nicht verfügbar
+    {% elif outside_temp > (outside_low | float) %}Außentemp zu warm
+    {% elif (valid_room_states | length) == 0 %}Raumsensoren nicht verfügbar
     {% elif all_rooms_below_target %}Komforttemperatur erreicht
     {% elif program_excluded %}HV im Standby
     {% else %}none{% endif %}

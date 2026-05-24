@@ -139,7 +139,7 @@ else:  # boost_active == off
 Both notifications go through `{{ notify_service }}` (rendered as a template at call time so the user can put `notify.mobile_app_pixel_8` etc).
 
 - **Start**: title "HV Boost gestartet", message includes the hottest non-excluded room (name + temp) and the current outside temp.
-- **End**: title "HV Boost beendet", message includes the exit reason (`"Außentemp zu warm"` / `"Komforttemperatur erreicht"` / `"Zeitfenster vorbei"` / `"HV im Standby"`) and the current program from `program_select`.
+- **End**: title "HV Boost beendet", message includes the exit reason (`"Zeitfenster vorbei"` / `"Außentemp nicht verfügbar"` / `"Außentemp zu warm"` / `"Raumsensoren nicht verfügbar"` / `"Komforttemperatur erreicht"` / `"HV im Standby"`) and the current program from `program_select`.
 
 The user-override branch deliberately does NOT send a notification — the user just touched the slider and seeing a notification immediately after would be noise.
 
