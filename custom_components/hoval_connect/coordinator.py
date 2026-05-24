@@ -41,9 +41,18 @@ _V1_PROGRAM_MAP: dict[str, str] = {
 
 
 def _resolve_active_program_value(
-    programs: dict[str, Any], now: datetime
+    programs: dict[str, Any],
+    now: datetime,
+    active_program: str | None = None,
 ) -> tuple[str | None, str | None, float | None]:
     """Resolve the currently active week, day program name, and air volume.
+
+    Picks week1 or week2 from the programs blob based on `active_program`
+    (the circuit's `activeProgram` field). Falls back to week1 if the active
+    program is not a weekly schedule (ecoMode, standby, constant, manual, …)
+    or unset — the resolved day/phase is only meaningful when a weekly program
+    is actually running, so callers should treat the values as best-effort
+    informational in that case.
 
     Returns (week_name, day_program_name, current_phase_value).
     """
@@ -55,8 +64,9 @@ def _resolve_active_program_value(
     # Build lookup: id -> day config
     config_by_id: dict[int, dict] = {d["id"]: d for d in day_configs}
 
-    # Determine which week is active (week1 by default)
-    week = programs.get("week1", {})
+    # Pick week1 or week2 based on what the controller reports as active.
+    week_key = "week2" if active_program == "week2" else "week1"
+    week = programs.get(week_key, {})
     week_name = week.get("name")
     day_program_ids = week.get("dayProgramIds", [])
 
@@ -395,7 +405,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                             self._program_cache[path] = (programs, time.time())
                         now = dt_util.now()
                         week_name, day_name, phase_value = _resolve_active_program_value(
-                            programs, now
+                            programs, now, circuit_data.active_program
                         )
                         circuit_data.active_week_name = week_name
                         circuit_data.active_day_program_name = day_name

@@ -119,7 +119,7 @@ class TestResolveActiveProgramValue:
         phases: list[dict] | None = None,
         day_name: str = "Normal",
     ) -> dict:
-        """Build a minimal programs structure."""
+        """Build a minimal programs structure with both week1 and week2."""
         if phases is None:
             phases = [
                 {
@@ -138,6 +138,10 @@ class TestResolveActiveProgramValue:
                 "name": "Woche 1",
                 "dayProgramIds": [1, 1, 1, 1, 1, 2, 2],  # Mon-Fri=1, Sat-Sun=2
             },
+            "week2": {
+                "name": "Sommer",
+                "dayProgramIds": [3, 3, 3, 3, 3, 3, 3],  # Früh+Abend all week
+            },
             "dayPrograms": {
                 "dayConfigurations": [
                     {"id": 1, "name": day_name, "phases": phases},
@@ -149,6 +153,27 @@ class TestResolveActiveProgramValue:
                                 "start": {"hours": 8, "minutes": 0},
                                 "end": {"hours": 22, "minutes": 0},
                                 "value": 50,
+                            },
+                        ],
+                    },
+                    {
+                        "id": 3,
+                        "name": "Früh+Abend",
+                        "phases": [
+                            {
+                                "start": {"hours": 0, "minutes": 0},
+                                "end": {"hours": 9, "minutes": 0},
+                                "value": 40,
+                            },
+                            {
+                                "start": {"hours": 9, "minutes": 0},
+                                "end": {"hours": 19, "minutes": 0},
+                                "value": 15,
+                            },
+                            {
+                                "start": {"hours": 19, "minutes": 0},
+                                "end": {"hours": 24, "minutes": 0},
+                                "value": 40,
                             },
                         ],
                     },
@@ -215,6 +240,40 @@ class TestResolveActiveProgramValue:
         now = datetime(2024, 1, 8, 22, 0)  # Exactly at phase end/next start
         week, day, value = _resolve_active_program_value(programs, now)
         assert value == 30
+
+    def test_active_program_week2_picks_week2(self):
+        """User has activeProgram=week2 → must read week2's day config, not week1's."""
+        programs = self._make_programs()
+        now = datetime(2024, 1, 8, 10, 0)  # Monday 10:00
+        week, day, value = _resolve_active_program_value(programs, now, "week2")
+        assert week == "Sommer"
+        assert day == "Früh+Abend"
+        assert value == 15  # 09:00–19:00 phase
+
+    def test_active_program_week1_explicit(self):
+        """Explicit week1 must behave identically to default."""
+        programs = self._make_programs()
+        now = datetime(2024, 1, 8, 10, 0)  # Monday
+        week, day, value = _resolve_active_program_value(programs, now, "week1")
+        assert week == "Woche 1"
+        assert day == "Normal"
+        assert value == 60
+
+    def test_active_program_ecomode_falls_back_to_week1(self):
+        """Non-weekly active programs (ecoMode, standby, …) fall back to week1."""
+        programs = self._make_programs()
+        now = datetime(2024, 1, 8, 10, 0)
+        week, day, value = _resolve_active_program_value(programs, now, "ecoMode")
+        assert week == "Woche 1"  # fallback
+        assert day == "Normal"
+        assert value == 60
+
+    def test_default_active_program_none_falls_back_to_week1(self):
+        """Backwards-compat: callers passing no active_program still get week1."""
+        programs = self._make_programs()
+        now = datetime(2024, 1, 8, 10, 0)
+        week, day, value = _resolve_active_program_value(programs, now)
+        assert week == "Woche 1"
 
 
 class TestV1ProgramMap:
