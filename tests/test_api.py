@@ -35,6 +35,13 @@ from custom_components.hoval_connect.api import (  # noqa: E402
     HovalApiError,
     HovalAuthError,
     HovalConnectApi,
+    _minutes_until_local_midnight,
+    build_v4_temporary_change_body,
+)
+from custom_components.hoval_connect.const import (  # noqa: E402
+    DURATION_END_OF_PHASE,
+    DURATION_FOUR_HOURS,
+    DURATION_MIDNIGHT,
 )
 
 
@@ -364,23 +371,101 @@ class TestHovalConnectApiEndpoints:
         session.request.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_set_temporary_change(self):
+    async def test_set_temporary_change_posts_v4_with_end_of_phase(self):
         session = _make_session()
         auth_resp = _make_response(200, {"id_token": "token"})
         session.post = MagicMock(return_value=auth_resp)
 
-        # PAT fetch uses session.get
         pat_resp = _make_response(200, {"token": "pat-123"})
         session.get = MagicMock(return_value=pat_resp)
 
-        # Control call uses session.request via _request
         control_resp = _make_response(204)
         session.request = MagicMock(return_value=control_resp)
 
         api = HovalConnectApi(session, "test@example.com", "pass")
-        result = await api.set_temporary_change("plant-1", "1.2.3", 65, "FOUR")
+        result = await api.set_temporary_change("plant-1", "1.2.3", 65, DURATION_END_OF_PHASE)
 
         assert result is None  # 204 returns None
+        # Verify the request was sent to v4 with the right body
+        session.request.assert_called_once()
+        call = session.request.call_args
+        # First positional arg is method, second is url
+        assert call.args[0] == "POST"
+        assert "/v4/plants/plant-1/circuits/1.2.3/temporary-change" in call.args[1]
+        assert call.kwargs.get("json") == {"type": "endOfPhase", "value": 65}
+
+    @pytest.mark.asyncio
+    async def test_set_temporary_change_translates_legacy_four_to_v4_duration(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "tok"}))
+        session.get = MagicMock(return_value=_make_response(200, {"token": "pat"}))
+        session.request = MagicMock(return_value=_make_response(204))
+
+        api = HovalConnectApi(session, "u", "p")
+        await api.set_temporary_change("plant-1", "1.2.3", 21.5, DURATION_FOUR_HOURS)
+
+        body = session.request.call_args.kwargs.get("json")
+        # v4 duration is in MINUTES — 4 hours = 240 minutes
+        assert body == {"type": "duration", "value": 21.5, "duration": 240}
+
+
+class TestBuildV4TemporaryChangeBody:
+    """Tests for build_v4_temporary_change_body — pure function, no I/O.
+
+    The cloud's v4 temporary-change endpoint takes `duration` in MINUTES
+    (verified empirically against a live HV circuit on 2026-05-23: duration=30
+    accepted as 30 minutes, duration=1800 rejected as out-of-range = 30 hours).
+    """
+
+    def test_end_of_phase(self):
+        body = build_v4_temporary_change_body(70, DURATION_END_OF_PHASE)
+        assert body == {"type": "endOfPhase", "value": 70}
+
+    def test_four_hours_is_240_minutes(self):
+        body = build_v4_temporary_change_body(21.5, DURATION_FOUR_HOURS)
+        assert body == {"type": "duration", "value": 21.5, "duration": 240}
+
+    def test_midnight_minutes_pinned_to_now(self):
+        # Pin "now" to 22:30 → 90 minutes until 00:00
+        from datetime import datetime as _dt
+
+        now = _dt(2026, 5, 23, 22, 30, 0)
+        body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
+        assert body == {"type": "duration", "value": 22, "duration": 90}
+
+    def test_midnight_clamps_to_30_when_too_close(self):
+        """API rejects < 30 minutes; helper clamps to the lower bound."""
+        from datetime import datetime as _dt
+
+        now = _dt(2026, 5, 23, 23, 59, 0)  # 1 minute to midnight
+        body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
+        assert body["duration"] == 30  # clamped
+
+    def test_midnight_clamps_to_1440_when_far(self):
+        """Sanity: 24h is the upper bound the cloud accepts."""
+        from datetime import datetime as _dt
+
+        # 00:00 → 24h to next midnight → 1440 minutes (already at limit)
+        now = _dt(2026, 5, 23, 0, 0, 0)
+        body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
+        assert body["duration"] == 1440
+
+    def test_unknown_duration_falls_back_to_end_of_phase(self):
+        body = build_v4_temporary_change_body(50, "weirdOption")
+        assert body == {"type": "endOfPhase", "value": 50}
+
+    def test_minutes_until_local_midnight_basic(self):
+        from datetime import datetime as _dt
+
+        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 0, 0, 0)) == 1440
+        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 12, 0, 0)) == 720
+        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 23, 0, 0)) == 60
+
+    def test_minutes_until_local_midnight_clamped(self):
+        from datetime import datetime as _dt
+
+        # too close to midnight → clamped to lower bound 30
+        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 23, 59, 30)) == 30
 
     @pytest.mark.asyncio
     async def test_invalidate_plant_token(self):

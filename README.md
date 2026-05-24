@@ -58,7 +58,7 @@ Plants and circuits are discovered automatically from your account.
 
 **Options** (configurable per integration entry):
 - Turn-on mode: resume / week1 / week2
-- Temporary override duration: 4 hours / until midnight
+- Temporary override duration: until end of current phase (default, v0.15.0+) / 4 hours / until midnight
 - Polling interval (default: 60s)
 
 **Under the hood:**
@@ -67,7 +67,8 @@ Plants and circuits are discovered automatically from your account.
 - Parallel API fetches for circuits, live values, programs, events, and weather
 - Program cache (5min TTL) reduces API calls
 - Dynamic entity discovery — new circuits added without restart
-- All circuit reads/writes use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
+- All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
+- Temporary overrides use the `/v4` API (v0.15.0+) for forward-compatibility; `endOfPhase`/`duration` body shape, reset still on `/v3` DELETE
 
 ### Troubleshooting
 
@@ -380,9 +381,9 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Temporary value override. JSON body: `{"value": <float>, "duration": "fourHours"\|"midnight"}` |
-| DELETE | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Cancel active temporary override |
-| POST | `/v4/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Newer variant. JSON body: `{"type": "endOfPhase"\|"duration", "value": <float>, "duration": <hours>\|null}` — supports arbitrary durations |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Legacy variant (operationId `activateTemporaryChange_1`). JSON body: `{"value": <float>, "duration": "fourHours"\|"midnight"}` |
+| DELETE | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Cancel active temporary override (no v4 equivalent) |
+| POST | `/v4/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Current variant (used by integration v0.15.0+ and Hoval Connect Android app). JSON body: `{"type": "endOfPhase"\|"duration", "value": <float>, "duration": <minutes>\|null}` — `duration` in **minutes**, accepted range 30..1440 |
 | POST | `/v3/plants/{plantId}/circuits/{circuitPath}/programs/{program}` | 🔑🏭 | Activate program. `{program}` ∈ `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant` |
 | POST | `/v3/plants/{plantId}/circuits/{circuitPath}/air-quality-guided` | 🔑🏭 | Toggle air-quality-guided mode (HV only, requires sensor) |
 | POST | `/v3/plants/{plantId}/circuits/{circuitPath}/semi-automatic-cooling` | 🔑🏭 | Toggle semi-automatic cooling |

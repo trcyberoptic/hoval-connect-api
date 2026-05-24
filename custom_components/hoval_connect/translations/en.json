@@ -39,7 +39,7 @@
         },
         "data_description": {
           "turn_on_mode": "What happens when the fan is turned on from standby.",
-          "override_duration": "How long a manual fan speed change lasts before the time program resumes.",
+          "override_duration": "How long a manual override (fan speed or temperature) lasts before the time program resumes. 'Until end of current phase' uses the next program phase boundary.",
           "scan_interval": "How often to poll the Hoval API for updates."
         }
       }

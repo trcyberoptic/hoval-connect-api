@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_OVERRIDE_DURATION,
     DEFAULT_TURN_ON_MODE,
     DOMAIN,
+    DURATION_END_OF_PHASE,
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
     SCAN_INTERVAL_OPTIONS,
@@ -147,6 +148,7 @@ class HovalConnectOptionsFlow(OptionsFlow):
                         default=current_duration,
                     ): vol.In(
                         {
+                            DURATION_END_OF_PHASE: "Until end of current phase",
                             DURATION_FOUR_HOURS: "4 hours",
                             DURATION_MIDNIGHT: "Until midnight",
                         }
