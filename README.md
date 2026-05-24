@@ -73,11 +73,56 @@ Plants and circuits are discovered automatically from your account.
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 - Temporary overrides use the `/v4` API (v0.15.0+) for forward-compatibility; `endOfPhase`/`duration` body shape, reset still on `/v3` DELETE
 
-### Troubleshooting
+### Summer-boost Blueprint (optional)
 
-- **Circuit entities (fan, climate, select, circuit-level sensors) stuck on "unavailable" after upgrade or HA restart** — reload the config entry: *Settings → Devices & Services → Hoval Connect → ⋮ → Reload*. The plant-level entities (weather, events, online status) staying available while every circuit-level entity is unavailable is the giveaway. Fixed in **v0.14.2** (the dispatcher now catches up if the first poll after boot came back without circuits); earlier versions need the manual reload once.
-- **All entities `unavailable`, with `Circuits endpoint failed for plant …` in the log** — the cloud rejected the circuit list call; usually a transient outage. v0.14.0+ surfaces the failure as `unavailable` rather than silently keeping stale values, so wait for the next poll.
-- **Auth keeps failing** — re-trigger the reauth flow from the integration settings; ID-token caching means a stale password is re-tried for ~30 min before the integration prompts.
+A bundled Home Assistant Blueprint auto-boosts the HomeVent to 90 % on warm
+afternoons when at least one (non-office) room exceeds a comfort threshold AND
+the outside air is moderate AND cooler than indoors. The boost ends when every
+non-excluded room drops below a configurable comfort target (default 21 °C),
+when the outside air gets too warm, when the time window expires, when the HV
+goes into standby, or when the user changes the fan slider by hand.
+
+Blueprint source: [`blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml`](blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml).
+
+**Prerequisites:**
+
+1. Hoval Connect integration **v0.15.1 or later** (ships the
+   `hoval_connect.reset_temporary_change` service used to end the boost
+   cleanly).
+2. Two helpers that persist across HA restarts. Either create them in the UI
+   under **Settings → Devices & Services → Helpers**, or paste this into
+   `configuration.yaml`:
+
+   ```yaml
+   input_boolean:
+     hoval_hv_boost_active:
+       name: HV Boost aktiv
+       icon: mdi:fan-speed-3
+
+   input_datetime:
+     hoval_hv_boost_started_at:
+       name: HV Boost Startzeit
+       has_date: true
+       has_time: true
+   ```
+
+   Reload YAML configuration (or restart HA).
+
+**Install the Blueprint:**
+
+- *Option A — Import from URL:* In HA, **Settings → Automations & Scenes →
+  Blueprints → Import Blueprint** and paste the raw URL of the YAML file
+  (the `source_url` inside the file points there).
+- *Option B — Copy the file:* drop the YAML into
+  `<HA_config_dir>/blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml`
+  and reload Blueprints from the UI.
+
+**Configure:** **Settings → Automations & Scenes → Blueprints → Hoval HomeVent
+Sommer-Boost → Create Automation**. Pick the HV fan entity, program-select
+entity, outside-temperature sensor, the room sensors that should participate,
+the office sensor to exclude, the two helpers, and your notify service. The
+thresholds default to 23 °C / 21 °C / 25 °C / 25.5 °C / 15 min / 90 %; adjust
+to taste.
 
 ### Known Limitations
 
