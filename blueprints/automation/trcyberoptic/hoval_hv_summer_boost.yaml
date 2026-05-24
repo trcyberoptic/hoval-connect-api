@@ -320,3 +320,38 @@ action:
                               title: "HV Boost beendet"
                               message: >-
                                 Grund: {{ exit_reason | trim }}. Programm: {{ current_program }}.
+      # ─── Branch B: boost is currently inactive ───
+      - conditions:
+          - condition: template
+            value_template: "{{ not boost_active }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ should_enter }}"
+                sequence:
+                  - service: fan.set_percentage
+                    target:
+                      entity_id: !input fan_entity
+                    data:
+                      percentage: "{{ boost_percentage | int }}"
+                  - service: input_datetime.set_datetime
+                    target:
+                      entity_id: !input boost_started_at
+                    data:
+                      timestamp: "{{ as_timestamp(now()) | int }}"
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: !input boost_active
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ notify_service | length > 0 }}"
+                        sequence:
+                          - service: "{{ notify_service }}"
+                            data:
+                              title: "HV Boost gestartet"
+                              message: >-
+                                {% set hr = hottest_room %}
+                                {% if hr is not none %}{{ hr.name }} {{ hr.temp }} °C{% else %}Innenraum warm{% endif %},
+                                draußen {{ outside_temp }} °C.
