@@ -179,6 +179,86 @@ blueprint:
 mode: single
 max_exceeded: silent
 
+variables:
+  fan_entity: !input fan_entity
+  program_select: !input program_select
+  outside_temp_sensor: !input outside_temp_sensor
+  room_sensors: !input room_sensors
+  excluded_sensor: !input excluded_sensor
+  boost_active_entity: !input boost_active
+  boost_started_at_entity: !input boost_started_at
+  notify_service: !input notify_service
+  window_start: !input window_start
+  window_end: !input window_end
+  room_high: !input room_high
+  room_target: !input room_target
+  outside_high: !input outside_high
+  outside_low: !input outside_low
+  min_duration_minutes: !input min_duration_minutes
+  boost_percentage: !input boost_percentage
+  excluded_programs_raw: !input excluded_programs
+
+  excluded_programs: >-
+    {{ excluded_programs_raw.split(',') | map('trim') | reject('equalto', '') | list }}
+
+  outside_temp_state: "{{ states(outside_temp_sensor) }}"
+  outside_temp_ok: >-
+    {{ outside_temp_state not in ['unknown', 'unavailable', 'none', ''] }}
+  outside_temp: >-
+    {{ outside_temp_state | float(none) if outside_temp_ok else none }}
+
+  valid_room_states: >-
+    {% set ns = namespace(items=[]) %}
+    {% for s in expand(room_sensors) %}
+      {% if s.entity_id != excluded_sensor
+            and s.state not in ['unknown', 'unavailable', 'none', ''] %}
+        {% set ns.items = ns.items + [{'entity_id': s.entity_id, 'name': s.name, 'temp': s.state | float(0)}] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items }}
+
+  hot_rooms: >-
+    {{ valid_room_states | selectattr('temp', '>', room_high | float) | list }}
+  hottest_room: >-
+    {{ (valid_room_states | sort(attribute='temp', reverse=true) | list)[0]
+       if (valid_room_states | length) > 0 else none }}
+  indoor_max: >-
+    {{ (valid_room_states | map(attribute='temp') | max)
+       if (valid_room_states | length) > 0 else none }}
+  all_rooms_below_target: >-
+    {{ valid_room_states | length > 0
+       and (valid_room_states | selectattr('temp', '>=', room_target | float) | list | length) == 0 }}
+
+  now_in_window: >-
+    {% set now_t = now().strftime('%H:%M:%S') %}
+    {{ window_start <= now_t <= window_end }}
+
+  current_program: "{{ states(program_select) }}"
+  program_excluded: "{{ current_program in excluded_programs }}"
+
+  fan_percentage: >-
+    {{ state_attr(fan_entity, 'percentage') | int(none) if states(fan_entity) not in ['unknown', 'unavailable', 'none'] else none }}
+
+  boost_active: "{{ is_state(boost_active_entity, 'on') }}"
+  boost_started_at_ts: "{{ state_attr(boost_started_at_entity, 'timestamp') | float(0) }}"
+  min_duration_elapsed: >-
+    {{ (as_timestamp(now()) - boost_started_at_ts) >= (min_duration_minutes | int * 60) }}
+
+  should_enter: >-
+    {{ now_in_window
+       and outside_temp_ok and outside_temp < (outside_high | float)
+       and indoor_max is number and outside_temp < indoor_max
+       and (hot_rooms | length) > 0
+       and not program_excluded }}
+
+  exit_reason: >-
+    {% if not now_in_window %}Zeitfenster vorbei
+    {% elif not outside_temp_ok or outside_temp > (outside_low | float) %}Außentemp zu warm
+    {% elif all_rooms_below_target %}Komforttemperatur erreicht
+    {% elif program_excluded %}HV im Standby
+    {% else %}none{% endif %}
+  should_exit: "{{ exit_reason | trim != 'none' }}"
+
 trigger: []
 
 action: []
