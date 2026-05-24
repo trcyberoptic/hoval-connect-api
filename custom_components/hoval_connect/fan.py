@@ -103,7 +103,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
 
     @property
     def _override_duration(self) -> str:
-        """Get override duration enum from options (FOUR or MIDNIGHT)."""
+        """Get override duration enum from options."""
         return self._entry.options.get(CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION)
 
     @property

@@ -57,11 +57,20 @@ CIRCUIT_TYPE_NAMES = {
 OPERATION_MODE_REGULAR = "REGULAR"
 OPERATION_MODE_STANDBY = "standby"
 
-# Temporary change duration options (API enum)
-DURATION_FOUR_HOURS = "FOUR"
-DURATION_MIDNIGHT = "MIDNIGHT"
+# Temporary change duration options
+#
+# v4 (`POST /v4/.../temporary-change`) takes a richer body:
+#   {type: "endOfPhase" | "duration", value: <float>, duration: <minutes>|null}
+# Note the `duration` field is in MINUTES, not seconds (verified empirically;
+# OpenAPI declares it loosely as a double). We expose three user-facing choices
+# and translate them into v4 bodies at the call site in api.py. The legacy
+# string values "FOUR" and "MIDNIGHT" remain the canonical stored option
+# values so existing user setups keep working without a config-entry migration.
+DURATION_END_OF_PHASE = "endOfPhase"  # v4-native: ends at next program-phase boundary
+DURATION_FOUR_HOURS = "FOUR"  # legacy stored value → v4 type=duration, duration=240 min
+DURATION_MIDNIGHT = "MIDNIGHT"  # legacy stored value → v4 type=duration, duration=until midnight
 CONF_OVERRIDE_DURATION = "override_duration"
-DEFAULT_OVERRIDE_DURATION = DURATION_FOUR_HOURS
+DEFAULT_OVERRIDE_DURATION = DURATION_END_OF_PHASE  # safest default — works for HV and HK
 
 # Turn-on mode options (what happens when fan is turned on from standby)
 TURN_ON_RESUME = "resume"

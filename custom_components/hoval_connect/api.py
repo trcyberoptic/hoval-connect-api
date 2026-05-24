@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -12,6 +13,9 @@ import aiohttp
 from .const import (
     BASE_URL,
     CLIENT_ID,
+    DURATION_END_OF_PHASE,
+    DURATION_FOUR_HOURS,
+    DURATION_MIDNIGHT,
     ID_TOKEN_TTL,
     IDP_URL,
     PLANT_TOKEN_TTL,
@@ -32,6 +36,53 @@ class HovalAuthError(Exception):
 
 class HovalApiError(Exception):
     """General API error."""
+
+
+def _minutes_until_local_midnight(now: datetime | None = None) -> int:
+    """Minutes from `now` (default: naive local now) until the next 00:00.
+
+    Used by build_v4_temporary_change_body for the MIDNIGHT legacy option.
+    Naive local datetime is the right choice here: the Hoval controller schedules
+    in its local wall clock, which on Home Assistant Operating System is the
+    same as the host's local time. Clamped to the 30-1440 minute window the
+    cloud accepts.
+    """
+    if now is None:
+        now = datetime.now()
+    next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    minutes = int((next_midnight - now).total_seconds() // 60)
+    return max(30, min(1440, minutes))
+
+
+def build_v4_temporary_change_body(
+    value: float, duration: str, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Build the v4 temporary-change request body for the given user option.
+
+    The v4 endpoint takes `{type: "endOfPhase"|"duration", value: <float>,
+    duration: <minutes>|null}`. Empirically, the `duration` field is in
+    MINUTES (not seconds, despite OpenAPI showing it as a `double`), and the
+    cloud accepts roughly 30..1440 (the same range the Hoval Connect Android
+    app's CustomDuration picker exposes). HK and HV both accept the format;
+    earlier reports of HV-only failure traced back to a duration value out of
+    range, not to a circuit-type limitation.
+
+    Pure function — broken out for unit testing. `now` is only used when
+    `duration == DURATION_MIDNIGHT` and exists so tests can pin time.
+    """
+    if duration == DURATION_END_OF_PHASE:
+        return {"type": "endOfPhase", "value": value}
+    if duration == DURATION_FOUR_HOURS:
+        return {"type": "duration", "value": value, "duration": 4 * 60}
+    if duration == DURATION_MIDNIGHT:
+        return {
+            "type": "duration",
+            "value": value,
+            "duration": _minutes_until_local_midnight(now),
+        }
+    # Unknown option — degrade to the safest mode that works for both HV and HK.
+    _LOGGER.warning("Unknown override duration %r; falling back to endOfPhase", duration)
+    return {"type": "endOfPhase", "value": value}
 
 
 class HovalConnectApi:
@@ -276,31 +327,44 @@ class HovalConnectApi:
         return await self.set_program(plant_id, circuit_path, mode)
 
     async def set_temporary_change(
-        self, plant_id: str, circuit_path: str, value: float, duration: str = "FOUR"
+        self,
+        plant_id: str,
+        circuit_path: str,
+        value: float,
+        duration: str = DURATION_END_OF_PHASE,
     ) -> Any:
-        """Set a temporary value override (works alongside an active time program).
+        """Activate a temporary value override on a circuit.
 
-        v3: POST .../{circuitPath}/temporary-change with JSON body
-            {"value": <float>, "duration": "fourHours" | "midnight"}
+        v4: POST /v4/plants/{plantId}/circuits/{circuitPath}/temporary-change with
+            {"type": "endOfPhase"|"duration", "value": <float>,
+             "duration": <seconds>|null}
         For HV the value is the air volume percentage (15..100); for HK it is the
         temperature in degrees Celsius (e.g. 21.5).
 
-        The historical FOUR / MIDNIGHT enum values from stored options are accepted
-        for backwards compatibility and translated to the v3 camelCase form.
+        `duration` accepts the user-facing enum from CONF_OVERRIDE_DURATION:
+        - DURATION_END_OF_PHASE ("endOfPhase") — body type=endOfPhase, no
+          duration. Safest default — overrides the current schedule until the
+          next program phase boundary.
+        - DURATION_FOUR_HOURS ("FOUR") — body type=duration, duration=240
+          (minutes; v4 uses minutes, not seconds, despite the loose OpenAPI).
+        - DURATION_MIDNIGHT ("MIDNIGHT") — body type=duration, duration=minutes
+          until next local midnight, clamped to 30..1440.
+
+        v3 (`/v3/.../temporary-change`) still works at the time of writing but
+        is marked legacy by the cloud (operationId `activateTemporaryChange_1`).
+        Reset is still v3-only: see `reset_temporary_change`.
         """
-        duration_v3 = {"FOUR": "fourHours", "MIDNIGHT": "midnight"}.get(
-            duration, duration[:1].lower() + duration[1:]
-        )
-        body = {"value": value, "duration": duration_v3}
+        body = build_v4_temporary_change_body(value, duration)
         _LOGGER.debug(
-            "set_temporary_change: plant=%s circuit=%s body=%s",
+            "set_temporary_change: plant=%s circuit=%s duration=%s body=%s",
             plant_id,
             circuit_path,
+            duration,
             body,
         )
         result = await self._request(
             "POST",
-            f"/v3/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
+            f"/v4/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
             plant_id=plant_id,
             json_data=body,
         )
