@@ -1,0 +1,12 @@
+reset_temporary_change:
+  name: Reset temporary change
+  description: >-
+    Cancel an active temporary override on a Hoval circuit (HomeVent fan or
+    heating-circuit climate) so the underlying time program takes over again.
+    Targets that aren't bound to a circuit are rejected.
+  target:
+    entity:
+      - integration: hoval_connect
+        domain:
+          - fan
+          - climate

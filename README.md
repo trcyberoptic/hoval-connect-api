@@ -61,6 +61,9 @@ Plants and circuits are discovered automatically from your account.
 - Temporary override duration: until end of current phase (default, v0.15.0+) / 4 hours / until midnight
 - Polling interval (default: 60s)
 
+**Services:**
+- `hoval_connect.reset_temporary_change` — cancel an active temporary override on a HomeVent fan or heating-circuit climate entity, returning control to the underlying time program. Target = the fan or climate entity. Useful in automations that need to end a manual boost cleanly (instead of waiting for the override to expire).
+
 **Under the hood:**
 - 2-step token management (ID token + Plant Access Token) with TTL caching and auto-refresh
 - Skips API calls when plant is offline, invalidates token cache on reconnect
