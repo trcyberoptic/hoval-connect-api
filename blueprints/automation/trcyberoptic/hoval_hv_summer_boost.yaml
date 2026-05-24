@@ -1,0 +1,184 @@
+blueprint:
+  name: Hoval HomeVent Sommer-Boost
+  description: >-
+    Bläst die Hoval HomeVent automatisch auf 90 %, wenn an einem warmen
+    Nachmittag mindestens ein nicht-ausgeschlossener Raum eine
+    Komfortschwelle überschreitet UND die Außenluft moderat UND kühler als
+    drinnen ist. Beendet den Boost, sobald ALLE Räume unter der
+    Komfort-Zieltemperatur liegen, das Zeitfenster vorbei ist, die Außenluft
+    zu warm wird, der Benutzer den Slider manuell ändert oder die HV in
+    Standby geht. Voraussetzung: zwei Helper (input_boolean +
+    input_datetime), die in der README beschrieben sind, sowie das
+    Integration-Plugin in mindestens Version v0.15.1 (liefert den Service
+    hoval_connect.reset_temporary_change).
+  domain: automation
+  source_url: https://github.com/trcyberoptic/hoval-connect-api/blob/master/blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    fan_entity:
+      name: HomeVent Fan-Entity
+      description: Die HV-Fan-Entity der Hoval-Integration.
+      selector:
+        entity:
+          domain: fan
+          integration: hoval_connect
+    program_select:
+      name: HomeVent Programm-Select-Entity
+      description: >-
+        Die Program-Select-Entity der Hoval-Integration. Wird gelesen, um
+        Standby-Suppression und den Programmnamen in Notifications zu
+        liefern. Wird nicht zum Beenden des Boosts geschrieben.
+      selector:
+        entity:
+          domain: select
+          integration: hoval_connect
+    outside_temp_sensor:
+      name: Außentemperatur-Sensor
+      description: >-
+        Quelle der Außentemperatur. Üblicherweise sensor.*_outside_temperature
+        aus der Hoval-Integration; jede andere Temperatur-Quelle ist auch ok.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    room_sensors:
+      name: Raumtemperatur-Sensoren
+      description: Räume die im Trigger und im Komfort-Ziel-Check mitzählen.
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+          multiple: true
+    excluded_sensor:
+      name: Auszuschließender Sensor (optional)
+      description: >-
+        Ein Sensor, der trotz Aufnahme in `room_sensors` ignoriert werden
+        soll — z. B. das Büro. Leer lassen wenn kein Ausschluss gewünscht.
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    boost_active:
+      name: Helper input_boolean.* (Boost aktiv)
+      description: >-
+        Vom Benutzer angelegter input_boolean. Spiegelt wider, ob die
+        Automation aktuell boostet. Überlebt HA-Restart. Siehe README.
+      selector:
+        entity:
+          domain: input_boolean
+    boost_started_at:
+      name: Helper input_datetime.* (Boost-Startzeit)
+      description: >-
+        Vom Benutzer angelegter input_datetime mit Datum+Zeit. Markiert den
+        Startzeitpunkt des aktuellen Boosts für das min_duration-Gate.
+      selector:
+        entity:
+          domain: input_datetime
+    notify_service:
+      name: Notify-Service
+      description: >-
+        Vollständiger Service-Name für Push-Benachrichtigungen, z. B.
+        notify.mobile_app_pixel_8. Leer lassen oder notify.notify nutzen, um
+        Notifications zu deaktivieren bzw. an alle aktiven Notifier zu schicken.
+      default: notify.notify
+      selector:
+        text:
+    window_start:
+      name: Zeitfenster-Start
+      description: Lokale Uhrzeit ab der die Automation evaluiert.
+      default: "09:00:00"
+      selector:
+        time:
+    window_end:
+      name: Zeitfenster-Ende
+      description: Lokale Uhrzeit ab der nicht mehr geboostet wird; aktiver Boost wird erzwungen beendet.
+      default: "22:30:00"
+      selector:
+        time:
+    room_high:
+      name: Trigger-Temperatur (°C)
+      description: Boost beginnt sobald irgendein nicht-ausgeschlossener Raum diese Schwelle überschreitet.
+      default: 23.0
+      selector:
+        number:
+          min: 18.0
+          max: 30.0
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+    room_target:
+      name: Komfort-Zieltemperatur (°C)
+      description: >-
+        Boost endet erst wenn ALLE nicht-ausgeschlossenen Räume diese Schwelle
+        unterschritten haben. Niedriger = aggressivere Kühlung. Der Abstand
+        zu `room_high` wirkt zusätzlich als Hysterese.
+      default: 21.0
+      selector:
+        number:
+          min: 15.0
+          max: 25.0
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+    outside_high:
+      name: Außentemperatur-Cap (°C)
+      description: Boost beginnt nur wenn die Außenluft unter diesem Wert liegt (verhindert Warmluftzufuhr).
+      default: 25.0
+      selector:
+        number:
+          min: 15.0
+          max: 35.0
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+    outside_low:
+      name: Außentemperatur-Exit (°C)
+      description: Aktiver Boost wird beendet sobald die Außenluft diesen Wert überschreitet. Sollte größer als `outside_high` sein (Hysterese).
+      default: 25.5
+      selector:
+        number:
+          min: 15.0
+          max: 35.0
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: box
+    min_duration_minutes:
+      name: Mindest-Boost-Dauer (Minuten)
+      description: Einmal gestartet bleibt der Boost mindestens so lange an (außer bei manuellem Override).
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 5
+          unit_of_measurement: "min"
+          mode: box
+    boost_percentage:
+      name: Boost-Lüfterstufe (%)
+      description: Lüfter-Prozentwert beim Boost. Wird auch zur Erkennung von manuellem Override verwendet.
+      default: 90
+      selector:
+        number:
+          min: 30
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+          mode: slider
+    excluded_programs:
+      name: Programme die Boost unterdrücken
+      description: >-
+        Kommaseparierte Liste von Hoval-Programmwerten in denen der Boost NICHT
+        startet bzw. der laufende Boost beendet wird. Kanonische Werte:
+        constant, ecoMode, standby, week1, week2, manual, externalConstant.
+      default: "standby"
+      selector:
+        text:
+
+mode: single
+max_exceeded: silent
+
+trigger: []
+
+action: []
