@@ -276,4 +276,47 @@ trigger:
   - platform: time_pattern
     minutes: "/1"
 
-action: []
+action:
+  - choose:
+      # ─── Branch A: boost is currently active ───
+      - conditions:
+          - condition: template
+            value_template: "{{ boost_active }}"
+        sequence:
+          - choose:
+              # User manually changed the fan speed → release silently
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ fan_percentage is not none
+                         and fan_percentage != (boost_percentage | int) }}
+                sequence:
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: !input boost_active
+              # Min duration not elapsed → leave running
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not min_duration_elapsed }}"
+                sequence: []
+              # An exit reason is active → cancel temp-change + notify
+              - conditions:
+                  - condition: template
+                    value_template: "{{ should_exit }}"
+                sequence:
+                  - service: hoval_connect.reset_temporary_change
+                    target:
+                      entity_id: !input fan_entity
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: !input boost_active
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ notify_service | length > 0 }}"
+                        sequence:
+                          - service: "{{ notify_service }}"
+                            data:
+                              title: "HV Boost beendet"
+                              message: >-
+                                Grund: {{ exit_reason | trim }}. Programm: {{ current_program }}.
