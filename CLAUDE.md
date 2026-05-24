@@ -33,7 +33,8 @@ The integration lives in `custom_components/hoval_connect/`. User setup is email
 - `binary_sensor.py` — Plant online status + error/warning status
 - `diagnostics.py` — Diagnostic export with PII redaction
 - `const.py` — API URLs, OAuth client ID, token TTLs, polling interval, circuit types, duration enums
-- `__init__.py` — Entry setup, platform forwarding, `plant_device_info`/`circuit_device_info` helpers
+- `__init__.py` — Entry setup, platform forwarding, `plant_device_info`/`circuit_device_info` helpers, `hoval_connect.reset_temporary_change` service
+- `services.yaml` — Service definitions surfaced in HA's UI (currently `reset_temporary_change`, target = fan/climate)
 
 ### Entity architecture
 
@@ -58,6 +59,12 @@ python -m pytest tests/ -v
 ruff check custom_components/ tests/
 ruff format --check custom_components/ tests/
 ```
+
+## Services
+
+The integration exposes one HA service in addition to platform-standard ones:
+
+- `hoval_connect.reset_temporary_change` — target a `fan` or `climate` entity of a Hoval circuit; the integration translates the entity to its `(plant_id, circuit_path)` and calls `api.reset_temporary_change` (the v3 DELETE on `/v3/.../temporary-change`). Resolution walks `coordinator.data.plants[].circuits[]` because both `plant_id` and `circuit_path` can contain underscores — string-splitting `unique_id` is unreliable. Multiple entities of the same circuit are deduplicated so a target with several entity_ids only fires one DELETE. Plant-level entities (e.g. `binary_sensor.*_online`) are rejected with `ServiceValidationError` because they don't bind to a circuit. The service goes through `coordinator.async_control_and_refresh`, so the optimistic mode override + post-call refresh stay consistent with the rest of the integration.
 
 ## Running Examples
 
