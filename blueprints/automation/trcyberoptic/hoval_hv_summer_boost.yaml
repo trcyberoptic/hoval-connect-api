@@ -259,6 +259,21 @@ variables:
     {% else %}none{% endif %}
   should_exit: "{{ exit_reason | trim != 'none' }}"
 
-trigger: []
+trigger:
+  - platform: state
+    entity_id: !input room_sensors
+  - platform: state
+    entity_id: !input outside_temp_sensor
+  - platform: state
+    entity_id: !input fan_entity
+    attribute: percentage
+  - platform: state
+    entity_id: !input program_select
+  - platform: time
+    at: !input window_start
+  - platform: time
+    at: !input window_end
+  - platform: time_pattern
+    minutes: "/1"
 
 action: []
