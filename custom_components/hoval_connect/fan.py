@@ -143,16 +143,24 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        val = circuit.live_values.get("airVolume")
+        # Prefer the setpoint (target_value) over the live measurement
+        # (airVolume): the slider reflects what the user has set; live
+        # airVolume lags as the fan physically ramps to the new target.
+        val = circuit.target_value
         if val is None:
-            val = circuit.target_value
+            val = circuit.live_values.get("airVolume")
         if val is None:
             return None
         return max(0, min(100, int(float(val))))
 
     async def _send_percentage(self, percentage: int) -> None:
-        """Actually send the percentage to the API (called after debounce)."""
-        self._pending_percentage = None
+        """Actually send the percentage to the API (called after debounce).
+
+        Keeps `_pending_percentage` set across the whole API call + refresh
+        so the slider does not snap back to the stale, ~30-second-old
+        coordinator data during the in-flight request. Clears it only after
+        the refresh has fetched the new setpoint from Hoval.
+        """
         try:
             await self.coordinator.async_control_and_refresh(
                 self.coordinator.api.set_temporary_change(
@@ -165,7 +173,18 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 mode_override=OPERATION_MODE_REGULAR,
             )
         except HovalApiError as err:
+            # Revert pending so UI shows actual circuit state on failure,
+            # but only if the user has not queued a newer value in between.
+            if self._pending_percentage == percentage:
+                self._pending_percentage = None
+                self.async_write_ha_state()
             raise HomeAssistantError(f"Failed to set fan speed: {err}") from err
+        # Only clear pending if it still matches what we just sent — the user
+        # may have moved the slider again during the in-flight API call, in
+        # which case a newer debounce is already pending.
+        if self._pending_percentage == percentage:
+            self._pending_percentage = None
+            self.async_write_ha_state()
 
     async def _debounced_set(self, percentage: int) -> None:
         """Wait for debounce period, then send the latest percentage."""
