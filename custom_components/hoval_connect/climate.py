@@ -89,6 +89,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_climate"
         self._attr_device_info = circuit_device_info(plant_id, circuit_data)
+        self._pending_temperature: float | None = None
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -123,16 +124,24 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         """Return the target temperature."""
+        # Show pending value immediately so the card does not snap back to
+        # stale data during the in-flight API call + refresh window.
+        if self._pending_temperature is not None:
+            return self._pending_temperature
         circuit = self._circuit
         if circuit is None:
             return None
+        # Prefer the live setpoint reading; fall back to the circuit-list
+        # `target_value` (also a setpoint, in degrees for HK).
         val = circuit.live_values.get("targetTemperature")
-        if val is not None:
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                pass
-        return None
+        if val is None:
+            val = circuit.target_value
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -198,20 +207,31 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         temperature = kwargs.get("temperature")
         if temperature is None:
             return
+        temperature = float(temperature)
         duration = self._entry.options.get(
             CONF_OVERRIDE_DURATION,
             DEFAULT_OVERRIDE_DURATION,
         )
+        # Hold the new setpoint across the API call + refresh so the card
+        # does not flicker back to the old value during the ~3-5s window.
+        self._pending_temperature = temperature
+        self.async_write_ha_state()
         try:
             await self.coordinator.async_control_and_refresh(
                 self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
-                    value=float(temperature),
+                    value=temperature,
                     duration=duration,
                 ),
                 circuit_path=self._circuit_path,
                 mode_override=OPERATION_MODE_REGULAR,
             )
         except HovalApiError as err:
+            if self._pending_temperature == temperature:
+                self._pending_temperature = None
+                self.async_write_ha_state()
             raise HomeAssistantError(f"Failed to set temperature: {err}") from err
+        if self._pending_temperature == temperature:
+            self._pending_temperature = None
+            self.async_write_ha_state()

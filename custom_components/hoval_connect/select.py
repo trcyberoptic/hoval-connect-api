@@ -91,21 +91,41 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         return plant.circuits.get(self._circuit_path)
 
     def _display_name(self, api_key: str) -> str:
-        """Get display name for an API program key."""
+        """Get display name for an API program key.
+
+        If a default name (e.g. "Eco mode") collides with a user-customised
+        schedule name in `program_names`, disambiguate by suffixing the API
+        key — otherwise the `options` list would contain two identical
+        entries and the reverse lookup could never tell them apart.
+        """
         circuit = self._circuit
         if circuit and api_key in circuit.program_names:
             return circuit.program_names[api_key]
-        return DEFAULT_NAMES.get(api_key, api_key)
+        default = DEFAULT_NAMES.get(api_key, api_key)
+        if circuit:
+            custom_values = set(circuit.program_names.values())
+            if default in custom_values:
+                return f"{default} ({api_key})"
+        return default
 
     def _api_key_from_display(self, display: str) -> str:
-        """Reverse-lookup: display name → API key."""
+        """Reverse-lookup: display name → API key.
+
+        Custom `program_names` win (so the user-renamed schedule round-trips
+        correctly). The fallback to DEFAULT_NAMES also accepts the
+        disambiguated form `"<default> (<api_key>)"` emitted by
+        `_display_name` when a default collides with a custom schedule
+        name — without this, "Eco mode (ecoMode)" would fall through to the
+        literal-return branch and the integration would send an invalid
+        API key.
+        """
         circuit = self._circuit
         if circuit:
             for key, name in circuit.program_names.items():
                 if name == display:
                     return key
         for key, name in DEFAULT_NAMES.items():
-            if name == display:
+            if name == display or f"{name} ({key})" == display:
                 return key
         return display
 
