@@ -197,8 +197,17 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         _LOGGER.debug("async_set_percentage called: %d%%", percentage)
         if percentage == 0:
             self._cancel_debounce()
-            self._pending_percentage = None
-            await self.async_turn_off()
+            # Show 0 immediately while turn_off propagates; the previous
+            # behaviour cleared pending here and the slider briefly snapped
+            # back to the old setpoint until `is_on` flipped to False.
+            self._pending_percentage = 0
+            self.async_write_ha_state()
+            try:
+                await self.async_turn_off()
+            finally:
+                if self._pending_percentage == 0:
+                    self._pending_percentage = None
+                    self.async_write_ha_state()
             return
         # Store pending value and update UI immediately
         self._pending_percentage = percentage

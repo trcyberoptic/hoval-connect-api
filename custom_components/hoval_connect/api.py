@@ -179,14 +179,25 @@ class HovalConnectApi:
         plant_id: str | None = None,
         params: dict[str, str] | None = None,
         json_data: Any = None,
-        _retry: bool = True,
     ) -> Any:
-        """Make an authenticated API request with token retry and transient error backoff."""
-        headers = await self._headers(plant_id)
+        """Make an authenticated API request with token retry and transient error backoff.
+
+        At most one 401-driven token refresh is allowed per call, and it
+        does not consume an attempt from the transient-error budget. The
+        previous implementation recursed on 401 with its own full retry
+        budget, so combined 401 + 429/5xx flows could fire up to
+        ``2 * _MAX_RETRIES`` requests.
+        """
         url = f"{BASE_URL}{path}"
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+        token_refreshed = False
+        attempt = 0
 
-        for attempt in range(_MAX_RETRIES):
+        while attempt < _MAX_RETRIES:
+            # Re-fetch headers every iteration: after a 401 we cleared the
+            # cached tokens, and a stale header dict would re-send the
+            # expired token.
+            headers = await self._headers(plant_id)
             try:
                 async with self._session.request(
                     method,
@@ -201,17 +212,13 @@ class HovalConnectApi:
                         self._id_token = None
                         if plant_id:
                             self._pat_cache.pop(plant_id, None)
-                        if _retry:
-                            _LOGGER.debug("Token expired, refreshing and retrying")
-                            return await self._request(
-                                method,
-                                path,
-                                plant_id,
-                                params,
-                                json_data,
-                                _retry=False,
-                            )
-                        raise HovalAuthError("Authentication failed")
+                        if token_refreshed:
+                            raise HovalAuthError("Authentication failed")
+                        token_refreshed = True
+                        _LOGGER.debug("Token expired, refreshing and retrying")
+                        # Do not increment `attempt` — token refresh is a
+                        # one-shot extra request, not a transient retry.
+                        continue
                     if resp.status in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES - 1:
                         delay = _RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
@@ -224,6 +231,7 @@ class HovalConnectApi:
                             _MAX_RETRIES,
                         )
                         await asyncio.sleep(delay)
+                        attempt += 1
                         continue
                     if resp.status >= 400:
                         body = await resp.text()
@@ -246,6 +254,7 @@ class HovalConnectApi:
                         _MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
                 raise HovalApiError(f"Request timeout: {err}") from err
             except aiohttp.ClientError as err:
@@ -260,6 +269,7 @@ class HovalConnectApi:
                         _MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
                 raise HovalApiError(f"Connection error: {err}") from err
 
