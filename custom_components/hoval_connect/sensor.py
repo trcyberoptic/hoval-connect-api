@@ -20,12 +20,13 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
-from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW
+from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
@@ -306,18 +307,25 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     known: set[str] = set()
 
+    ent_reg = er.async_get(hass)
+
     def _add_new() -> None:
         entities: list[SensorEntity] = []
         for plant_id, plant_data in coordinator.data.plants.items():
             # Circuit-level sensors
             for path, circuit in plant_data.circuits.items():
                 for description in CIRCUIT_SENSOR_DESCRIPTIONS:
+                    uid = f"{plant_id}_{path}_{description.key}"
+                    # Grandfather entities that already exist in the registry: when a
+                    # circuit_types filter is newly added/tightened (e.g.
+                    # outside_temperature → HV/HK only in #5), existing users keep the
+                    # entity they already have; only fresh circuits get the filtered set.
                     if (
                         description.circuit_types is not None
                         and circuit.circuit_type not in description.circuit_types
+                        and ent_reg.async_get_entity_id("sensor", DOMAIN, uid) is None
                     ):
                         continue
-                    uid = f"{plant_id}_{path}_{description.key}"
                     if uid in known:
                         continue
                     known.add(uid)
