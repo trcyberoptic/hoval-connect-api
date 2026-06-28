@@ -44,6 +44,8 @@ Plants and circuits are discovered automatically from your account.
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
 - **All:** Operation mode, active week program, active day program
 
+> Outside temperature is created only on HV/HK circuits (v0.15.4+). Upgrading from ≤0.15.3: any outside-temperature sensors you already have on BL/WW circuits are preserved — only newly-discovered circuits get the filtered set.
+
 **Plant-level sensors:**
 - Weather condition and forecast temperature
 - Latest event type, message, and timestamp
