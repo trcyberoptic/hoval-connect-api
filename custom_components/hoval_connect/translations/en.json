@@ -99,6 +99,48 @@
       },
       "weather_temperature": {
         "name": "Forecast temperature"
+      },
+      "flow_temp_actual": {
+        "name": "Flow temperature"
+      },
+      "flow_temp_target": {
+        "name": "Flow temperature setpoint"
+      },
+      "room_temp_target": {
+        "name": "Room temperature setpoint"
+      },
+      "boiler_temp_actual": {
+        "name": "Heat generator temperature"
+      },
+      "boiler_temp_target": {
+        "name": "Heat generator setpoint"
+      },
+      "return_temperature": {
+        "name": "Return temperature"
+      },
+      "operating_hours": {
+        "name": "Operating hours"
+      },
+      "operating_hours_over_50": {
+        "name": "Operating hours >50%"
+      },
+      "operation_cycles": {
+        "name": "Switching cycles"
+      },
+      "heat_amount": {
+        "name": "Heat produced"
+      },
+      "total_energy": {
+        "name": "Electrical energy consumed"
+      },
+      "ww_temp_target": {
+        "name": "Hot water setpoint"
+      },
+      "ww_temp_top": {
+        "name": "Hot water temperature top"
+      },
+      "ww_temp_bottom": {
+        "name": "Hot water temperature bottom"
       }
     },
     "climate": {
