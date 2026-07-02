@@ -133,6 +133,39 @@
       "total_energy": {
         "name": "Electrical energy consumed"
       },
+      "modulation": {
+        "name": "Modulation"
+      },
+      "bl_status": {
+        "name": "Boiler status"
+      },
+      "bl_fa_status": {
+        "name": "Boiler FA status",
+        "state": {
+          "hp_off": "WP AUS",
+          "hp_heating": "Heizen mit WP",
+          "active_cooling": "Aktivkühlen",
+          "blocked": "Sperre (Bivalenz, WW, ...)",
+          "hp_hot_water": "Warmwasser mit WP",
+          "hp_frost_protection": "WP-Frostschutz",
+          "hp_temperature_too_low": "WP-Temperatur zu tief",
+          "hp_flow_too_high": "WP-Vorlauf zu hoch",
+          "hp_defrost": "Abtauen",
+          "hp_passive_cooling": "Passivkühlen",
+          "hd_fault": "HD-Störung (Sensor oder Schalter)",
+          "low_pressure_fault": "Niederdruckstörung",
+          "restart_delay": "Wiedereinschaltverzögerung",
+          "energy_producer_lock": "EW-,Energieerzeuger-Sperre",
+          "primary_flow_time": "Vorlaufzeit Primär",
+          "primary_post_run_time": "Nachlaufzeit Primär",
+          "mop": "MOP",
+          "failed_defrost": "Erfolglose Abtauung",
+          "condenser_pump_flow_time": "Vorlaufzeit Kondenserpumpe",
+          "inverter_modbus_fault": "Störung Inverter/Modbus-Kommunikation",
+          "groundwater_frost_protection": "Grundwasserfrostschutz",
+          "compressor_limit": "Begrenzung Verdichter"
+        }
+      },
       "ww_temp_target": {
         "name": "Hot water setpoint"
       },

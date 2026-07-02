@@ -26,7 +26,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
-from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN
+from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN, BOILER_FA_STATES
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
@@ -221,6 +221,31 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("totalEnergy"),
+    ),
+    HovalSensorEntityDescription(
+        key="modulation",
+        translation_key="modulation",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("modulation"),
+    ),
+    HovalSensorEntityDescription(
+        key="bl_status",
+        translation_key="bl_status",
+        icon="mdi:information-outline",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("status"),
+    ),
+    HovalSensorEntityDescription(
+        key="bl_fa_status",
+        translation_key="bl_fa_status",
+        icon="mdi:information-outline",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(BOILER_FA_STATES.values()),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: BOILER_FA_STATES.get(v) if (v := c.live_values.get("faStatus")) is not None else None,
     ),
     # WW (Warm Water) sensors
     HovalSensorEntityDescription(
