@@ -225,6 +225,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
     HovalSensorEntityDescription(
         key="modulation",
         translation_key="modulation",
+        icon="mdi:speedometer",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
