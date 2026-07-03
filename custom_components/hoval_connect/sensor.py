@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -24,6 +25,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
 from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN
@@ -43,6 +45,23 @@ class HovalPlantSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval plant-level sensor entity."""
 
     value_fn: Callable[[HovalPlantData], Any | None]
+
+
+def _coerce_timestamp(value: Any) -> datetime | None:
+    """Return a timezone-aware datetime for timestamp sensors."""
+    if isinstance(value, datetime):
+        dt_value = value
+    elif isinstance(value, str):
+        dt_value = dt_util.parse_datetime(value)
+        if dt_value is None:
+            return None
+    else:
+        return None
+
+    # Home Assistant timestamp sensors require tz-aware datetimes.
+    if dt_value.tzinfo is None:
+        return dt_util.as_utc(dt_value)
+    return dt_value
 
 
 CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
@@ -437,7 +456,7 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         return super().available and self._plant is not None
 
     @property
-    def native_value(self) -> float | str | None:
+    def native_value(self) -> datetime | float | str | None:
         """Return the sensor value."""
         plant = self._plant
         if plant is None:
@@ -445,6 +464,8 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(plant)
         if val is None:
             return None
+        if self.entity_description.device_class == SensorDeviceClass.TIMESTAMP:
+            return _coerce_timestamp(val)
         if self.entity_description.native_unit_of_measurement is None and not isinstance(
             val, (int, float)
         ):
