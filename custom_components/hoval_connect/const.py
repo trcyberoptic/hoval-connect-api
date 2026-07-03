@@ -57,7 +57,7 @@ CIRCUIT_TYPE_NAMES = {
 OPERATION_MODE_REGULAR = "REGULAR"
 OPERATION_MODE_STANDBY = "standby"
 
-# States for circuits that have a binary state (off or charging=heating/cooling).
+# FA states for heat generator. These states map to heat generator controllers of type WFA-200 (Feuerungsautomat). Other controller types may have different FA states.
 BOILER_FA_STATES: dict[str,str] = {"0": "hp_off", "1": "hp_heating", "2": "active_cooling", "3": "blocked", "4": "hp_hot_water", "5": "hp_frost_protection",
                                    "6": "hp_temperature_too_low", "7": "hp_flow_too_high", "8": "hp_defrost", "9": "hp_passive_cooling", "11": "hd_fault",
                                    "12": "low_pressure_fault", "16": "restart_delay", "17": "energy_producer_lock", "18": "primary_flow_time",
