@@ -136,9 +136,6 @@
       "modulation": {
         "name": "Modulation"
       },
-      "bl_status": {
-        "name": "Boiler status"
-      },
       "bl_fa_status": {
         "name": "Boiler FA status",
         "state": {

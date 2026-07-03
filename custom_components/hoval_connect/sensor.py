@@ -230,13 +230,13 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("modulation"),
     ),
-    HovalSensorEntityDescription(
-        key="bl_status",
-        translation_key="bl_status",
-        icon="mdi:information-outline",
-        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
-        value_fn=lambda c: c.live_values.get("status"),
-    ),
+    # HovalSensorEntityDescription(
+    #     key="bl_status",
+    #     translation_key="bl_status",
+    #     icon="mdi:information-outline",
+    #     circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+    #     value_fn=lambda c: c.live_values.get("status"),
+    # ),
     HovalSensorEntityDescription(
         key="bl_fa_status",
         translation_key="bl_fa_status",
