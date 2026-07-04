@@ -28,7 +28,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
-from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN, BOILER_FA_STATES
+from .const import (
+    BOILER_FA_STATES,
+    CIRCUIT_TYPE_BL,
+    CIRCUIT_TYPE_HK,
+    CIRCUIT_TYPE_HV,
+    CIRCUIT_TYPE_WW,
+    DOMAIN,
+)
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
