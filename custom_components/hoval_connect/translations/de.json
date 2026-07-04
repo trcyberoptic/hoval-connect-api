@@ -1,0 +1,168 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoval Connect",
+        "description": "Bitte geben Sie Ihre Hoval Connect Kontodaten ein:",
+        "data": {
+          "email": "Email",
+          "password": "Passwort"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Hoval Connect erneut authentifizieren",
+        "description": "Ihre Sitzung ist abgelaufen. Bitte geben Sie Ihre Kontodaten erneut ein:",
+        "data": {
+          "email": "Email",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ungültige E-Mail oder Passwort.",
+      "cannot_connect": "Verbindung zu Hoval Connect konnte nicht hergestellt werden. Bitte versuchen Sie es später erneut.",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten."
+    },
+    "abort": {
+      "already_configured": "Dieses Konto ist bereits konfiguriert.",
+      "reauth_successful": "Re-Authentifizierung erfolgreich."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hoval Connect Optionen",
+        "data": {
+          "turn_on_mode": "Modus nach dem Einschalten:",
+          "override_duration": "Dauer der temporären Programm-Anpassung:",
+          "scan_interval": "Abfrageintervall:"
+        },
+        "data_description": {
+          "turn_on_mode": "Was passieren soll, wenn der Lüfter aus dem Standby eingeschaltet wird.",
+          "override_duration": "Wie lange eine manuelle Überschreibung (Lüftergeschwindigkeit oder Temperatur) dauert, bevor das Zeitprogramm wieder übernimmt. 'Bis zum Ende der aktuellen Phase' verwendet die nächste Programmphasen-Grenze.",
+          "scan_interval": "Wie oft die Hoval API auf Updates abgefragt wird."
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "plant_online": {
+        "name": "Online"
+      },
+      "plant_error": {
+        "name": "Fehler"
+      }
+    },
+    "sensor": {
+      "outside_temperature": {
+        "name": "Außentemperatur"
+      },
+      "exhaust_temperature": {
+        "name": "Ablufttemperatur"
+      },
+      "air_volume": {
+        "name": "Luftvolumen"
+      },
+      "humidity_actual": {
+        "name": "Feuchtigkeit Ist"
+      },
+      "humidity_target": {
+        "name": "Feuchtigkeit Soll"
+      },
+      "operation_mode": {
+        "name": "Betriebsmodus"
+      },
+      "active_week_program": {
+        "name": "Wochenprogramm"
+      },
+      "active_day_program": {
+        "name": "Tagesprogramm"
+      },
+      "program_air_volume": {
+        "name": "Luftvolumen Programm"
+      },
+      "latest_event_type": {
+        "name": "Letzter Ereignistyp"
+      },
+      "latest_event_message": {
+        "name": "Letztes Ereignis"
+      },
+      "latest_event_time": {
+        "name": "Zeitpunkt des letzten Ereignisses"
+      },
+      "active_events": {
+        "name": "Aktive Ereignisse"
+      },
+      "weather_condition": {
+        "name": "Wetter"
+      },
+      "weather_temperature": {
+        "name": "Vorhergesagte Temperatur"
+      },
+      "flow_temp_actual": {
+        "name": "Vorlauftemperatur Ist"
+      },
+      "flow_temp_target": {
+        "name": "Vorlauftemperatur Soll"
+      },
+      "room_temp_target": {
+        "name": "Raumtemperatur Soll"
+      },
+      "boiler_temp_actual": {
+        "name": "Wärmeerzeuger Ist"
+      },
+      "boiler_temp_target": {
+        "name": "Wärmeerzeuger Soll"
+      },
+      "return_temperature": {
+        "name": "Rücklauftemperatur"
+      },
+      "operating_hours": {
+        "name": "Betriebsstunden"
+      },
+      "operating_hours_over_50": {
+        "name": "Betriebsstunden >50%"
+      },
+      "operation_cycles": {
+        "name": "Schaltzyklen"
+      },
+      "heat_amount": {
+        "name": "Wärmemenge Heizen"
+      },
+      "total_energy": {
+        "name": "Gesamtenergieverbrauch"
+      },
+      "ww_temp_target": {
+        "name": "Warmwasser Soll"
+      },
+      "ww_temp_top": {
+        "name": "Pufferspeicher oben"
+      },
+      "ww_temp_bottom": {
+        "name": "Pufferspeicher unten"
+      }
+    },
+    "climate": {
+      "heating": {
+        "name": "Heizen"
+      }
+    },
+    "fan": {
+      "ventilation": {
+        "name": "Belüftung"
+      }
+    },
+    "select": {
+      "program": {
+        "name": "Programm"
+      }
+    }
+  },
+  "services": {
+    "reset_temporary_change": {
+      "name": "Temporäre Programm-Anpassung zurücksetzen",
+      "description": "Bricht eine aktive temporäre Programm-Anpassung (HomeVent Lüftung oder Heizkreis-Klima) ab, sodass das zugrunde liegende Zeitprogramm wieder übernimmt."
+    }
+  }
+}
