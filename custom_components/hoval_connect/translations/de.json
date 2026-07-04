@@ -153,11 +153,11 @@
           "low_pressure_fault": "Niederdruckstörung",
           "restart_delay": "Wiedereinschaltverzögerung",
           "energy_producer_lock": "EW-,Energieerzeuger-Sperre",
-          "primary_flow_time": "Vorlaufzeit Primär",
+          "primary_pre_run_time": "Vorlaufzeit Primär",
           "primary_post_run_time": "Nachlaufzeit Primär",
           "mop": "MOP",
           "failed_defrost": "Erfolglose Abtauung",
-          "condenser_pump_flow_time": "Vorlaufzeit Kondenserpumpe",
+          "condenser_pump_pre_run_time": "Vorlaufzeit Kondenserpumpe",
           "inverter_modbus_fault": "Störung Inverter/Modbus-Kommunikation",
           "groundwater_frost_protection": "Grundwasserfrostschutz",
           "compressor_limit": "Begrenzung Verdichter"
