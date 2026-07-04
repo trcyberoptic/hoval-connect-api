@@ -28,7 +28,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
-from .const import CIRCUIT_TYPE_BL, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, DOMAIN
+from .const import (
+    CIRCUIT_TYPE_BL,
+    CIRCUIT_TYPE_HK,
+    CIRCUIT_TYPE_HV,
+    CIRCUIT_TYPE_PS,
+    CIRCUIT_TYPE_WW,
+    DOMAIN,
+)
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
 
@@ -268,6 +275,34 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         circuit_types=frozenset({CIRCUIT_TYPE_WW}),
         value_fn=lambda c: c.live_values.get("tempSf2Actual"),
+    ),
+    # PS (Buffer Storage) sensors
+    HovalSensorEntityDescription(
+        key="ps_buffer_target",
+        translation_key="ps_buffer_target",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_PS}),
+        value_fn=lambda c: c.live_values.get("bufferTarget"),
+    ),
+    HovalSensorEntityDescription(
+        key="ps_buffer_actual_pf1",
+        translation_key="ps_buffer_actual_pf1",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_PS}),
+        value_fn=lambda c: c.live_values.get("bufferActualPF1"),
+    ),
+    HovalSensorEntityDescription(
+        key="ps_buffer_actual_pf2",
+        translation_key="ps_buffer_actual_pf2",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_PS}),
+        value_fn=lambda c: c.live_values.get("bufferActualPF2"),
     ),
 )
 

@@ -141,6 +141,15 @@
       },
       "ww_temp_bottom": {
         "name": "Pufferspeicher unten"
+      },
+      "ps_buffer_target": {
+        "name": "Pufferspeicher Soll"
+      },
+      "ps_buffer_actual_pf1": {
+        "name": "Pufferspeicher oben"
+      },
+      "ps_buffer_actual_pf2": {
+        "name": "Pufferspeicher unten"
       }
     },
     "climate": {
