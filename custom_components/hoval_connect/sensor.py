@@ -275,7 +275,9 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         options=list(BOILER_FA_STATES.values()),
         entity_category=EntityCategory.DIAGNOSTIC,
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
-        value_fn=lambda c: BOILER_FA_STATES.get(v) if (v := c.live_values.get("faStatus")) is not None else None,
+        value_fn=lambda c: (
+            BOILER_FA_STATES.get(v) if (v := c.live_values.get("faStatus")) is not None else None
+        ),
     ),
     # WW (Warm Water) sensors
     HovalSensorEntityDescription(
