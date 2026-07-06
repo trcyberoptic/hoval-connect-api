@@ -70,6 +70,9 @@
       "humidity_target": {
         "name": "Target humidity"
       },
+      "circuit_status": {
+        "name": "Status"
+      },
       "operation_mode": {
         "name": "Operation mode"
       },
