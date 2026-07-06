@@ -111,6 +111,12 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         value_fn=lambda c: c.live_values.get("humidityTarget"),
     ),
     HovalSensorEntityDescription(
+        key="circuit_status",
+        translation_key="circuit_status",
+        icon="mdi:information-outline",
+        value_fn=lambda c: c.live_values.get("status"),
+    ),
+    HovalSensorEntityDescription(
         key="operation_mode",
         translation_key="operation_mode",
         icon="mdi:cog",
