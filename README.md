@@ -128,7 +128,7 @@ to taste.
 
 ### Known Limitations
 
-- **HV, HK, BL, and WW circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
+- **HV, HK, BL, WW, and PS circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
 - **BL energy sensors:** Heat produced and electrical energy consumed are in MWh (verified on UltraSource B Compact).
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
@@ -337,7 +337,7 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 | HV | Home ventilation (Lüftung) |
 | SOL | Solar |
 | SOLB | Solar buffer |
-| PS | Pool/Swimming |
+| PS | Buffer tank (Pufferspeicher) |
 | GW | Gateway |
 
 > **API change (2026-04-21):** Hoval removed every `/v1/plants/{id}/circuits/...` endpoint and now returns `HTTP 404 "No static resource ..."`. All circuit reads and writes now use `/v3` (or `/v4` for the newer temporary-change variant). See `docs/openapi-v3.json` for the live spec.
