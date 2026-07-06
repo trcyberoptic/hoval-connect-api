@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import (
     CIRCUIT_TYPE_BL,
+    CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -320,8 +321,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     )
                     raise
 
-                # BL/WW circuits have selectable=False but still provide live values
-                _non_selectable_types = {CIRCUIT_TYPE_BL, CIRCUIT_TYPE_WW}
+                # BL/WW/PS circuits have selectable=False but still provide live values
+                _non_selectable_types = {CIRCUIT_TYPE_BL, CIRCUIT_TYPE_WW, CIRCUIT_TYPE_PS}
 
                 _LOGGER.debug(
                     "Fetched %d circuits (%d supported)",
