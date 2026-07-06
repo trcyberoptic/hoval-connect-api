@@ -144,6 +144,15 @@
       },
       "ww_temp_bottom": {
         "name": "Hot water temperature bottom"
+      },
+      "ps_buffer_target": {
+        "name": "Buffer target temperature"
+      },
+      "ps_buffer_actual_pf1": {
+        "name": "Buffer temperature top"
+      },
+      "ps_buffer_actual_pf2": {
+        "name": "Buffer temperature bottom"
       }
     },
     "climate": {
