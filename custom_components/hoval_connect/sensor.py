@@ -17,6 +17,7 @@ from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
     UnitOfEnergy,
+    UnitOfPower,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -29,6 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
 from .const import (
+    BOILER_FA_STATES,
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_HK,
     CIRCUIT_TYPE_HV,
@@ -253,6 +255,36 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("totalEnergy"),
+    ),
+    HovalSensorEntityDescription(
+        key="current_output_heating",
+        translation_key="current_output_heating",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("currentEnergyOutput"),
+    ),
+    HovalSensorEntityDescription(
+        key="modulation",
+        translation_key="modulation",
+        icon="mdi:speedometer",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("modulation"),
+    ),
+    HovalSensorEntityDescription(
+        key="bl_fa_status",
+        translation_key="bl_fa_status",
+        icon="mdi:information-outline",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(BOILER_FA_STATES.values()),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: (
+            BOILER_FA_STATES.get(v) if (v := c.live_values.get("faStatus")) is not None else None
+        ),
     ),
     # WW (Warm Water) sensors
     HovalSensorEntityDescription(
