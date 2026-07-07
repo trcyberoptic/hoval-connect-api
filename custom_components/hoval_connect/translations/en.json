@@ -136,6 +136,39 @@
       "total_energy": {
         "name": "Electrical energy consumed"
       },
+      "current_output_heating": {
+        "name": "Current output heating"
+      },
+      "modulation": {
+        "name": "Modulation"
+      },
+      "bl_fa_status": {
+        "name": "Heat generator FA status",
+        "state": {
+          "hp_off": "Heatpump off",
+          "hp_heating": "Heatpump heating",
+          "active_cooling": "Active cooling",
+          "blocked": "Blocked (Bivalence, DHW, ...)",
+          "hp_hot_water": "Heatpump hot water",
+          "hp_frost_protection": "Heatpump frost protection",
+          "hp_temperature_too_low": "Heatpump temperature too low",
+          "hp_flow_too_high": "Heatpump flow temperature too high",
+          "hp_defrost": "Heatpump defrost",
+          "hp_passive_cooling": "Heatpump passive cooling",
+          "hd_fault": "High pressure (HD) fault (sensor or switch)",
+          "low_pressure_fault": "Low pressure fault",
+          "restart_delay": "Restart delay",
+          "energy_producer_lock": "Energy producer lock",
+          "primary_pre_run_time": "Primary pre-run time",
+          "primary_post_run_time": "Primary post-run time",
+          "mop": "MOP",
+          "failed_defrost": "Failed defrost",
+          "condenser_pump_pre_run_time": "Condenser pump pre-run time",
+          "inverter_modbus_fault": "Inverter/Modbus communication fault",
+          "groundwater_frost_protection": "Groundwater frost protection",
+          "compressor_limit": "Compressor limit"
+        }
+      },
       "ww_temp_target": {
         "name": "Hot water setpoint"
       },
