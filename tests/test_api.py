@@ -153,6 +153,30 @@ class TestHovalConnectApiAuth:
         assert api._id_token_exp == 0
         assert api._pat_cache == {}
 
+    @pytest.mark.asyncio
+    async def test_concurrent_id_token_requests_single_flight(self):
+        session = _make_session()
+        resp = _make_response(200, {"id_token": "test-token-123"})
+
+        async def _json_with_suspension() -> dict:
+            # A plain AsyncMock never yields to the event loop, so the five
+            # gathered tasks would run to completion one after another and
+            # mask a missing lock. sleep(0) forces a real suspension point,
+            # interleaving the callers like genuine network I/O does.
+            await _real_asyncio.sleep(0)
+            return {"id_token": "test-token-123"}
+
+        resp.json = _json_with_suspension
+        session.post = MagicMock(return_value=resp)
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        tokens = await _real_asyncio.gather(*(api._get_id_token() for _ in range(5)))
+
+        assert set(tokens) == {"test-token-123"}
+        # Without the single-flight lock every concurrent caller fires its
+        # own IDP login; with it, exactly one request goes out.
+        assert session.post.call_count == 1
+
 
 class TestHovalConnectApiRequest:
     """Tests for the _request method."""
