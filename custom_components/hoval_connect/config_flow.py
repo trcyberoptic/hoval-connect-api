@@ -128,7 +128,7 @@ class HovalConnectOptionsFlow(OptionsFlow):
             CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION
         )
         current_turn_on = self.config_entry.options.get(CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE)
-        current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL, 60)
+        current_interval = int(self.config_entry.options.get(CONF_SCAN_INTERVAL, 60))
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -156,7 +156,7 @@ class HovalConnectOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_SCAN_INTERVAL,
                         default=current_interval,
-                    ): vol.In(SCAN_INTERVAL_OPTIONS),
+                    ): vol.All(vol.Coerce(int), vol.In(SCAN_INTERVAL_OPTIONS)),
                 }
             ),
         )
