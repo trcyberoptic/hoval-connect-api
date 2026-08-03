@@ -6,95 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Reverse-engineered API documentation and **Home Assistant custom integration** for the Hoval Connect IoT platform. Hoval Connect is a cloud platform connecting Hoval HVAC systems (heating, ventilation, hot water) via IoT gateways to Azure IoT Hub.
 
-## Repository Structure
+## Repo Conventions
 
-- `README.md` — API documentation + HA integration install instructions
-- `examples/` — Standalone Python and Bash API client examples
-- `custom_components/hoval_connect/` — Home Assistant integration (HACS-compatible)
-- `blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml` — Bundled HA Blueprint (HomeVent summer-boost automation; consumes `hoval_connect.reset_temporary_change`)
-- `docs/openapi-v3.json` — Full OpenAPI 3.1 spec (~450KB, fetched from `/v3/api-docs`)
-- `docs/superpowers/specs/` + `docs/superpowers/plans/` — Design specs and implementation plans for non-trivial features (one file per feature, dated)
-- `tests/` — Unit tests (pure function tests, run without HA installed)
-- `hacs.json` — HACS repository metadata
-- `.github/workflows/` — CI: HACS/Hassfest validation, Ruff linting, automated releases on tags
-- `pyproject.toml` — Ruff linter config (Python 3.12+, 100-char lines)
+- Design specs and implementation plans for non-trivial features live in `docs/superpowers/specs/` + `docs/superpowers/plans/` (one file per feature, dated).
+- `tests/` are pure-function tests that run WITHOUT homeassistant installed — HA modules are stubbed via `sys.modules` at the top of each test file. On Windows use `python`, not `python3`.
+- The bundled Blueprint `blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml` is the primary consumer of the `hoval_connect.reset_temporary_change` service and depends on two user-created helpers (`input_boolean.hoval_hv_boost_active`, `input_datetime.hoval_hv_boost_started_at`); see the README for installation.
+- Live testing on a real HA instance and cutting releases: use the `live-testing` skill (`.claude/skills/live-testing/SKILL.md`).
 
-## Home Assistant Integration
+## Dynamic Entity Discovery Gotcha
 
-The integration lives in `custom_components/hoval_connect/`. User setup is email + password only — plants and circuits are discovered automatically from the Hoval account at runtime.
-
-### Key files
-
-- `api.py` — Async aiohttp client: 2-step auth, auto-refresh, token retry on 401, handles 204 and empty-body (content_length==0) responses
-- `coordinator.py` — DataUpdateCoordinator: parallel fetch of circuits/events/weather, offline plant skip, program cache (5min TTL), `control_lock`, `_V1_PROGRAM_MAP`, `SIGNAL_NEW_CIRCUITS`
-- `config_flow.py` — Config + reauth + options flow (turn-on mode, override duration, polling interval)
-- `climate.py` — HK heating: target temp, HVAC modes (heat/auto/off)
-- `fan.py` — HV ventilation: speed slider 0–100%, on/off (standby ↔ temporary-change), debounced 1.5s
-- `select.py` — Program selection (week1/week2/ecoMode/standby/constant) with user-defined names
-- `sensor.py` — Circuit-type-filtered sensors (HV/HK/BL/WW) + 6 plant-level sensors (events, weather)
-- `binary_sensor.py` — Plant online status + error/warning status
-- `diagnostics.py` — Diagnostic export with PII redaction
-- `const.py` — API URLs, OAuth client ID, token TTLs, polling interval, circuit types, duration enums
-- `__init__.py` — Entry setup, platform forwarding, `plant_device_info`/`circuit_device_info` helpers, `hoval_connect.reset_temporary_change` service
-- `services.yaml` — Service definitions surfaced in HA's UI (currently `reset_temporary_change`, target = fan/climate)
-
-### Entity architecture
-
-- Entities use `CoordinatorEntity` — no direct API calls, all data comes from the coordinator
-- Device hierarchy: one parent device per plant, one child device per plant+circuit (linked via `via_device`)
-- Circuit devices identified by `{plantId}_{circuitPath}`
-- Supports HV (ventilation), HK (heating), BL (boiler), and WW (warm water) circuit types (`SUPPORTED_CIRCUIT_TYPES` in `const.py`)
-- Sensor descriptions use `circuit_types: frozenset[str] | None` to filter which sensors appear on which circuit types (`None` = all types)
-- Fan speed resolution uses smart fallback chain: live airVolume → `targetValue` (HV percentage from circuit list) → program air volume → default 40% (API rejects value=0)
-- All entity platforms use `translation_key` for entity names (not hardcoded `_attr_name`)
-- Dynamic entity discovery: all platforms listen to `SIGNAL_NEW_CIRCUITS` dispatcher signal to add entities at runtime without restart. The coordinator must dispatch this signal whenever `_known_circuits` grows — *including* the first time circuits appear. Earlier the coordinator gated the dispatch on `if self._known_circuits and new_circuits`, which silently stranded all circuit-level entities if the very first refresh after `async_setup_entry` came back without circuits (e.g. transient `_fetch_circuit` failure swallowed by `gather(return_exceptions=True)`); they stayed `restored=true`/`unavailable` until HA was restarted. Each platform's `_add_new()` already deduplicates via its `known` set, so unconditional dispatch on any new circuit is safe.
-
-## Running Tests
-
-```bash
-python -m pytest tests/ -v
-```
-
-On Windows use `python` (not `python3`).
-
-## Linting
-
-```bash
-ruff check custom_components/ tests/
-ruff format --check custom_components/ tests/
-```
-
-## Services
-
-The integration exposes one HA service in addition to platform-standard ones:
-
-- `hoval_connect.reset_temporary_change` — target a `fan` or `climate` entity of a Hoval circuit; the integration translates the entity to its `(plant_id, circuit_path)` and calls `api.reset_temporary_change` (the v3 DELETE on `/v3/.../temporary-change`). Resolution walks `coordinator.data.plants[].circuits[]` because both `plant_id` and `circuit_path` can contain underscores — string-splitting `unique_id` is unreliable. Multiple entities of the same circuit are deduplicated so a target with several entity_ids only fires one DELETE. Plant-level entities (e.g. `binary_sensor.*_online`) are rejected with `ServiceValidationError` because they don't bind to a circuit. The service goes through `coordinator.async_control_and_refresh`, so the optimistic mode override + post-call refresh stay consistent with the rest of the integration.
-
-The bundled Blueprint at `blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml` is the primary consumer — it calls this service to end an active summer-boost cleanly. The Blueprint also depends on two user-created helpers (`input_boolean.hoval_hv_boost_active`, `input_datetime.hoval_hv_boost_started_at`); see the README for installation.
-
-## Running Examples
-
-```bash
-python examples/hoval_client.py <email> <password>
-./examples/get-live-values.sh <email> <password> <plantId> <circuitPath> <circuitType>
-```
-
-## Live Testing & Release Workflow
-
-- `homeassistant.reload_config_entry` does NOT re-import Python modules — `custom_components/hoval_connect/` code changes only take effect after a full HA core restart (`POST http://supervisor/core/restart`). Clear `__pycache__/` first.
-- HA core logs on HAOS are not in `/config/home-assistant.log` (that file usually doesn't exist). Fetch via `GET http://supervisor/core/logs?tail=N` with `Authorization: Bearer <SUPERVISOR_TOKEN>`. The token isn't exposed in the SSH addon's shell env but is in another addon process: `sudo sh -c 'for p in /proc/[0-9]*/environ; do tr "\0" "\n" <$p 2>/dev/null | grep -m1 SUPERVISOR_TOKEN; done | head -1'`.
-- Release CI (`.github/workflows/release.yml`) triggers on `v*` tag pushes only. Bumping `manifest.json` does nothing on its own — also `git tag vX.Y.Z && git push origin vX.Y.Z`.
-- New integration *services* (e.g. `hoval_connect.reset_temporary_change` added in v0.15.1) are only registered after a full HA Core restart following the HACS update. There is a 10–30 s window after restart where automations triggered by `time_pattern` or state changes will call the new service and fail with `Action <domain>.<service> not found`. The next tick after the registry settles works normally — verify with `GET /api/services` filtering on the integration domain before re-triggering.
-- Live API probes: the SSH addon's `python3` is stdlib-only, but `urllib.request` is enough for the OAuth + Plant-Access-Token + JSON flow. Write the probe locally, `pscp` it to `/tmp/`, run via plink.
+All platforms listen to the `SIGNAL_NEW_CIRCUITS` dispatcher signal to add entities at runtime without restart. The coordinator must dispatch this signal whenever `_known_circuits` grows — *including* the first time circuits appear. Earlier the coordinator gated the dispatch on `if self._known_circuits and new_circuits`, which silently stranded all circuit-level entities if the very first refresh after `async_setup_entry` came back without circuits (e.g. transient `_fetch_circuit` failure swallowed by `gather(return_exceptions=True)`); they stayed `restored=true`/`unavailable` until HA was restarted. Each platform's `_add_new()` already deduplicates via its `known` set, so unconditional dispatch on any new circuit is safe.
 
 ## Authentication Architecture (2-step)
 
 1. **ID Token**: OAuth2 password grant to SAP IAS. Use `id_token` from response, NOT `access_token`. Lifetime: 30min.
 2. **Plant Access Token (PAT)**: Fetch via `GET /v1/plants/{plantId}/settings`. Send as `X-Plant-Access-Token` header. Lifetime: ~15min.
-
-## API Base URL
-
-`https://azure-iot-prod.hoval.com/core`
 
 ## Key Endpoint Patterns
 
@@ -104,7 +30,7 @@ python examples/hoval_client.py <email> <password>
 
 ## Circuit Types
 
-HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation), SOL (solar), SOLB (solar buffer), PS (buffer tank / Pufferspeicher — not "pool"; PF1/PF2 = Pufferfühler top/bottom), GW (gateway)
+PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/bottom. FRIWA, SOL, SOLB exist in the API but have no HA entities yet (full enum in `const.py`).
 
 ## API Behavior Notes
 
@@ -140,5 +66,4 @@ HK (heating), BL (boiler), WW (warm water), FRIWA (fresh water), HV (ventilation
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
 - Full OpenAPI 3.1 spec saved at `docs/openapi-v3.json` (also available live at `/v3/api-docs`, no auth required)
-- Non-supported circuit types (FRIWA, SOL, SOLB) have endpoint support in the API but no HA entities yet (PS gained sensor entities in #10)
 - HK climate entity: `set_temperature` sends value as integer — may need adjustment for different HK circuit models (some use tenths of degree)
