@@ -110,6 +110,9 @@
       "flow_temp_target": {
         "name": "Vorlauftemperatur Soll"
       },
+      "room_temp_actual": {
+        "name": "Raumtemperatur"
+      },
       "room_temp_target": {
         "name": "Raumtemperatur Soll"
       },
@@ -127,6 +130,21 @@
       },
       "operating_hours_over_50": {
         "name": "Betriebsstunden >50%"
+      },
+      "operating_hours_el_heater": {
+        "name": "Betriebsstunden Elektroheizeinsatz"
+      },
+      "operation_cycles_el_heater": {
+        "name": "Schaltzyklen Elektroheizeinsatz"
+      },
+      "heat_amount_el_heater": {
+        "name": "Wärmemenge Elektroheizeinsatz"
+      },
+      "energy_el_heater": {
+        "name": "Energieverbrauch Elektroheizeinsatz"
+      },
+      "el_heater_active": {
+        "name": "Elektroheizeinsatz aktiv"
       },
       "operation_cycles": {
         "name": "Schaltzyklen"
