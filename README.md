@@ -22,27 +22,34 @@ Plants and circuits are discovered automatically from your account.
 ### What You Get
 
 **Fan entity** (per HV ventilation circuit):
-- Continuous speed slider: 0–100% (temporary override, keeps time program active)
+- Continuous speed slider: 0–100% (temporary override, keeps time program active); values below the device minimum are clamped to 15 %, 0 turns the circuit off
 - Turn on/off toggle (standby mode)
 - Configurable turn-on mode: resume last program, or activate week1/week2
 - Debounced slider input (1.5s) to prevent API rate-limiting
 
 **Climate entity** (per HK heating circuit):
 - Target temperature control
+- Current room temperature (v1.0.0 — reads the correct `roomTempActual` live value)
 - HVAC modes: Heat / Auto / Off (standby)
 - HVAC action reflects actual circuit status
 
-**Program select** (per HV/HK circuit):
+**Water heater entity** (per WW hot-water circuit, v1.0.0):
+- Target temperature 10–65 °C in 0.5 °C steps — sets a temporary boost that expires at midnight, then the week program resumes
+- Operation modes: heat pump (week program), high demand (shown while a boost is active), off (standby)
+- Current temperature from the top-of-tank sensor
+
+**Program select** (per HV/HK/WW circuit):
 - Switch between week1, week2, eco mode, standby, constant
 - Shows user-defined program names from the Hoval app
 - Current program pre-selected
 
 **Sensor entities** (per circuit, filtered by type):
 - **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume
-- **HK:** Outside temperature, flow temperature (actual/target), room temperature setpoint
-- **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed
+- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint)
+- **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
-- **All:** Operation mode, active week program, active day program
+- **PS:** Buffer target temperature, buffer temperature top (PF1) / bottom (PF2)
+- **All:** Status, operation mode, active week program, active day program
 
 > Outside temperature is created only on HV/HK circuits (v0.15.4+). Upgrading from ≤0.15.3: any outside-temperature sensors you already have on BL/WW circuits are preserved — only newly-discovered circuits get the filtered set.
 
@@ -64,13 +71,14 @@ Plants and circuits are discovered automatically from your account.
 - Polling interval (default: 60s)
 
 **Services:**
-- `hoval_connect.reset_temporary_change` — cancel an active temporary override on a HomeVent fan or heating-circuit climate entity, returning control to the underlying time program. Target = the fan or climate entity. Useful in automations that need to end a manual boost cleanly (instead of waiting for the override to expire).
+- `hoval_connect.reset_temporary_change` — cancel an active temporary override on a HomeVent fan, heating-circuit climate, or hot-water water_heater entity, returning control to the underlying time program. Target = the fan/climate/water_heater entity. Useful in automations that need to end a manual boost cleanly (instead of waiting for the override to expire).
 
 **Under the hood:**
-- 2-step token management (ID token + Plant Access Token) with TTL caching and auto-refresh
+- 2-step token management (ID token + Plant Access Token) with TTL caching, auto-refresh, and single-flight locking (concurrent requests trigger at most one token refresh)
 - Skips API calls when plant is offline, invalidates token cache on reconnect
 - Parallel API fetches for circuits, live values, programs, events, and weather
-- Program cache (5min TTL) reduces API calls
+- Tiered caching reduces API calls: programs 5 min, events 3 min, weather forecast 15 min
+- Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on all list endpoints, the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 - Temporary overrides use the `/v4` API (v0.15.0+) for forward-compatibility; `endOfPhase`/`duration` body shape, reset still on `/v3` DELETE
