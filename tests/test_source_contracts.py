@@ -82,12 +82,18 @@ class TestOverrideLifecycle:
         src = _read("coordinator.py")
         assert "_MODE_OVERRIDE_TTL_S" in src
 
-    def test_clear_not_at_start_of_update(self):
+    def test_overrides_pruned_at_end_not_cleared(self):
+        """Overrides are pruned at the END of a successful poll, and only the
+        ones set BEFORE the poll began. An unconditional clear() (at the start
+        OR the end) races with control actions: an override set while a poll
+        is in flight would be wiped by that poll's pre-change data snapshot.
+        """
         src = _read("coordinator.py")
         body = src.split("async def _async_update_data", 1)[1]
-        first_stmt_zone = body[:400]
-        assert "_mode_override.clear()" not in first_stmt_zone
-        assert "_mode_override.clear()" in body
+        assert "_mode_override.clear()" not in body
+        # Poll-start timestamp taken before the fetch, compared during pruning.
+        assert "poll_start = time.monotonic()" in body
+        assert "entry[1] >= poll_start" in body
 
 
 class TestWaterHeater:
