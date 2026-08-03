@@ -1,6 +1,9 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# docs/ contains prose with illustrative code snippets (plans, specs) — ruff
+# 0.16+ formats Python blocks inside Markdown and must not touch these.
+exclude = ["docs"]
 
 [tool.ruff.lint]
 select = [
