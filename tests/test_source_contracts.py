@@ -66,7 +66,11 @@ class TestSensorAdditions:
             assert f'key="{key}"' in src, key
 
     def test_total_increasing_negative_guard(self):
-        assert "TOTAL_INCREASING and num < 0" in _read("sensor.py")
+        src = _read("sensor.py")
+        assert "if is_counter and num < 0" in src
+        # Unit-less counters (operation cycles) must not escape through the
+        # string branch before the guard.
+        assert "native_unit_of_measurement is None and not is_counter" in src
 
     def test_new_keys_translated_everywhere(self):
         import json
