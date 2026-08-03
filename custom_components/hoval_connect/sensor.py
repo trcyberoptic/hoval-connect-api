@@ -158,6 +158,15 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
     ),
     # HK additional sensors
     HovalSensorEntityDescription(
+        key="room_temp_actual",
+        translation_key="room_temp_actual",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
+        value_fn=lambda c: c.live_values.get("roomTempActual"),
+    ),
+    HovalSensorEntityDescription(
         key="flow_temp_actual",
         translation_key="flow_temp_actual",
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -229,6 +238,49 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         icon="mdi:clock-fast",
         circuit_types=frozenset({CIRCUIT_TYPE_BL}),
         value_fn=lambda c: c.live_values.get("operatingHoursOver50"),
+    ),
+    HovalSensorEntityDescription(
+        key="operating_hours_el_heater",
+        translation_key="operating_hours_el_heater",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:clock-outline",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("operatingHoursElHeater"),
+    ),
+    HovalSensorEntityDescription(
+        key="operation_cycles_el_heater",
+        translation_key="operation_cycles_el_heater",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("operationCyclesElHeater"),
+    ),
+    HovalSensorEntityDescription(
+        key="heat_amount_el_heater",
+        translation_key="heat_amount_el_heater",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("heatAmountElHeater"),
+    ),
+    HovalSensorEntityDescription(
+        key="energy_el_heater",
+        translation_key="energy_el_heater",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.MEGA_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("energyElHeater"),
+    ),
+    HovalSensorEntityDescription(
+        key="el_heater_active",
+        translation_key="el_heater_active",
+        icon="mdi:lightning-bolt",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_BL}),
+        value_fn=lambda c: c.live_values.get("elHeaterActive"),
     ),
     HovalSensorEntityDescription(
         key="operation_cycles",
@@ -493,9 +545,15 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         if self.entity_description.native_unit_of_measurement is None:
             return str(val)
         try:
-            return float(val)
+            num = float(val)
         except (ValueError, TypeError):
             return None
+        # Guard monotonic counters: a negative reading is never valid for a
+        # TOTAL_INCREASING sensor and would be misread by HA's long-term
+        # statistics as a meter reset, injecting a spurious spike. Drop it.
+        if self.entity_description.state_class == SensorStateClass.TOTAL_INCREASING and num < 0:
+            return None
+        return num
 
 
 class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):

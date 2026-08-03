@@ -50,3 +50,28 @@ class TestConfigFlowHardening:
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
             data = json.loads(_read(f))
             assert "wrong_account" in data["config"]["error"], f
+
+
+class TestSensorAdditions:
+    def test_new_sensor_keys_exist(self):
+        src = _read("sensor.py")
+        for key in (
+            "room_temp_actual",
+            "operating_hours_el_heater",
+            "operation_cycles_el_heater",
+            "heat_amount_el_heater",
+            "energy_el_heater",
+            "el_heater_active",
+        ):
+            assert f'key="{key}"' in src, key
+
+    def test_total_increasing_negative_guard(self):
+        assert "TOTAL_INCREASING and num < 0" in _read("sensor.py")
+
+    def test_new_keys_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            sensors = json.loads(_read(f))["entity"]["sensor"]
+            for key in ("room_temp_actual", "energy_el_heater", "el_heater_active"):
+                assert key in sensors, f"{key} missing in {f}"

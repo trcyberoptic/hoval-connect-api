@@ -110,6 +110,9 @@
       "flow_temp_target": {
         "name": "Flow temperature setpoint"
       },
+      "room_temp_actual": {
+        "name": "Room temperature"
+      },
       "room_temp_target": {
         "name": "Room temperature setpoint"
       },
@@ -127,6 +130,21 @@
       },
       "operating_hours_over_50": {
         "name": "Operating hours >50%"
+      },
+      "operating_hours_el_heater": {
+        "name": "Operating hours electric heater"
+      },
+      "operation_cycles_el_heater": {
+        "name": "Switching cycles electric heater"
+      },
+      "heat_amount_el_heater": {
+        "name": "Heat produced electric heater"
+      },
+      "energy_el_heater": {
+        "name": "Energy consumed electric heater"
+      },
+      "el_heater_active": {
+        "name": "Electric heater active"
       },
       "operation_cycles": {
         "name": "Switching cycles"
