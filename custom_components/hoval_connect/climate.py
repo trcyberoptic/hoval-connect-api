@@ -106,19 +106,21 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the current temperature."""
+        """Return the current room temperature.
+
+        HK live values use 'roomTempActual' (same schema family as our
+        roomTempTarget sensor); the other keys are legacy fallbacks.
+        """
         circuit = self._circuit
         if circuit is None:
             return None
-        # Try live value first, fall back to circuit data
-        val = circuit.live_values.get("actualTemperature") or circuit.live_values.get(
-            "roomTemperature"
-        )
-        if val is not None:
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                return None
+        for key in ("roomTempActual", "actualTemperature", "roomTemperature"):
+            val = circuit.live_values.get(key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    continue
         return None
 
     @property
@@ -131,10 +133,11 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        # Prefer the live setpoint reading; fall back to the circuit-list
-        # `target_value` (also a setpoint, in degrees for HK).
-        val = circuit.live_values.get("targetTemperature")
+        val = circuit.live_values.get("roomTempTarget")
         if val is None:
+            val = circuit.live_values.get("targetTemperature")
+        if val is None:
+            # Circuit-list `target_value` (also a setpoint, in degrees for HK).
             val = circuit.target_value
         if val is None:
             return None
@@ -169,8 +172,11 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         mode = override if override is not None else circuit.operation_mode
         if mode == OPERATION_MODE_STANDBY:
             return HVACAction.OFF
-        # Check circuit status from live values
-        status = circuit.live_values.get("circuitStatus", "").upper()
+        # Live values report the operating state under 'status' (our status
+        # sensor reads the same key); 'circuitStatus' kept as legacy fallback.
+        status = (
+            circuit.live_values.get("status") or circuit.live_values.get("circuitStatus") or ""
+        ).upper()
         if status == "HEATING":
             return HVACAction.HEATING
         if status == "COOLING":
