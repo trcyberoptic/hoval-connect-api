@@ -75,3 +75,16 @@ class TestSensorAdditions:
             sensors = json.loads(_read(f))["entity"]["sensor"]
             for key in ("room_temp_actual", "energy_el_heater", "el_heater_active"):
                 assert key in sensors, f"{key} missing in {f}"
+
+
+class TestOverrideLifecycle:
+    def test_override_has_ttl(self):
+        src = _read("coordinator.py")
+        assert "_MODE_OVERRIDE_TTL_S" in src
+
+    def test_clear_not_at_start_of_update(self):
+        src = _read("coordinator.py")
+        body = src.split("async def _async_update_data", 1)[1]
+        first_stmt_zone = body[:400]
+        assert "_mode_override.clear()" not in first_stmt_zone
+        assert "_mode_override.clear()" in body
