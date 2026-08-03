@@ -541,8 +541,12 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(circuit)
         if val is None:
             return None
+        # Monotonic counters are numeric even when unit-less (operation
+        # cycles): route them past the string branch so the negative guard
+        # below always applies to them.
+        is_counter = self.entity_description.state_class == SensorStateClass.TOTAL_INCREASING
         # String sensors (program names, operation mode) return as-is
-        if self.entity_description.native_unit_of_measurement is None:
+        if self.entity_description.native_unit_of_measurement is None and not is_counter:
             return str(val)
         try:
             num = float(val)
@@ -551,7 +555,7 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         # Guard monotonic counters: a negative reading is never valid for a
         # TOTAL_INCREASING sensor and would be misread by HA's long-term
         # statistics as a meter reset, injecting a spurious spike. Drop it.
-        if self.entity_description.state_class == SensorStateClass.TOTAL_INCREASING and num < 0:
+        if is_counter and num < 0:
             return None
         return num
 

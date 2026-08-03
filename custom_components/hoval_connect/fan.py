@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
-from .api import HovalApiError
+from .api import HovalApiError, HovalAuthError
 from .const import (
     CIRCUIT_TYPE_HV,
     CONF_OVERRIDE_DURATION,
@@ -188,7 +188,10 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 circuit_path=self._circuit_path,
                 mode_override=OPERATION_MODE_REGULAR,
             )
-        except HovalApiError as err:
+        except (HovalApiError, HovalAuthError) as err:
+            # HovalAuthError is not a HovalApiError subclass — without it here
+            # an auth failure would escape the fire-and-forget debounce task
+            # unwrapped and leave the slider frozen at the pending value.
             # Revert pending so UI shows actual circuit state on failure,
             # but only if the user has not queued a newer value in between.
             if self._pending_percentage == percentage:

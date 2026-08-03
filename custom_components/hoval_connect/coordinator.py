@@ -578,6 +578,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 if need_events:
                     latest_result = all_results[latest_idx]
                     events_result = all_results[events_idx]
+                    latest_ok = not isinstance(latest_result, BaseException)
+                    events_ok = not isinstance(events_result, BaseException)
                     parsed_latest = None
                     parsed_events: list[HovalEventData] = []
                     # Isolation barrier: this block runs OUTSIDE the per-circuit
@@ -588,7 +590,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     # isinstance guards and try/except below are defence in
                     # depth for anything it hasn't seen yet.
                     try:
-                        if isinstance(latest_result, BaseException):
+                        if not latest_ok:
                             _LOGGER.debug("Events endpoint not available for %s", plant_id)
                         elif isinstance(latest_result, dict) and latest_result:
                             parsed_latest = _parse_event(latest_result)
@@ -598,7 +600,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                                 parsed_latest.is_active,
                                 parsed_latest.description,
                             )
-                        if isinstance(events_result, BaseException):
+                        if not events_ok:
                             _LOGGER.debug("Events list not available for %s", plant_id)
                         elif isinstance(events_result, list) and events_result:
                             parsed_events = [
@@ -613,12 +615,19 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                             plant_id,
                             exc_info=True,
                         )
+                        latest_ok = events_ok = False
                         parsed_latest = None
                         parsed_events = []
-                    # Refresh the cache only when we got something; on a total
-                    # miss reuse the previous cache (if any) rather than wiping
-                    # good data.
-                    if parsed_latest is not None or parsed_events:
+                    # Per-endpoint fallback: a failed half reuses its cached
+                    # value instead of wiping it; a successful half is cached
+                    # even when EMPTY — otherwise a healthy zero-event plant
+                    # would re-fetch both endpoints on every poll and the
+                    # cache would never save a single request.
+                    if not latest_ok and events_cached is not None:
+                        parsed_latest = events_cached[0]
+                    if not events_ok and events_cached is not None:
+                        parsed_events = events_cached[1]
+                    if latest_ok or events_ok:
                         self._events_cache[plant_id] = (parsed_latest, parsed_events, now_mono)
                     elif events_cached is not None:
                         parsed_latest, parsed_events, _ = events_cached
@@ -638,9 +647,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 # --- Weather forecast, cached ---
                 if need_weather:
                     weather_result = all_results[weather_idx]
+                    weather_ok = not isinstance(weather_result, BaseException)
                     parsed_weather = None
                     if (
-                        not isinstance(weather_result, BaseException)
+                        weather_ok
                         and isinstance(weather_result, list)
                         and weather_result
                         # First forecast element must be a dict (defence in depth)
@@ -652,9 +662,11 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                             outside_temperature=w.get("outsideTemperature"),
                             outside_temperature_min=w.get("outsideTemperatureMin"),
                         )
-                    elif isinstance(weather_result, BaseException):
+                    elif not weather_ok:
                         _LOGGER.debug("Weather not available for %s", plant_id)
-                    if parsed_weather is not None:
+                    if weather_ok:
+                        # Cache even a None result: a plant without forecast
+                        # data must not re-fetch weather on every poll.
                         self._weather_cache[plant_id] = (parsed_weather, now_mono)
                     elif weather_cached is not None:
                         parsed_weather = weather_cached[0]
