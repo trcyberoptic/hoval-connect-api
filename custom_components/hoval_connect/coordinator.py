@@ -29,6 +29,11 @@ from .const import (
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
+# Maximum lifetime of an optimistic mode override (seconds). Overrides are
+# normally cleared at the end of the next successful poll, but if polls keep
+# failing an override must not mask the device's real state indefinitely.
+_MODE_OVERRIDE_TTL_S = 120.0
+
 _LOGGER = logging.getLogger(__name__)
 
 # v1 API returns different activeProgram values than v3.
@@ -271,8 +276,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self.api = api
         self.control_lock = asyncio.Lock()
         # Optimistic mode override per circuit (set by control actions,
-        # cleared on next poll). Key: circuit_path, value: operation mode string.
-        self._mode_override: dict[str, str] = {}
+        # cleared at the END of the next successful poll or after
+        # _MODE_OVERRIDE_TTL_S). Key: circuit_path,
+        # value: (operation mode string, monotonic timestamp).
+        self._mode_override: dict[str, tuple[str, float]] = {}
         # Program cache: key=circuit_path, value=(programs_data, timestamp)
         self._program_cache: dict[str, tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
@@ -281,11 +288,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
     def set_mode_override(self, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
-        self._mode_override[circuit_path] = mode
+        self._mode_override[circuit_path] = (mode, time.monotonic())
 
     def get_mode_override(self, circuit_path: str) -> str | None:
-        """Get the optimistic mode override for a circuit."""
-        return self._mode_override.get(circuit_path)
+        """Get the optimistic mode override for a circuit.
+
+        Returns None once the override exceeds _MODE_OVERRIDE_TTL_S so a stale
+        optimistic value cannot mask the device's real state when polls fail.
+        """
+        entry = self._mode_override.get(circuit_path)
+        if entry is None:
+            return None
+        mode, ts = entry
+        if time.monotonic() - ts > _MODE_OVERRIDE_TTL_S:
+            self._mode_override.pop(circuit_path, None)
+            return None
+        return mode
 
     async def async_control_and_refresh(
         self,
@@ -295,19 +313,31 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
     ) -> None:
         """Execute a control command with lock, optimistic state, and refresh.
 
-        Serializes the API call via control_lock, sets the optimistic mode
-        override, and triggers a coordinator refresh after a short delay.
+        The API call and optimistic override are serialised inside
+        control_lock; the refresh runs as a fire-and-forget background task
+        OUTSIDE the lock (with a 2 s settle delay) so the calling entity
+        method returns promptly and a slow refresh cannot starve the lock.
+        A failed background refresh is dropped — the coordinator retries on
+        its normal poll schedule and entities stay on their optimistic state.
         """
         async with self.control_lock:
             await coro
             self.set_mode_override(circuit_path, mode_override)
+
+        async def _do_refresh() -> None:
             await asyncio.sleep(2)
-            await self.async_request_refresh()
+            try:
+                await self.async_request_refresh()
+            except Exception:  # noqa: BLE001 — see docstring
+                _LOGGER.debug(
+                    "Post-control refresh failed for %s; coordinator will retry on next poll",
+                    circuit_path,
+                )
+
+        self.hass.async_create_task(_do_refresh())
 
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
-        # Clear optimistic overrides — fresh data replaces them
-        self._mode_override.clear()
         data = HovalData()
 
         try:
@@ -578,4 +608,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)
         self._known_circuits = current_circuits
 
+        # Clear optimistic overrides only after a SUCCESSFUL fetch — fresh data
+        # replaces them. Clearing at the start meant a failed refresh snapped
+        # entities back to stale pre-override data.
+        self._mode_override.clear()
         return data
