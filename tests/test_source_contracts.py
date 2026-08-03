@@ -110,3 +110,15 @@ class TestWaterHeater:
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
             data = json.loads(_read(f))
             assert "hot_water" in data["entity"]["water_heater"], f
+
+
+class TestProgramSelect:
+    def test_ww_circuits_get_select(self):
+        assert "CIRCUIT_TYPE_WW" in _read("select.py")
+
+    def test_program_key_validated_before_send(self):
+        src = _read("select.py")
+        assert "VALID_API_PROGRAMS" in src
+
+    def test_disambiguation_survived(self):
+        assert 'f"{default} ({api_key})"' in _read("select.py")

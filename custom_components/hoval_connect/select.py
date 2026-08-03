@@ -13,13 +13,20 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
 from .api import HovalApiError
-from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, OPERATION_MODE_REGULAR
+from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, OPERATION_MODE_REGULAR
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 # API program keys in display order
 API_PROGRAMS = ["week1", "week2", "ecoMode", "standby", "constant"]
+
+# Full set of program identifiers the cloud accepts on the programs endpoint.
+# A resolved key is validated against this before sending so an unmapped
+# display string can't be forwarded verbatim to the API (→ HTTP 400).
+VALID_API_PROGRAMS = frozenset(
+    {"week1", "week2", "ecoMode", "standby", "constant", "manual", "externalConstant"}
+)
 
 # Fallback display names when API doesn't provide custom names
 DEFAULT_NAMES: dict[str, str] = {
@@ -45,7 +52,10 @@ async def async_setup_entry(
         for plant_id, plant_data in coordinator.data.plants.items():
             for path, circuit in plant_data.circuits.items():
                 uid = f"{plant_id}_{path}_program"
-                if circuit.circuit_type not in (CIRCUIT_TYPE_HV, CIRCUIT_TYPE_HK) or uid in known:
+                if (
+                    circuit.circuit_type not in (CIRCUIT_TYPE_HV, CIRCUIT_TYPE_HK, CIRCUIT_TYPE_WW)
+                    or uid in known
+                ):
                     continue
                 known.add(uid)
                 entities.append(HovalProgramSelect(coordinator, plant_id, path, circuit))
@@ -150,6 +160,11 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Set the active program."""
         api_program = self._api_key_from_display(option)
+        if api_program not in VALID_API_PROGRAMS:
+            raise HomeAssistantError(
+                f"Unknown program '{option}' (resolved to '{api_program}'); "
+                f"valid programs: {', '.join(sorted(VALID_API_PROGRAMS))}"
+            )
         _LOGGER.debug(
             "Setting program to %s (%s) for %s",
             option,
