@@ -399,3 +399,147 @@ class TestClampHvAirVolume:
 
     def test_float_truncates_to_int(self):
         assert clamp_hv_air_volume(54.9) == 54
+
+
+class TestResolveActiveProgramRobustness:
+    """Nested schema drift must degrade to None fields, never raise.
+
+    Ported from the GMH224 fork (their v0.21.1 audit finding F1): each case
+    below crashed the old resolver (KeyError/AttributeError inside
+    _fetch_circuit → gather(return_exceptions=True) silently discarded the
+    whole circuit, including its already-fetched live values).
+    """
+
+    NOW = datetime(2026, 7, 20, 10, 0)  # a Monday
+
+    def test_none_programs_returns_all_none(self):
+        """programs=None (HTTP 204 / empty body) must not raise AttributeError."""
+        assert _resolve_active_program_value(None, self.NOW) == (None, None, None)
+
+    def test_empty_list_programs_returns_all_none(self):
+        """programs=[] (HTTP 200 with body []) must not raise AttributeError.
+
+        Hoval's May 2026 change made the programs endpoint return [] for
+        non-programmable circuits (e.g. BL/boiler).
+        """
+        assert _resolve_active_program_value([], self.NOW) == (None, None, None)
+
+    def test_int_programs_returns_all_none(self):
+        """Any non-dict value must be handled gracefully (defensive)."""
+        assert _resolve_active_program_value(42, self.NOW) == (None, None, None)
+
+    def test_string_programs_returns_all_none(self):
+        assert _resolve_active_program_value("programs", self.NOW) == (None, None, None)
+
+    def test_day_config_missing_id(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"name": "no-id"}]},
+            "week1": {"name": "W1", "dayProgramIds": [1]},
+        }
+        # Config unusable → week resolves, day/value do not.
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", None, None)
+
+    def test_week_entry_is_a_list(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"id": 1, "name": "x", "phases": []}]},
+            "week1": ["oops"],
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == (None, None, None)
+
+    def test_week_entry_missing(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"id": 1, "name": "x", "phases": []}]},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == (None, None, None)
+
+    def test_day_program_ids_not_a_list(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"id": 1, "name": "x", "phases": []}]},
+            "week1": {"name": "W1", "dayProgramIds": "1,2,3"},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", None, None)
+
+    def test_phase_missing_start(self):
+        programs = {
+            "dayPrograms": {
+                "dayConfigurations": [{"id": 1, "name": "Day", "phases": [{"value": 40}]}]
+            },
+            "week1": {"name": "W1", "dayProgramIds": [1] * 7},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Day", None)
+
+    def test_phase_not_a_dict(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"id": 1, "name": "Day", "phases": ["oops"]}]},
+            "week1": {"name": "W1", "dayProgramIds": [1] * 7},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Day", None)
+
+    def test_phases_not_a_list(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": [{"id": 1, "name": "Day", "phases": {"bad": 1}}]},
+            "week1": {"name": "W1", "dayProgramIds": [1] * 7},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Day", None)
+
+    def test_phase_time_values_not_numeric(self):
+        programs = {
+            "dayPrograms": {
+                "dayConfigurations": [
+                    {
+                        "id": 1,
+                        "name": "Day",
+                        "phases": [
+                            {
+                                "start": {"hours": "x", "minutes": 0},
+                                "end": {"hours": 22, "minutes": 0},
+                                "value": 60,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "week1": {"name": "W1", "dayProgramIds": [1] * 7},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Day", None)
+
+    def test_day_configurations_not_a_list(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": {"bad": "shape"}},
+            "week1": {"name": "W1", "dayProgramIds": [1]},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == (None, None, None)
+
+    def test_day_config_entry_not_a_dict(self):
+        programs = {
+            "dayPrograms": {"dayConfigurations": ["oops", 42]},
+            "week1": {"name": "W1", "dayProgramIds": [1]},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", None, None)
+
+    def test_day_programs_not_a_dict(self):
+        programs = {"dayPrograms": ["oops"], "week1": {"name": "W1"}}
+        assert _resolve_active_program_value(programs, self.NOW) == (None, None, None)
+
+    def test_mixed_valid_and_invalid_day_configs(self):
+        """Valid configs are still resolved when malformed siblings exist."""
+        programs = {
+            "dayPrograms": {
+                "dayConfigurations": [
+                    {"name": "no-id"},
+                    {
+                        "id": 1,
+                        "name": "Good",
+                        "phases": [
+                            {
+                                "start": {"hours": 6, "minutes": 0},
+                                "end": {"hours": 22, "minutes": 0},
+                                "value": 55,
+                            }
+                        ],
+                    },
+                ]
+            },
+            "week1": {"name": "W1", "dayProgramIds": [1] * 7},
+        }
+        assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Good", 55)
