@@ -20,9 +20,12 @@ from .const import (
     CONF_TURN_ON_MODE,
     DEFAULT_OVERRIDE_DURATION,
     DEFAULT_TURN_ON_MODE,
+    HV_AIR_VOLUME_MAX,
+    HV_AIR_VOLUME_MIN,
     OPERATION_MODE_REGULAR,
     OPERATION_MODE_STANDBY,
     TURN_ON_RESUME,
+    clamp_hv_air_volume,
 )
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
@@ -160,13 +163,26 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         so the slider does not snap back to the stale, ~30-second-old
         coordinator data during the in-flight request. Clears it only after
         the refresh has fetched the new setpoint from Hoval.
+
+        The value is clamped into the HV device band before sending: HA allows
+        1-14 %, which the cloud rejects or handles undefined. 0 never reaches
+        here (handled as turn_off in async_set_percentage).
         """
+        clamped = clamp_hv_air_volume(percentage)
+        if clamped != percentage:
+            _LOGGER.debug(
+                "Clamped requested air volume %d%% to device band %d-%d%% → %d%%",
+                percentage,
+                HV_AIR_VOLUME_MIN,
+                HV_AIR_VOLUME_MAX,
+                clamped,
+            )
         try:
             await self.coordinator.async_control_and_refresh(
                 self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
-                    value=percentage,
+                    value=clamped,
                     duration=self._override_duration,
                 ),
                 circuit_path=self._circuit_path,
@@ -187,10 +203,24 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
             self.async_write_ha_state()
 
     async def _debounced_set(self, percentage: int) -> None:
-        """Wait for debounce period, then send the latest percentage."""
+        """Wait for debounce period, then send the latest percentage.
+
+        Runs as a fire-and-forget task, so a raised HomeAssistantError would
+        only reach the event loop's unhandled-task logger. Log it at WARNING
+        instead — _send_percentage has already reverted the pending state.
+        """
         await asyncio.sleep(DEBOUNCE_SECONDS)
         _LOGGER.debug("Debounce complete, sending %d%%", percentage)
-        await self._send_percentage(percentage)
+        try:
+            await self._send_percentage(percentage)
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Setting fan speed to %d%% failed for circuit %s: %s — "
+                "the slider reverts to the device's actual value",
+                percentage,
+                self._circuit_path,
+                err,
+            )
 
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage of the fan (debounced)."""
