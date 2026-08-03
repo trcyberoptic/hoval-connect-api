@@ -42,7 +42,7 @@ _V1_PROGRAM_MAP: dict[str, str] = {
 
 
 def _resolve_active_program_value(
-    programs: dict[str, Any],
+    programs: dict[str, Any] | None,
     now: datetime,
     active_program: str | None = None,
 ) -> tuple[str | None, str | None, float | None]:
@@ -55,21 +55,40 @@ def _resolve_active_program_value(
     is actually running, so callers should treat the values as best-effort
     informational in that case.
 
+    Defensive against schema drift: non-programmable circuits (e.g. BL/boiler)
+    may yield None (HTTP 204) or an empty JSON array [] from the programs
+    endpoint, and any nested field may have an unexpected shape. Every such
+    case degrades to None fields instead of raising — an exception here used
+    to propagate out of _fetch_circuit and silently drop the whole circuit
+    (including its already-fetched live values).
+
     Returns (week_name, day_program_name, current_phase_value).
     """
-    day_programs = programs.get("dayPrograms", {})
-    day_configs = day_programs.get("dayConfigurations", [])
-    if not day_configs:
+    if not isinstance(programs, dict):
+        return None, None, None
+    day_programs = programs.get("dayPrograms")
+    if not isinstance(day_programs, dict):
+        return None, None, None
+    day_configs = day_programs.get("dayConfigurations")
+    if not isinstance(day_configs, list) or not day_configs:
         return None, None, None
 
-    # Build lookup: id -> day config
-    config_by_id: dict[int, dict] = {d["id"]: d for d in day_configs}
+    # Build lookup: id -> day config. Entries that are not dicts or lack an
+    # "id" are skipped instead of raising.
+    config_by_id: dict[Any, dict] = {
+        d["id"]: d for d in day_configs if isinstance(d, dict) and "id" in d
+    }
 
     # Pick week1 or week2 based on what the controller reports as active.
     week_key = "week2" if active_program == "week2" else "week1"
-    week = programs.get(week_key, {})
+    week = programs.get(week_key)
+    if not isinstance(week, dict):
+        # Week entry missing or wrong shape — no week/day info resolvable.
+        return None, None, None
     week_name = week.get("name")
-    day_program_ids = week.get("dayProgramIds", [])
+    day_program_ids = week.get("dayProgramIds")
+    if not isinstance(day_program_ids, list):
+        day_program_ids = []
 
     # weekday: 0=Monday in Python, dayProgramIds[0]=Monday in Hoval
     weekday = now.weekday()
@@ -83,13 +102,24 @@ def _resolve_active_program_value(
 
     day_name = day_config.get("name")
 
-    # Find active phase based on current time
+    # Find active phase based on current time. Malformed phases (non-dict,
+    # missing/non-dict start or end, non-numeric times) are skipped, not fatal.
     current_minutes = now.hour * 60 + now.minute
-    for phase in day_config.get("phases", []):
-        start = phase["start"]
-        end = phase["end"]
-        start_min = start["hours"] * 60 + start["minutes"]
-        end_min = end["hours"] * 60 + end["minutes"]
+    phases = day_config.get("phases")
+    if not isinstance(phases, list):
+        phases = []
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        start = phase.get("start")
+        end = phase.get("end")
+        if not isinstance(start, dict) or not isinstance(end, dict):
+            continue
+        try:
+            start_min = int(start["hours"]) * 60 + int(start["minutes"])
+            end_min = int(end["hours"]) * 60 + int(end["minutes"])
+        except (KeyError, TypeError, ValueError):
+            continue
         if start_min <= current_minutes < end_min:
             return week_name, day_name, phase.get("value")
 
@@ -395,31 +425,66 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         results = [live_result[0], cached_prog[0]]
 
                     if not isinstance(results[0], BaseException):
-                        circuit_data.live_values = {v["key"]: v["value"] for v in results[0]}
+                        lv_raw = results[0]
+                        # api.get_live_values() already normalises the wrapper;
+                        # one lightweight guard against future shape regressions.
+                        if not isinstance(lv_raw, list):
+                            _LOGGER.warning(
+                                "Live-values for %s returned unexpected type %s; treating as empty",
+                                path,
+                                type(lv_raw).__name__,
+                            )
+                            lv_raw = []
+                        circuit_data.live_values = {
+                            v["key"]: v["value"]
+                            for v in lv_raw
+                            if isinstance(v, dict) and "key" in v and "value" in v
+                        }
                         _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
                     else:
                         _LOGGER.debug("Live values not available for %s", path)
 
                     programs = results[1]
-                    if not isinstance(programs, BaseException):
+                    if isinstance(programs, dict):
                         if need_programs:
                             self._program_cache[path] = (programs, time.time())
-                        now = dt_util.now()
-                        week_name, day_name, phase_value = _resolve_active_program_value(
-                            programs, now, circuit_data.active_program
-                        )
-                        circuit_data.active_week_name = week_name
-                        circuit_data.active_day_program_name = day_name
-                        circuit_data.program_air_volume = phase_value
-                        # Extract user-defined program names
-                        w1 = programs.get("week1", {})
-                        w2 = programs.get("week2", {})
-                        if w1.get("name"):
-                            circuit_data.program_names["week1"] = w1["name"]
-                        if w2.get("name"):
-                            circuit_data.program_names["week2"] = w2["name"]
+                        # Isolation barrier: any residual exception here must
+                        # degrade the program fields only — never propagate out
+                        # of _fetch_circuit, which would discard the whole
+                        # circuit (incl. its live values) via
+                        # gather(return_exceptions=True).
+                        try:
+                            now = dt_util.now()
+                            week_name, day_name, phase_value = _resolve_active_program_value(
+                                programs, now, circuit_data.active_program
+                            )
+                            circuit_data.active_week_name = week_name
+                            circuit_data.active_day_program_name = day_name
+                            circuit_data.program_air_volume = phase_value
+                            # Extract user-defined program names
+                            w1 = programs.get("week1")
+                            w2 = programs.get("week2")
+                            if isinstance(w1, dict) and w1.get("name"):
+                                circuit_data.program_names["week1"] = w1["name"]
+                            if isinstance(w2, dict) and w2.get("name"):
+                                circuit_data.program_names["week2"] = w2["name"]
+                        except Exception:  # noqa: BLE001 — see isolation note
+                            _LOGGER.warning(
+                                "Program data for circuit %s could not be parsed; "
+                                "program sensors will be unknown this cycle "
+                                "(live values are unaffected)",
+                                path,
+                                exc_info=True,
+                            )
+                    elif isinstance(programs, BaseException):
+                        _LOGGER.debug("Programs not available for %s: %s", path, programs)
                     else:
-                        _LOGGER.debug("Programs not available for %s", path)
+                        _LOGGER.debug(
+                            "Programs endpoint for %s returned %r (type=%s); skipping",
+                            path,
+                            programs,
+                            type(programs).__name__,
+                        )
 
                     return circuit_data
 
