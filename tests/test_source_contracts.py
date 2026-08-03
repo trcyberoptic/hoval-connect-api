@@ -33,3 +33,20 @@ class TestClimateLiveValueKeys:
 
     def test_pending_temperature_survived_the_port(self):
         assert "_pending_temperature" in _read("climate.py")
+
+
+class TestConfigFlowHardening:
+    def test_validation_has_outer_timeout(self):
+        src = _read("config_flow.py")
+        assert "asyncio.timeout(_VALIDATION_TIMEOUT_S)" in src
+        assert src.count("asyncio.timeout(_VALIDATION_TIMEOUT_S)") == 2  # user + reauth
+
+    def test_reauth_pins_account(self):
+        assert "wrong_account" in _read("config_flow.py")
+
+    def test_wrong_account_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            data = json.loads(_read(f))
+            assert "wrong_account" in data["config"]["error"], f

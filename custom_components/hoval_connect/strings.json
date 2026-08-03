@@ -21,6 +21,7 @@
     "error": {
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Unable to connect to Hoval Connect. Please try again later.",
+      "wrong_account": "The email does not match the account this entry was set up with.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
