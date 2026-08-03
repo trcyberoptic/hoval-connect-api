@@ -21,6 +21,7 @@
     "error": {
       "invalid_auth": "Ungültige E-Mail oder Passwort.",
       "cannot_connect": "Verbindung zu Hoval Connect konnte nicht hergestellt werden. Bitte versuchen Sie es später erneut.",
+      "wrong_account": "Die E-Mail-Adresse gehört nicht zu dem Konto, mit dem dieser Eintrag eingerichtet wurde.",
       "unknown": "Ein unerwarteter Fehler ist aufgetreten."
     },
     "abort": {

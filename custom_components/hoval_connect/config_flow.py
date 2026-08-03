@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -27,6 +28,12 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Outer bound on credential validation. The per-request timeouts in the API
+# client do not bound the whole get_plants() call (pagination loop, retries),
+# and the config flow has no coordinator watchdog — without this a
+# byte-dripping server hangs the setup dialog indefinitely.
+_VALIDATION_TIMEOUT_S = 30
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -55,7 +62,11 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             api = HovalConnectApi(session, user_input["email"], user_input["password"])
 
             try:
-                await api.get_plants()
+                async with asyncio.timeout(_VALIDATION_TIMEOUT_S):
+                    await api.get_plants()
+            except TimeoutError:
+                _LOGGER.warning("Hoval validation timed out after %d s", _VALIDATION_TIMEOUT_S)
+                errors["base"] = "cannot_connect"
             except HovalAuthError as err:
                 _LOGGER.warning("Hoval auth failed: %s", err)
                 errors["base"] = "invalid_auth"
@@ -91,23 +102,36 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            session = async_get_clientsession(self.hass)
-            api = HovalConnectApi(session, user_input["email"], user_input["password"])
-
-            try:
-                await api.get_plants()
-            except HovalAuthError:
-                errors["base"] = "invalid_auth"
-            except HovalApiError:
-                errors["base"] = "cannot_connect"
+            reauth_entry = self._get_reauth_entry()
+            # Pin reauth to the original account: a reauth must not silently
+            # rebind the entry to a different Hoval login (unique_id is the
+            # lowercased account email since the first release).
+            if user_input["email"].lower() != (reauth_entry.unique_id or "").lower():
+                errors["base"] = "wrong_account"
             else:
-                return self.async_update_reload_and_abort(
-                    self._get_reauth_entry(),
-                    data={
-                        "email": user_input["email"],
-                        "password": user_input["password"],
-                    },
-                )
+                session = async_get_clientsession(self.hass)
+                api = HovalConnectApi(session, user_input["email"], user_input["password"])
+
+                try:
+                    async with asyncio.timeout(_VALIDATION_TIMEOUT_S):
+                        await api.get_plants()
+                except TimeoutError:
+                    _LOGGER.warning(
+                        "Hoval reauth validation timed out after %d s", _VALIDATION_TIMEOUT_S
+                    )
+                    errors["base"] = "cannot_connect"
+                except HovalAuthError:
+                    errors["base"] = "invalid_auth"
+                except HovalApiError:
+                    errors["base"] = "cannot_connect"
+                else:
+                    return self.async_update_reload_and_abort(
+                        reauth_entry,
+                        data={
+                            "email": user_input["email"],
+                            "password": user_input["password"],
+                        },
+                    )
 
         return self.async_show_form(
             step_id="reauth_confirm",
