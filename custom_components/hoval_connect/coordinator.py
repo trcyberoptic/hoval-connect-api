@@ -23,8 +23,10 @@ from .const import (
     CIRCUIT_TYPE_WW,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    EVENTS_CACHE_TTL,
     PROGRAM_CACHE_TTL,
     SUPPORTED_CIRCUIT_TYPES,
+    WEATHER_CACHE_TTL,
 )
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
@@ -283,6 +285,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # Program cache: key=circuit_path, value=(programs_data, timestamp)
         self._program_cache: dict[str, tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
+        # Plant-level caches: (parsed value(s), monotonic timestamp)
+        self._weather_cache: dict[str, tuple[HovalWeatherData | None, float]] = {}
+        self._weather_cache_ttl = WEATHER_CACHE_TTL.total_seconds()
+        self._events_cache: dict[
+            str, tuple[HovalEventData | None, list[HovalEventData], float]
+        ] = {}
+        self._events_cache_ttl = EVENTS_CACHE_TTL.total_seconds()
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
 
@@ -518,17 +527,34 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                     return circuit_data
 
-                # Run circuits, events, and weather all in parallel
+                # Run circuits in parallel. Plant-level events/weather are only
+                # appended when their cache is stale (they are slow-changing and
+                # plant-scoped, so fetching them every poll wastes round-trips).
                 all_tasks = [
                     _fetch_circuit(path, ctype, circ) for path, ctype, circ in supported_circuits
                 ]
-                # Append plant-level tasks (events + weather)
-                latest_idx = len(all_tasks)
-                all_tasks.append(self.api.get_latest_event(plant_id))
-                events_idx = len(all_tasks)
-                all_tasks.append(self.api.get_events(plant_id))
-                weather_idx = len(all_tasks)
-                all_tasks.append(self.api.get_weather(plant_id))
+                num_circuits = len(all_tasks)
+                now_mono = time.monotonic()
+
+                events_cached = self._events_cache.get(plant_id)
+                need_events = (
+                    events_cached is None or now_mono - events_cached[2] > self._events_cache_ttl
+                )
+                latest_idx = events_idx = None
+                if need_events:
+                    latest_idx = len(all_tasks)
+                    all_tasks.append(self.api.get_latest_event(plant_id))
+                    events_idx = len(all_tasks)
+                    all_tasks.append(self.api.get_events(plant_id))
+
+                weather_cached = self._weather_cache.get(plant_id)
+                need_weather = (
+                    weather_cached is None or now_mono - weather_cached[1] > self._weather_cache_ttl
+                )
+                weather_idx = None
+                if need_weather:
+                    weather_idx = len(all_tasks)
+                    all_tasks.append(self.api.get_weather(plant_id))
 
                 all_results = await asyncio.gather(
                     *all_tasks,
@@ -536,7 +562,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 )
 
                 # Process circuit results
-                for result in all_results[:latest_idx]:
+                for result in all_results[:num_circuits]:
                     if isinstance(result, BaseException):
                         _LOGGER.debug("Circuit fetch failed: %s", result)
                         continue
@@ -544,45 +570,93 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         plant_data.has_error = True
                     plant_data.circuits[result.path] = result
 
-                # Process latest event
-                latest_result = all_results[latest_idx]
-                if not isinstance(latest_result, BaseException) and latest_result:
-                    plant_data.latest_event = _parse_event(latest_result)
-                    if _is_problem_event(plant_data.latest_event):
-                        plant_data.has_error = True
-                    _LOGGER.debug(
-                        "Latest event: type=%s active=%s desc=%s",
-                        plant_data.latest_event.event_type,
-                        plant_data.latest_event.is_active,
-                        plant_data.latest_event.description,
-                    )
-                elif isinstance(latest_result, BaseException):
-                    _LOGGER.debug("Events endpoint not available for %s", plant_id)
+                # --- Events (latest + list), cached together ---
+                if need_events:
+                    latest_result = all_results[latest_idx]
+                    events_result = all_results[events_idx]
+                    parsed_latest = None
+                    parsed_events: list[HovalEventData] = []
+                    # Isolation barrier: this block runs OUTSIDE the per-circuit
+                    # gather's exception isolation, so a shape surprise here
+                    # (e.g. a pagination wrapper reaching the list slice) would
+                    # fail the ENTIRE poll and take every entity unavailable.
+                    # The API client now normalises both event endpoints; the
+                    # isinstance guards and try/except below are defence in
+                    # depth for anything it hasn't seen yet.
+                    try:
+                        if isinstance(latest_result, BaseException):
+                            _LOGGER.debug("Events endpoint not available for %s", plant_id)
+                        elif isinstance(latest_result, dict) and latest_result:
+                            parsed_latest = _parse_event(latest_result)
+                            _LOGGER.debug(
+                                "Latest event: type=%s active=%s desc=%s",
+                                parsed_latest.event_type,
+                                parsed_latest.is_active,
+                                parsed_latest.description,
+                            )
+                        if isinstance(events_result, BaseException):
+                            _LOGGER.debug("Events list not available for %s", plant_id)
+                        elif isinstance(events_result, list) and events_result:
+                            parsed_events = [
+                                _parse_event(ev)
+                                for ev in events_result[:10]
+                                if isinstance(ev, dict)
+                            ]
+                    except Exception:  # noqa: BLE001 — events must never fail the poll
+                        _LOGGER.warning(
+                            "Event data for plant %s could not be parsed; "
+                            "reusing cached events for this cycle",
+                            plant_id,
+                            exc_info=True,
+                        )
+                        parsed_latest = None
+                        parsed_events = []
+                    # Refresh the cache only when we got something; on a total
+                    # miss reuse the previous cache (if any) rather than wiping
+                    # good data.
+                    if parsed_latest is not None or parsed_events:
+                        self._events_cache[plant_id] = (parsed_latest, parsed_events, now_mono)
+                    elif events_cached is not None:
+                        parsed_latest, parsed_events, _ = events_cached
+                else:
+                    parsed_latest, parsed_events, _ = events_cached
 
-                # Process events list
-                events_result = all_results[events_idx]
-                if not isinstance(events_result, BaseException) and events_result:
-                    for ev in events_result[:10]:
-                        plant_data.events.append(_parse_event(ev))
-                    for ev in plant_data.events:
+                plant_data.latest_event = parsed_latest
+                plant_data.events = list(parsed_events)
+                if parsed_latest is not None and _is_problem_event(parsed_latest):
+                    plant_data.has_error = True
+                else:
+                    for ev in parsed_events:
                         if _is_problem_event(ev):
                             plant_data.has_error = True
                             break
-                elif isinstance(events_result, BaseException):
-                    _LOGGER.debug("Events list not available for %s", plant_id)
 
-                # Process weather forecast
-                weather_result = all_results[weather_idx]
-                if not isinstance(weather_result, BaseException) and weather_result:
-                    if isinstance(weather_result, list) and weather_result:
+                # --- Weather forecast, cached ---
+                if need_weather:
+                    weather_result = all_results[weather_idx]
+                    parsed_weather = None
+                    if (
+                        not isinstance(weather_result, BaseException)
+                        and isinstance(weather_result, list)
+                        and weather_result
+                        # First forecast element must be a dict (defence in depth)
+                        and isinstance(weather_result[0], dict)
+                    ):
                         w = weather_result[0]
-                        plant_data.weather = HovalWeatherData(
+                        parsed_weather = HovalWeatherData(
                             weather_type=w.get("weatherType"),
                             outside_temperature=w.get("outsideTemperature"),
                             outside_temperature_min=w.get("outsideTemperatureMin"),
                         )
-                elif isinstance(weather_result, BaseException):
-                    _LOGGER.debug("Weather not available for %s", plant_id)
+                    elif isinstance(weather_result, BaseException):
+                        _LOGGER.debug("Weather not available for %s", plant_id)
+                    if parsed_weather is not None:
+                        self._weather_cache[plant_id] = (parsed_weather, now_mono)
+                    elif weather_cached is not None:
+                        parsed_weather = weather_cached[0]
+                else:
+                    parsed_weather = weather_cached[0]
+                plant_data.weather = parsed_weather
 
                 data.plants[plant_id] = plant_data
 

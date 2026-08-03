@@ -23,6 +23,12 @@ SCAN_INTERVAL_OPTIONS = {30: "30 seconds", 60: "60 seconds", 120: "2 minutes", 3
 # Program cache TTL — programs change rarely, no need to fetch every poll
 PROGRAM_CACHE_TTL = timedelta(minutes=5)
 
+# Plant-level cache TTLs — weather and events are slow-changing, so fetching
+# them on every (default 60 s) poll wastes round-trips and risks rate limits.
+# They refresh on their own cadence; the last good value is reused in between.
+WEATHER_CACHE_TTL = timedelta(minutes=15)
+EVENTS_CACHE_TTL = timedelta(minutes=3)
+
 # HTTP request timeout (seconds)
 REQUEST_TIMEOUT = 30
 

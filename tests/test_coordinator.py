@@ -543,3 +543,23 @@ class TestResolveActiveProgramRobustness:
             "week1": {"name": "W1", "dayProgramIds": [1] * 7},
         }
         assert _resolve_active_program_value(programs, self.NOW) == ("W1", "Good", 55)
+
+
+from datetime import timedelta as _timedelta  # noqa: E402
+
+from custom_components.hoval_connect.const import (  # noqa: E402
+    EVENTS_CACHE_TTL,
+    PROGRAM_CACHE_TTL,
+    WEATHER_CACHE_TTL,
+)
+
+
+class TestCacheTtls:
+    def test_events_ttl_longer_than_fastest_poll(self):
+        assert _timedelta(minutes=1) <= EVENTS_CACHE_TTL
+
+    def test_weather_ttl_longer_than_events(self):
+        assert WEATHER_CACHE_TTL > EVENTS_CACHE_TTL
+
+    def test_program_ttl_unchanged(self):
+        assert _timedelta(minutes=5) == PROGRAM_CACHE_TTL
