@@ -108,67 +108,91 @@ class HovalConnectApi:
         self._id_token: str | None = None
         self._id_token_exp: float = 0
         self._pat_cache: dict[str, tuple[str, float]] = {}
+        # Single-flight locks: the coordinator fans out one task per circuit,
+        # so a burst of concurrent 401s must trigger at most ONE token refresh
+        # instead of a thundering herd against the rate-limited IDP. Separate
+        # locks because _get_plant_access_token() calls _get_id_token().
+        self._id_token_lock = asyncio.Lock()
+        self._pat_lock = asyncio.Lock()
 
     async def _get_id_token(self) -> str:
-        """Get or refresh the ID token via OAuth2 password grant."""
+        """Get or refresh the ID token via OAuth2 password grant.
+
+        Double-checked locking: the fast path returns the cached token without
+        the lock; only a refresh serialises through _id_token_lock.
+        """
         if self._id_token and time.time() < self._id_token_exp:
             return self._id_token
 
-        try:
-            async with self._session.post(
-                IDP_URL,
-                data={
-                    "grant_type": "password",
-                    "client_id": CLIENT_ID,
-                    "username": self._email,
-                    "password": self._password,
-                    "scope": "openid",
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            ) as resp:
-                if resp.status in (400, 401, 403):
-                    _LOGGER.warning("IDP auth failed (HTTP %s)", resp.status)
-                    raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
-                resp.raise_for_status()
-                data = await resp.json()
-        except HovalAuthError:
-            raise
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise HovalApiError(f"Connection error during authentication: {err}") from err
+        async with self._id_token_lock:
+            if self._id_token and time.time() < self._id_token_exp:
+                return self._id_token
 
-        if "id_token" not in data:
-            _LOGGER.error("IDP response missing id_token. Keys: %s", list(data.keys()))
-            raise HovalApiError("IDP response missing id_token")
+            try:
+                async with self._session.post(
+                    IDP_URL,
+                    data={
+                        "grant_type": "password",
+                        "client_id": CLIENT_ID,
+                        "username": self._email,
+                        "password": self._password,
+                        "scope": "openid",
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                ) as resp:
+                    if resp.status in (400, 401, 403):
+                        _LOGGER.warning("IDP auth failed (HTTP %s)", resp.status)
+                        raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
+                    resp.raise_for_status()
+                    data = await resp.json()
+            except HovalAuthError:
+                raise
+            except (aiohttp.ClientError, TimeoutError) as err:
+                raise HovalApiError(f"Connection error during authentication: {err}") from err
 
-        self._id_token = data["id_token"]
-        self._id_token_exp = time.time() + ID_TOKEN_TTL.total_seconds()
-        return self._id_token
+            if "id_token" not in data:
+                _LOGGER.error("IDP response missing id_token. Keys: %s", list(data.keys()))
+                raise HovalApiError("IDP response missing id_token")
+
+            self._id_token = data["id_token"]
+            self._id_token_exp = time.time() + ID_TOKEN_TTL.total_seconds()
+            return self._id_token
 
     async def _get_plant_access_token(self, plant_id: str) -> str:
-        """Get or refresh the plant access token."""
+        """Get or refresh the plant access token.
+
+        Double-checked locking mirrors _get_id_token: the cached fast path
+        stays lock-free; only a refresh serialises through _pat_lock, with the
+        cache re-checked inside the lock.
+        """
         cached = self._pat_cache.get(plant_id)
         if cached and time.time() < cached[1]:
             return cached[0]
 
-        id_token = await self._get_id_token()
-        try:
-            async with self._session.get(
-                f"{BASE_URL}/v1/plants/{plant_id}/settings",
-                headers={"Authorization": f"Bearer {id_token}"},
-            ) as resp:
-                if resp.status == 401:
-                    self._id_token = None
-                    raise HovalAuthError("ID token rejected")
-                resp.raise_for_status()
-                data = await resp.json()
-        except (HovalAuthError, HovalApiError):
-            raise
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise HovalApiError(f"Connection error fetching plant token: {err}") from err
+        async with self._pat_lock:
+            cached = self._pat_cache.get(plant_id)
+            if cached and time.time() < cached[1]:
+                return cached[0]
 
-        token = data["token"]
-        self._pat_cache[plant_id] = (token, time.time() + PLANT_TOKEN_TTL.total_seconds())
-        return token
+            id_token = await self._get_id_token()
+            try:
+                async with self._session.get(
+                    f"{BASE_URL}/v1/plants/{plant_id}/settings",
+                    headers={"Authorization": f"Bearer {id_token}"},
+                ) as resp:
+                    if resp.status == 401:
+                        self._id_token = None
+                        raise HovalAuthError("ID token rejected")
+                    resp.raise_for_status()
+                    data = await resp.json()
+            except (HovalAuthError, HovalApiError):
+                raise
+            except (aiohttp.ClientError, TimeoutError) as err:
+                raise HovalApiError(f"Connection error fetching plant token: {err}") from err
+
+            token = data["token"]
+            self._pat_cache[plant_id] = (token, time.time() + PLANT_TOKEN_TTL.total_seconds())
+            return token
 
     async def _headers(self, plant_id: str | None = None) -> dict[str, str]:
         """Build request headers with auth tokens."""
