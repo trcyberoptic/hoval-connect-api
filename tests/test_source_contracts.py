@@ -88,3 +88,25 @@ class TestOverrideLifecycle:
         first_stmt_zone = body[:400]
         assert "_mode_override.clear()" not in first_stmt_zone
         assert "_mode_override.clear()" in body
+
+
+class TestWaterHeater:
+    def test_platform_registered(self):
+        assert "Platform.WATER_HEATER" in _read("__init__.py")
+
+    def test_uses_v4_duration_constant_not_lowercase_midnight(self):
+        src = _read("water_heater.py")
+        assert "DURATION_MIDNIGHT" in src
+        assert (
+            '"midnight"' not in src
+        )  # fork's v3 literal would silently degrade on our v4 body builder
+
+    def test_no_duplicate_reset_service(self):
+        assert "reset_ww_boost" not in _read("water_heater.py")
+
+    def test_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            data = json.loads(_read(f))
+            assert "hot_water" in data["entity"]["water_heater"], f

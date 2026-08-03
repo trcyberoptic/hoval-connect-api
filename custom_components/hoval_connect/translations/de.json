@@ -221,12 +221,17 @@
       "program": {
         "name": "Programm"
       }
+    },
+    "water_heater": {
+      "hot_water": {
+        "name": "Warmwasser"
+      }
     }
   },
   "services": {
     "reset_temporary_change": {
       "name": "Temporäre Programm-Anpassung zurücksetzen",
-      "description": "Bricht eine aktive temporäre Programm-Anpassung (HomeVent Lüftung oder Heizkreis-Klima) ab, sodass das zugrunde liegende Zeitprogramm wieder übernimmt."
+      "description": "Bricht eine aktive temporäre Programm-Anpassung (HomeVent Lüftung, Heizkreis-Klima oder Warmwasser) ab, sodass das zugrunde liegende Zeitprogramm wieder übernimmt."
     }
   }
 }
