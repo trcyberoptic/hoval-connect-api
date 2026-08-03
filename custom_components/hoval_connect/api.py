@@ -29,6 +29,13 @@ _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds, doubled on each retry
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+# Hard upper bound on my-plants pagination. 50 pages x 12 plants/page = 600
+# plants — far beyond any real account. Without a cap, a server that keeps
+# answering `"last": false` would loop get_plants() forever; the config-flow
+# validation path (30 s outer timeout) is the tightest caller, but the cap
+# belongs in the client.
+_MAX_PLANT_PAGES = 50
+
 
 class HovalAuthError(Exception):
     """Authentication error."""
@@ -276,8 +283,49 @@ class HovalConnectApi:
         raise HovalApiError(f"Request failed after {_MAX_RETRIES} retries")
 
     async def get_plants(self) -> list[dict[str, Any]]:
-        """Get list of user's plants."""
-        return await self._request("GET", "/api/my-plants", params={"size": "12", "page": "0"})
+        """Get list of user's plants, fetching all pages.
+
+        Hoval's /api/my-plants endpoint was updated in May 2026 to enforce a
+        maximum page size of 12 items.  The response may be:
+          - A plain list (old API shape) — returned as-is.
+          - A Spring/Page wrapper {"content": [...], "last": bool, ...} — the
+            integration iterates all pages and returns a flat list.
+        """
+        all_plants: list[dict[str, Any]] = []
+        page = 0
+        while True:
+            result = await self._request(
+                "GET", "/api/my-plants", params={"size": "12", "page": str(page)}
+            )
+            if isinstance(result, list):
+                # Old (pre-pagination) API shape: plain list, no further pages.
+                return result
+            if not isinstance(result, dict):
+                _LOGGER.warning(
+                    "Unexpected get_plants response type %s on page %d; aborting pagination",
+                    type(result).__name__,
+                    page,
+                )
+                break
+            content = result.get("content", [])
+            if not isinstance(content, list):
+                _LOGGER.warning("get_plants 'content' is not a list (%s); stopping", type(content))
+                break
+            all_plants.extend(content)
+            # "last" is False when more pages exist; True (or absent) means done.
+            if result.get("last", True) or not content:
+                break
+            page += 1
+            if page >= _MAX_PLANT_PAGES:
+                _LOGGER.warning(
+                    "get_plants pagination exceeded %d pages (%d plants so far); "
+                    "truncating — the cloud keeps reporting more pages, which is "
+                    "almost certainly an upstream fault",
+                    _MAX_PLANT_PAGES,
+                    len(all_plants),
+                )
+                break
+        return all_plants
 
     async def get_plant_settings(self, plant_id: str) -> dict[str, Any]:
         """Get plant settings (also refreshes PAT as side effect)."""
@@ -288,8 +336,17 @@ class HovalConnectApi:
 
         Hoval removed the v1 endpoint around 2026-04-21; v3 is the only path that
         still works. Response shape changed: see coordinator field mapping.
+        A Spring-Page wrapper {"content": [...], ...} is normalised to its
+        content list; any other non-list shape degrades to [].
         """
-        return await self._request("GET", f"/v3/plants/{plant_id}/circuits", plant_id=plant_id)
+        result = await self._request("GET", f"/v3/plants/{plant_id}/circuits", plant_id=plant_id)
+        if isinstance(result, dict):
+            _LOGGER.debug(
+                "get_circuits returned paginated wrapper for plant %s; extracting 'content'",
+                plant_id,
+            )
+            return result.get("content", [])
+        return result if isinstance(result, list) else []
 
     async def get_programs(self, plant_id: str, circuit_path: str) -> Any:
         """Get time programs for a circuit."""
@@ -302,21 +359,50 @@ class HovalConnectApi:
     async def get_live_values(
         self, plant_id: str, circuit_path: str, circuit_type: str
     ) -> list[dict[str, str]]:
-        """Get live sensor values for a circuit."""
-        return await self._request(
+        """Get live sensor values for a circuit.
+
+        A Spring-Page wrapper {"content": [...], ...} is normalised to its
+        content list; any other non-list shape degrades to [].
+        """
+        result = await self._request(
             "GET",
             f"/v3/api/statistics/live-values/{plant_id}",
             plant_id=plant_id,
             params={"circuitPath": circuit_path, "circuitType": circuit_type},
         )
+        if isinstance(result, dict):
+            _LOGGER.debug(
+                "get_live_values returned paginated wrapper for circuit %s; extracting 'content'",
+                circuit_path,
+            )
+            return result.get("content", [])
+        return result if isinstance(result, list) else []
 
     async def get_events(self, plant_id: str) -> list[dict[str, Any]]:
-        """Get plant error events."""
-        return await self._request("GET", f"/v1/plant-events/{plant_id}")
+        """Get plant error events.
+
+        Normalised to a plain list like get_circuits()/get_live_values(): a
+        Spring-Page wrapper's 'content' is extracted and any non-list shape
+        degrades to [].
+        """
+        result = await self._request("GET", f"/v1/plant-events/{plant_id}")
+        if isinstance(result, dict):
+            content = result.get("content", [])
+            return content if isinstance(content, list) else []
+        return result if isinstance(result, list) else []
 
     async def get_latest_event(self, plant_id: str) -> dict[str, Any]:
-        """Get latest plant event."""
-        return await self._request("GET", f"/v1/plant-events/latest/{plant_id}")
+        """Get latest plant event.
+
+        Always returns a dict; {} means "no event available". A Spring-Page
+        wrapper is unwrapped to its first content element so callers keep
+        receiving a single event dict.
+        """
+        result = await self._request("GET", f"/v1/plant-events/latest/{plant_id}")
+        if isinstance(result, dict) and isinstance(result.get("content"), list):
+            content = result["content"]
+            return content[0] if content and isinstance(content[0], dict) else {}
+        return result if isinstance(result, dict) else {}
 
     async def get_weather(self, plant_id: str) -> list[dict[str, Any]]:
         """Get weather forecast for plant location."""
