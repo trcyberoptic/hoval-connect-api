@@ -28,6 +28,11 @@ sys.modules["aiohttp"] = ha_mock
 sys.modules["voluptuous"] = ha_mock
 
 # Now we can import the pure functions and dataclasses
+from custom_components.hoval_connect.const import (  # noqa: E402
+    HV_AIR_VOLUME_MAX,
+    HV_AIR_VOLUME_MIN,
+    clamp_hv_air_volume,
+)
 from custom_components.hoval_connect.coordinator import (  # noqa: E402
     _V1_PROGRAM_MAP,
     HovalCircuitData,
@@ -371,3 +376,26 @@ class TestIsProblemEvent:
 
     def test_none_event_type_is_not_problem(self):
         assert _is_problem_event(HovalEventData(event_type=None)) is False
+
+
+class TestClampHvAirVolume:
+    """HA allows 1-14 %, the HV firmware band starts at 15 %."""
+
+    def test_below_minimum_clamps_up(self):
+        assert clamp_hv_air_volume(5) == HV_AIR_VOLUME_MIN
+        assert clamp_hv_air_volume(14) == HV_AIR_VOLUME_MIN
+
+    def test_zero_clamps_to_minimum(self):
+        # 0 never reaches the clamp in fan.py (handled as turn_off first),
+        # but the pure helper still has defined behavior.
+        assert clamp_hv_air_volume(0) == HV_AIR_VOLUME_MIN
+
+    def test_above_maximum_clamps_down(self):
+        assert clamp_hv_air_volume(120) == HV_AIR_VOLUME_MAX
+
+    def test_band_values_pass_through(self):
+        for v in (15, 55, 100):
+            assert clamp_hv_air_volume(v) == v
+
+    def test_float_truncates_to_int(self):
+        assert clamp_hv_air_volume(54.9) == 54

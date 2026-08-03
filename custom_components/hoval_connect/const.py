@@ -112,3 +112,19 @@ TURN_ON_WEEK1 = "week1"
 TURN_ON_WEEK2 = "week2"
 CONF_TURN_ON_MODE = "turn_on_mode"
 DEFAULT_TURN_ON_MODE = TURN_ON_RESUME
+
+# HV (HomeVent) air-volume operating bounds, in percent.
+# The cloud/firmware rejects (or undefined-behaves on) values below the device
+# minimum; fan.py clamps requests into this band before sending.
+# ponytail: 15 % minimum is GMH224's empirical device observation — adjust here
+# if a HomeVent model with a different band shows up.
+HV_AIR_VOLUME_MIN = 15
+HV_AIR_VOLUME_MAX = 100
+
+
+def clamp_hv_air_volume(percentage: float) -> int:
+    """Clamp a requested HV air-volume percentage into the device's valid band.
+
+    Pure helper (no HA imports) so it is directly unit-testable.
+    """
+    return int(max(HV_AIR_VOLUME_MIN, min(HV_AIR_VOLUME_MAX, percentage)))
