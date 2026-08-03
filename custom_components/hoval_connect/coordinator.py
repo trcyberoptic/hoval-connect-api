@@ -347,6 +347,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
+        # Timestamp BEFORE any fetch: overrides set after this instant belong
+        # to control actions this poll's data snapshot cannot reflect yet, so
+        # the pruning at the end must leave them alone.
+        poll_start = time.monotonic()
         data = HovalData()
 
         try:
@@ -684,6 +688,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
         # Clear optimistic overrides only after a SUCCESSFUL fetch — fresh data
         # replaces them. Clearing at the start meant a failed refresh snapped
-        # entities back to stale pre-override data.
-        self._mode_override.clear()
+        # entities back to stale pre-override data. Prune ONLY overrides set
+        # before this poll began: an unconditional clear() would also wipe an
+        # override set by a control action while the poll was in flight, and
+        # the poll's pre-change data snapshot would snap the entity back to
+        # its old state. Mid-poll overrides survive until a poll that STARTED
+        # after them succeeds (or the TTL in get_mode_override expires).
+        self._mode_override = {
+            path: entry for path, entry in self._mode_override.items() if entry[1] >= poll_start
+        }
         return data
