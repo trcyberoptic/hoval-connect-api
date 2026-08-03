@@ -221,12 +221,17 @@
       "program": {
         "name": "Program"
       }
+    },
+    "water_heater": {
+      "hot_water": {
+        "name": "Hot water"
+      }
     }
   },
   "services": {
     "reset_temporary_change": {
       "name": "Reset temporary change",
-      "description": "Cancel an active temporary override on a Hoval circuit (HomeVent fan or heating-circuit climate) so the underlying time program takes over again."
+      "description": "Cancel an active temporary override on a Hoval circuit (HomeVent fan, heating-circuit climate, or hot-water water_heater) so the underlying time program takes over again."
     }
   }
 }

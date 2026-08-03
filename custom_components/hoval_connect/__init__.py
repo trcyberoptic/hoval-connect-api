@@ -35,6 +35,7 @@ PLATFORMS = [
     Platform.FAN,
     Platform.SELECT,
     Platform.SENSOR,
+    Platform.WATER_HEATER,
 ]
 
 SERVICE_RESET_TEMPORARY_CHANGE = "reset_temporary_change"
