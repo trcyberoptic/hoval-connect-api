@@ -123,7 +123,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         key="circuit_status",
         translation_key="circuit_status",
         icon="mdi:information-outline",
-        value_fn=lambda c: c.live_values.get("status"),
+        value_fn=lambda c: c.circuit_status,
     ),
     HovalSensorEntityDescription(
         key="operation_mode",

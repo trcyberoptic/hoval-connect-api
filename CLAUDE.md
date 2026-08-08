@@ -45,6 +45,8 @@ PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/botto
 - v1 `activeProgram` enum (legacy, only relevant if Hoval rolls back): `constant`, `nightReduction`, `dayCooling`, `timePrograms`, `standby`, `manual`, `externalConstant`, `tteControlled`
 - v3 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`
 - v3 circuit list field renames vs the old v1 shape: `targetAirVolume` → `targetValue` (now `float`, percentage for HV / degrees for HK), `isAirQualityGuided` is now nested under `airQuality.isAirQualityGuided`, `targetAirHumidity` is no longer in the list (humidity comes from `live-values`).
+- **Circuit *status* lives on the circuit DTO, never in `live-values`.** `GET /v3/plants/{id}/circuits` returns `circuitStatus` (observed: `"active"`), plus two fields that appear in no OpenAPI schema: `opMode` (duplicate of `operationMode`) and `manualStatus`. The `live-values` payload carries measurements only — for HV exactly `airVolume`, `humidityTarget`, `outsideTemperature`, `humidityActual`, `exhaustTemp` (verified live 2026-08-09). Both the `circuit_status` sensor and `HovalClimate.hvac_action` used to read a status key out of `live_values` and therefore always resolved to `None`/`IDLE`; they now read `HovalCircuitData.circuit_status`.
+- **No Modbus register access.** `GET /api/telemetry-data/snapshots/live/{id}?dataPoints=…` answers `200 {}` for *every* input — raw register numbers (`23631`), path-prefixed spellings, live-value key names, and deliberate garbage alike. It never errors, so it gives no hint about the ID format either; the Android app never calls it (only `/api/telemetry-data/high-frequency-mode`). Modbus datapoints such as 23631 "Status Lüftungsregelung" (VOC / humidity / frost / CoolVent modes) are **not** reachable through the cloud API. The nearest cloud analogue is `operationMode`/`opMode` on the HV circuit, observed as `"ventilation"` during normal operation — whether it changes for the other register states is unverified.
 - Weather forecast available via `get_weather()` — returns condition + temperature
 - `PlantEventDTO` fields: `eventType`, `description`, `timeOccurred`, `timeResolved`, `sourcePath`, `code`, `module`, `functionGroup`, `function`, `category` — event is active when `timeResolved` is null
 - Event types: `locking`, `blocking`, `warning`, `info`, `offline`, `ok` — the error binary sensor triggers on active `blocking`, `locking`, or `warning` events
@@ -62,7 +64,7 @@ PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/botto
 
 ## Known Gaps
 
-- Temperature history (`/v3/api/statistics/temperature/`) requires `datapoints` param — valid IDs not yet discovered
+- Temperature history (`/v3/api/statistics/temperature/`) rejects every request with `400 "At least one datapoint list must contain values"` — a `datapoints=…` query param does *not* satisfy it (identical error with and without), so the real parameter name is still unknown. It appears in no OpenAPI schema and the app never calls the endpoint; only brute-forcing parameter names is left.
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
 - Full OpenAPI 3.1 spec saved at `docs/openapi-v3.json` (also available live at `/v3/api-docs`, no auth required)

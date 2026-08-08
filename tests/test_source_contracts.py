@@ -27,9 +27,12 @@ class TestClimateLiveValueKeys:
         assert '"roomTempTarget"' in src
         assert '"targetTemperature"' in src
 
-    def test_hvac_action_uses_status_key(self):
+    def test_hvac_action_reads_circuit_dto_status(self):
+        # Status comes from the circuit list's `circuitStatus`, never from
+        # live-values — that payload has no status key at all (verified live).
         src = _read("climate.py")
-        assert 'live_values.get("status")' in src
+        assert "circuit.circuit_status" in src
+        assert 'live_values.get("status")' not in src
 
     def test_pending_temperature_survived_the_port(self):
         assert "_pending_temperature" in _read("climate.py")

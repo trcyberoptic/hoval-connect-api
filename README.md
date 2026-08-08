@@ -393,6 +393,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
     "activeDayProgramName": "Früh+Abend",
     "circuitStatus": "active",
     "operationMode": "ventilation",
+    "opMode": "ventilation",
+    "manualStatus": "heating",
     "targetValue": 60.0,
     "actualValue": null,
     "manualValue": null,
@@ -411,6 +413,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 ```
 
 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`. `targetValue` is the percentage for HV and degrees Celsius for HK.
+
+`opMode` and `manualStatus` are returned by the live API but appear in no OpenAPI schema; `opMode` mirrored `operationMode` in every observed response. Circuit *status* is only ever here — the `live-values` endpoint returns measurements and no status key.
 
 #### GET `/v3/plants/{plantId}/circuits/{circuitPath}`
 ```json
@@ -457,11 +461,11 @@ Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs
 |--------|------|------|------------|-------------|
 | GET | `/v3/api/statistics/live-values/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType` | **Live sensor values** |
 | GET | `/v2/api/statistics/live-values/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType` | Live values (v2) |
-| GET | `/v3/api/statistics/temperature/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType`, `interval` (24h\|3d), `datapoints` | Temperature history |
+| GET | `/v3/api/statistics/temperature/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType`, `interval` (24h\|3d), + an unknown datapoint parameter | Temperature history — always `400 "At least one datapoint list must contain values"`; `datapoints=…` does not satisfy it |
 | GET | `/v2/api/statistics/total-energy/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Energy consumption |
 | GET | `/v2/api/statistics/heat-consumption/{plantId}` | 🔑🏭 | `circuitPath`, `interval` | Heat consumption |
 | GET | `/v2/api/statistics/solar-yield/{plantId}` | 🔑🏭 | `circuitPath`, `interval` | Solar yield |
-| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (array) | Raw telemetry snapshots |
+| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (array) | Raw telemetry snapshots — returns `200 {}` for every input tried, including invalid ones. Modbus register numbers (e.g. `23631`) are **not** accepted; no usable ID format found. |
 
 #### GET `/v3/api/statistics/live-values/{plantId}`
 

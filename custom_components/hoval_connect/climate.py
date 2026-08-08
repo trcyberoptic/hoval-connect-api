@@ -172,11 +172,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         mode = override if override is not None else circuit.operation_mode
         if mode == OPERATION_MODE_STANDBY:
             return HVACAction.OFF
-        # Live values report the operating state under 'status' (our status
-        # sensor reads the same key); 'circuitStatus' kept as legacy fallback.
-        status = (
-            circuit.live_values.get("status") or circuit.live_values.get("circuitStatus") or ""
-        ).upper()
+        status = (circuit.circuit_status or "").upper()
         if status == "HEATING":
             return HVACAction.HEATING
         if status == "COOLING":
