@@ -35,7 +35,7 @@ Plants and circuits are discovered automatically from your account.
 
 **Water heater entity** (per WW hot-water circuit, v1.0.0):
 - Target temperature 10–65 °C in 0.5 °C steps — sets a temporary boost that expires at midnight, then the week program resumes
-- Operation modes: heat pump (week program), high demand (shown while a boost is active), off (standby)
+- Operation modes: heat pump (week program), high demand (shown while a boost is active — selecting it does *not* start a boost; it resets the circuit to week1 exactly like heat pump, cancelling an active boost), off (standby)
 - Current temperature from the top-of-tank sensor
 
 **Program select** (per HV/HK/WW circuit):
@@ -60,7 +60,7 @@ Plants and circuits are discovered automatically from your account.
 
 **Binary sensors** (per plant):
 - Online/offline (connectivity class)
-- Error status (problem class, detects blocking/locking events)
+- Error status (problem class — on for an active `blocking`, `locking` or `warning` event, or when any circuit reports `hasError`)
 
 **Diagnostics:**
 - Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs)
@@ -78,7 +78,7 @@ Plants and circuits are discovered automatically from your account.
 - Skips API calls when plant is offline, invalidates token cache on reconnect
 - Parallel API fetches for circuits, live values, programs, events, and weather
 - Tiered caching reduces API calls: programs 5 min, events 3 min, weather forecast 15 min
-- Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on all list endpoints, the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
+- Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on the circuits, live-values and both plant-event endpoints (not on the weather forecast — a wrapped response there yields no forecast), the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 - Temporary overrides use the `/v4` API (v0.15.0+) for forward-compatibility; `endOfPhase`/`duration` body shape, reset still on `/v3` DELETE
@@ -141,12 +141,12 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **Single account only.** Each HA instance supports one Hoval Connect account.
+- **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Requirements
 
 - A Hoval Connect account (same credentials as the Hoval Connect mobile app)
-- Home Assistant 2024.1.0 or newer
+- Home Assistant 2024.11.0 or newer — the config flow calls `self._get_reauth_entry()` (2024.11) and relies on the base class setting `OptionsFlow.config_entry`, and the integration keeps its state in `entry.runtime_data` (2024.6). The bundled Blueprint separately declares `min_version: "2024.6.0"`.
 
 ---
 
@@ -354,8 +354,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 |--------|------|------|-------------|
 | GET | `/v3/plants/{plantId}/circuits` | 🔑🏭 | All circuits with overview data |
 | GET | `/v3/plants/{plantId}/circuits/{circuitPath}` | 🔑🏭 | Single circuit detail (limits, schedule, plant time) |
-| GET | `/v3/plants/{plantId}/circuits/{circuitPath}/programs` | 🔑🏭 | Constant / eco / week1 / week2 program definitions |
-| GET,PATCH | `/v3/plants/{plantId}/circuits/{circuitPath}/settings` | 🔑🏭 | Read or rename circuit (`circuitName`) |
+| GET,PATCH | `/v3/plants/{plantId}/circuits/{circuitPath}/programs` | 🔑🏭 | Constant / eco / week1 / week2 program definitions. `PATCH` (`ProgramsConfigurationV3DTO`) is declared in the spec but never called by this project — untested |
+| GET,PATCH | `/v3/plants/{plantId}/circuits/{circuitPath}/settings` | 🔑🏭 | Read or update circuit settings — `CircuitSettingsDTO` = `circuitName` (rename) + `weatherImpact` (`outsideTemperature` 0–100, `solarRadiation` −10…0; semantics unverified) |
 | GET | `/business/plants/{plantId}/circuits` | 🔑🏭 | Circuit paths list (partner only) |
 | GET | `/business/plants/{plantId}/heat-generators` | 🔑🏭 | Heat generator info (partner only) |
 
@@ -447,8 +447,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 | DELETE | `/v3/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Cancel active temporary override (no v4 equivalent) |
 | POST | `/v4/plants/{plantId}/circuits/{circuitPath}/temporary-change` | 🔑🏭 | Current variant (used by integration v0.15.0+ and Hoval Connect Android app). JSON body: `{"type": "endOfPhase"\|"duration", "value": <float>, "duration": <minutes>\|null}` — `duration` in **minutes**, accepted range 30..1440 |
 | POST | `/v3/plants/{plantId}/circuits/{circuitPath}/programs/{program}` | 🔑🏭 | Activate program. `{program}` ∈ `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant` |
-| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/air-quality-guided` | 🔑🏭 | Toggle air-quality-guided mode (HV only, requires sensor) |
-| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/semi-automatic-cooling` | 🔑🏭 | Toggle semi-automatic cooling |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/air-quality-guided` | 🔑🏭 | Air-quality-guided mode (HV only, requires sensor). Requires `guided=true\|false` — a required query param per the spec; the decompiled app sends it form-encoded. Not live-verified |
+| POST | `/v3/plants/{plantId}/circuits/{circuitPath}/semi-automatic-cooling` | 🔑🏭 | Set the semi-automatic cooling setpoint (`updateCoolingTemperature`) — **not** a toggle. Requires `value=<°C>`; a bare POST is invalid. Belongs to **HK** circuits on reversible heat pumps, not HV (see `docs/reverse-engineering-2026-05-23.md`) |
 | POST,DELETE | `/v2/api/holiday/{plantId}` | 🔑🏭 | Activate/cancel holiday mode for selected circuits |
 
 Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs}` endpoints have all been removed; use `programs/{program}` instead. The old `temporary-change/reset` POST has been replaced by `DELETE /v3/.../temporary-change`.
@@ -460,11 +460,10 @@ Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs
 | Method | Path | Auth | Parameters | Description |
 |--------|------|------|------------|-------------|
 | GET | `/v3/api/statistics/live-values/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType` | **Live sensor values** |
-| GET | `/v2/api/statistics/live-values/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType` | Live values (v2) |
 | GET | `/v3/api/statistics/temperature/{plantId}` | 🔑🏭 | `circuitPath`, `circuitType`, `interval` (24h\|3d), + an unknown datapoint parameter | Temperature history — always `400 "At least one datapoint list must contain values"`; `datapoints=…` does not satisfy it |
 | GET | `/v2/api/statistics/total-energy/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Energy consumption |
-| GET | `/v2/api/statistics/heat-consumption/{plantId}` | 🔑🏭 | `circuitPath`, `interval` | Heat consumption |
-| GET | `/v2/api/statistics/solar-yield/{plantId}` | 🔑🏭 | `circuitPath`, `interval` | Solar yield |
+| GET | `/v2/api/statistics/heat-consumption/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Heat consumption |
+| GET | `/v2/api/statistics/solar-yield/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Solar yield |
 | GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (array) | Raw telemetry snapshots — returns `200 {}` for every input tried, including invalid ones. Modbus register numbers (e.g. `23631`) are **not** accepted; no usable ID format found. |
 
 #### GET `/v3/api/statistics/live-values/{plantId}`
@@ -543,7 +542,7 @@ Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v2/api/holiday/{plantId}` | 🔑🏭 | Set/update holiday mode |
+| POST,DELETE | `/v2/api/holiday/{plantId}` | 🔑🏭 | Activate (`POST`) / cancel (`DELETE`) holiday mode — same endpoint as under Circuit Control above; there is no `PUT` |
 
 ---
 
