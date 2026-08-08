@@ -158,6 +158,9 @@ class HovalCircuitData:
     path: str
     name: str
     operation_mode: str | None = None
+    # Circuit list field `circuitStatus` (e.g. "active", "heating", "cooling"). Not in the
+    # live-values payload — that only carries measurements, no status key.
+    circuit_status: str | None = None
     active_program: str | None = None
     # HV: air-volume percentage; HK: target temperature in °C. Coming from the
     # circuit list endpoint's `targetValue` (renamed from v1 `targetAirVolume`).
@@ -438,6 +441,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         path=path,
                         name=circuit.get("name") or ctype,
                         operation_mode=circuit.get("operationMode"),
+                        circuit_status=circuit.get("circuitStatus"),
                         active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
                         target_value=circuit.get("targetValue"),
                         is_air_quality_guided=bool(air_quality.get("isAirQualityGuided")),
