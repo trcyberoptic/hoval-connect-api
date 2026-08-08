@@ -9,9 +9,20 @@ Reverse-engineered API documentation and **Home Assistant custom integration** f
 ## Repo Conventions
 
 - Design specs and implementation plans for non-trivial features live in `docs/superpowers/specs/` + `docs/superpowers/plans/` (one file per feature, dated).
-- `tests/` are pure-function tests that run WITHOUT homeassistant installed — HA modules are stubbed via `sys.modules` at the top of each test file. On Windows use `python`, not `python3`.
+- `tests/` are pure-function tests that run WITHOUT homeassistant installed — HA modules are stubbed via `sys.modules` at the top of each test file. `tests/test_source_contracts.py` is the exception: it stubs and imports nothing, and asserts against the component sources read as *text*. Real `aiohttp` and `voluptuous` must still be installed (`test_config_flow.py` deliberately purges the voluptuous mock), so a checkout with only `pytest` dies at collection. Run **from the repo root** — `test_source_contracts.py` and `test_config_flow.py` resolve `custom_components/hoval_connect` relative to the CWD. On Windows use `python`, not `python3`.
+- Commands: `python -m pytest tests/ -v`, and lint **unscoped the way CI does** — `ruff check .` plus `ruff format --check .`. `.github/workflows/lint.yml` passes ruff no path arguments; `pyproject.toml` already excludes `docs/`, while scoping to `custom_components/ tests/` silently skips `examples/`.
 - The bundled Blueprint `blueprints/automation/trcyberoptic/hoval_hv_summer_boost.yaml` is the primary consumer of the `hoval_connect.reset_temporary_change` service and depends on two user-created helpers (`input_boolean.hoval_hv_boost_active`, `input_datetime.hoval_hv_boost_started_at`); see the README for installation.
-- Live testing on a real HA instance and cutting releases: use the `live-testing` skill (`.claude/skills/live-testing/SKILL.md`).
+
+## Live Testing & Release Workflow
+
+Commit `ec99ecf` moved this section into a `live-testing` skill that does not exist and never can be shared: `.claude/` is gitignored, so nothing under it reaches a clone. The facts stay here. Anything else from the deleted version is still readable via `git show ec99ecf^:CLAUDE.md`.
+
+- Release CI (`.github/workflows/release.yml`) fires **only** on `v*` tag pushes. Bumping `"version"` in `manifest.json` publishes nothing on its own — also `git tag vX.Y.Z && git push origin vX.Y.Z`. `lint.yml` and `validate.yml` run on push/PR to `master` and never on tags.
+- `homeassistant.reload_config_entry` does NOT re-import Python modules — changes under `custom_components/hoval_connect/` take effect only after a full HA core restart. Clear `__pycache__/` first when copying files in by hand.
+- **A release can be installed and verified end-to-end over the REST API alone, no SSH** (done 2026-08-09, ~50 s from restart to fresh state). With a long-lived token: `POST /api/services/homeassistant/update_entity` on `update.hoval_connect_update` to make HACS notice the tag, then `POST /api/services/update/install`, then `POST /api/services/homeassistant/restart`; poll the entity you changed until it leaves `unavailable`. `GET /api/error_log` filtered on `hoval` is the check for a clean start.
+- HA core logs on HAOS are not in `/config/home-assistant.log` (that file usually doesn't exist). Fetch via `GET http://supervisor/core/logs?tail=N` with `Authorization: Bearer <SUPERVISOR_TOKEN>`. The token is not in the SSH addon's shell env; read it from another addon process: `sudo sh -c 'for p in /proc/[0-9]*/environ; do tr "\0" "\n" <$p 2>/dev/null | grep -m1 SUPERVISOR_TOKEN; done | head -1'`.
+- A newly added integration *service* is registered only after a full core restart following the HACS update; for 10–30 s afterwards automations calling it fail with `Action <domain>.<service> not found`. Verify with `GET /api/services` before re-triggering.
+- Live API probes need no dependencies: `urllib.request` covers the OAuth + Plant-Access-Token + JSON flow (the SSH addon's `python3` is stdlib-only).
 
 ## Dynamic Entity Discovery Gotcha
 
@@ -41,7 +52,7 @@ PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/botto
 - `temporary-change/reset`: `DELETE /v3/.../temporary-change` (no body). v4 has no documented DELETE — reset stays on v3 unless/until Hoval deprecates it.
 - Mode endpoints `/v1/.../{standby|manual|constant|reset|cooling|time-programs}` are gone. Use `POST /v3/.../programs/{program}` where program ∈ {`constant`,`ecoMode`,`standby`,`week1`,`week2`,`manual`,`externalConstant`}.
 - v1 had a separate `/reset` endpoint that auto-resumed the configured time program. v3 has no such auto-pick — `reset_circuit()` defaults to `week1`; pass `program="week2"` for the second weekly schedule.
-- API always reports `operationMode='REGULAR'` regardless of actual device state — optimistic override needed for standby tracking
+- **`operationMode` is NOT reported as `'REGULAR'`** (that claim stood here for months and is wrong): the circuit DTO carries a real value — `"ventilation"` on HV, verified live 2026-08-09. `OPERATION_MODE_REGULAR` in `const.py` is only the optimistic-override sentinel that control actions pass as `mode_override=` to `async_control_and_refresh`; it is never compared against API data. Entities compare the effective mode (fresh override, else the DTO value) against `OPERATION_MODE_STANDBY` only. Whether the DTO ever reports `standby` itself is unverified — which is why standby still needs the coordinator's TTL'd optimistic override.
 - v1 `activeProgram` enum (legacy, only relevant if Hoval rolls back): `constant`, `nightReduction`, `dayCooling`, `timePrograms`, `standby`, `manual`, `externalConstant`, `tteControlled`
 - v3 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`
 - v3 circuit list field renames vs the old v1 shape: `targetAirVolume` → `targetValue` (now `float`, percentage for HV / degrees for HK), `isAirQualityGuided` is now nested under `airQuality.isAirQualityGuided`, `targetAirHumidity` is no longer in the list (humidity comes from `live-values`).
@@ -68,4 +79,4 @@ PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/botto
 - Energy stats return empty for HV circuit (likely only relevant for HK/WW/SOL)
 - `business/plants/{id}/plant-structure` needs business role
 - Full OpenAPI 3.1 spec saved at `docs/openapi-v3.json` (also available live at `/v3/api-docs`, no auth required)
-- HK climate entity: `set_temperature` sends value as integer — may need adjustment for different HK circuit models (some use tenths of degree)
+- HK climate entity: `set_temperature` passes the setpoint through unchanged as a `float` in degrees (`float(temperature)` → `set_temporary_change` → `build_v4_temporary_change_body`), and the entity advertises `_attr_target_temperature_step = 0.5`, so half-degree setpoints go out as `21.5`. The old `int(temperature * 10)` scaling was dropped in the v3 migration (v0.14.0). Whether every HK controller model accepts a fractional setpoint is unverified — as is the "(no tenths)" remark in the `temporary-change` note above, which may contradict this.
