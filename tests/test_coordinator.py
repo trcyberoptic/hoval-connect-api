@@ -563,3 +563,38 @@ class TestCacheTtls:
 
     def test_program_ttl_unchanged(self):
         assert _timedelta(minutes=5) == PROGRAM_CACHE_TTL
+
+
+class TestRawDatapointConstants:
+    """The HV operating state (CoolVent, Sommerfeuchte, …) is only readable as a
+    raw controller datapoint, addressed `<circuitPath>.<DatapointId>`."""
+
+    def test_status_datapoint_requested_for_hv(self):
+        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+
+        assert "39652" in CIRCUIT_DATAPOINT_IDS["HV"]
+
+    def test_modbus_register_is_never_used_as_an_identifier(self):
+        """23631 is the register for CAN unit 520 only — it shifts per unit and
+        the cloud silently answers {} for it."""
+        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+
+        every_id = {i for ids in CIRCUIT_DATAPOINT_IDS.values() for i in ids}
+        assert not every_id & {"23631", "23540", "23553", "23566"}
+
+    def test_control_state_enum_covers_0_to_8(self):
+        from custom_components.hoval_connect.const import HV_CONTROL_STATES
+
+        assert [*HV_CONTROL_STATES] == [str(i) for i in range(9)]
+        assert HV_CONTROL_STATES["5"] == "coolvent"
+        assert HV_CONTROL_STATES["7"] == "summer_humidity"
+
+    def test_operating_selection_matches_active_program_names(self):
+        """40650 = 2 was observed together with activeProgram "week2"."""
+        from custom_components.hoval_connect.const import HV_OPERATING_SELECTIONS
+
+        assert HV_OPERATING_SELECTIONS["2"] == "week2"
+
+    def test_circuit_data_defaults_to_no_datapoints(self):
+        circuit = HovalCircuitData(circuit_type="HK", path="1.2.3", name="Test")
+        assert circuit.datapoints == {}

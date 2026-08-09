@@ -211,6 +211,48 @@
       },
       "temporary_change_end": {
         "name": "Temporary change ends"
+      },
+      "hv_control_state": {
+        "name": "Control status",
+        "state": {
+          "off": "Off",
+          "normal": "Normal ventilation",
+          "voc": "VOC mode",
+          "humidity": "Humidity mode",
+          "frost_protection": "Frost protection",
+          "coolvent": "CoolVent",
+          "fault": "Fault",
+          "summer_humidity": "Summer humidity",
+          "switch_off_stop": "Switch-off stop"
+        }
+      },
+      "hv_operating_selection": {
+        "name": "Operating selection",
+        "state": {
+          "standby": "Standby",
+          "week1": "Week 1",
+          "week2": "Week 2",
+          "constant": "Constant",
+          "eco": "Eco"
+        }
+      },
+      "hv_air_quality_control": {
+        "name": "Air quality control (code)"
+      },
+      "hv_constant_modulation": {
+        "name": "Constant mode air volume"
+      },
+      "hv_eco_modulation": {
+        "name": "Eco mode air volume"
+      },
+      "hv_co2_extract": {
+        "name": "CO₂ extract air"
+      },
+      "hv_voc_extract": {
+        "name": "VOC extract air"
+      },
+      "hv_voc_outside": {
+        "name": "VOC outside air"
       }
     },
     "climate": {

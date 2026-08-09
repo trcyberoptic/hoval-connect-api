@@ -18,6 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .const import (
+    CIRCUIT_DATAPOINT_IDS,
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
@@ -174,6 +175,9 @@ class HovalCircuitData:
     is_air_quality_guided: bool = False
     has_error: bool = False
     live_values: dict[str, str] = field(default_factory=dict)
+    # Raw controller datapoints, keyed by bare DatapointId (see
+    # CIRCUIT_DATAPOINT_IDS). Empty for circuit types that define none.
+    datapoints: dict[str, str] = field(default_factory=dict)
     active_week_name: str | None = None
     active_day_program_name: str | None = None
     program_air_volume: float | None = None
@@ -467,20 +471,31 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     )
 
                     # Fetch live values (always) + programs (only if cache expired)
+                    # + raw controller datapoints (only for types that define any).
                     live_task = self.api.get_live_values(_plant_id, path, ctype)
+                    dp_ids = CIRCUIT_DATAPOINT_IDS.get(ctype, ())
+                    extra = (
+                        [self.api.get_datapoints(_plant_id, [f"{path}.{i}" for i in dp_ids])]
+                        if dp_ids
+                        else []
+                    )
                     if need_programs:
                         prog_task = self.api.get_programs(_plant_id, path)
                         results = await asyncio.gather(
                             live_task,
                             prog_task,
+                            *extra,
                             return_exceptions=True,
                         )
                     else:
-                        live_result = await asyncio.gather(
+                        gathered = await asyncio.gather(
                             live_task,
+                            *extra,
                             return_exceptions=True,
                         )
-                        results = [live_result[0], cached_prog[0]]
+                        # Keep index 0 = live values and 1 = programs in both
+                        # branches so the readers below stay branch-agnostic.
+                        results = [gathered[0], cached_prog[0], *gathered[1:]]
 
                     if not isinstance(results[0], BaseException):
                         lv_raw = results[0]
@@ -501,6 +516,18 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
                     else:
                         _LOGGER.debug("Live values not available for %s", path)
+
+                    # Raw datapoints. Keyed by the bare DatapointId so sensors
+                    # need not know the circuit path. A failure here degrades
+                    # only the datapoint sensors.
+                    dp_result = results[2] if len(results) > 2 else None
+                    if isinstance(dp_result, dict):
+                        circuit_data.datapoints = {
+                            addr.rsplit(".", 1)[-1]: value for addr, value in dp_result.items()
+                        }
+                        _LOGGER.debug("Circuit %s datapoints: %s", path, circuit_data.datapoints)
+                    elif dp_result is not None:
+                        _LOGGER.debug("Datapoints not available for %s", path)
 
                     programs = results[1]
                     if isinstance(programs, dict):

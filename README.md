@@ -44,7 +44,11 @@ Plants and circuits are discovered automatically from your account.
 - Current program pre-selected
 
 **Sensor entities** (per circuit, filtered by type):
-- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume
+- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume, and — read straight off the controller as raw datapoints (v1.0.4) — **control status** (normal / VOC / humidity / frost protection / **CoolVent** / fault / summer humidity / switch-off stop), operating selection, air-quality control code, constant- and eco-mode air volume, CO₂ and VOC (extract + outside air; these report `unknown` unless an air-quality sensor is fitted)
+
+> The control status is the only place any Hoval interface reveals *why* the unit deviates from its
+> schedule. `operationMode` on the circuit stayed `ventilation` through a full day in which CoolVent and
+> summer humidity both ran — it is not a substitute.
 - **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint)
 - **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)

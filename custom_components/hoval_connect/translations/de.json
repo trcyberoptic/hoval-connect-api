@@ -211,6 +211,48 @@
       },
       "temporary_change_end": {
         "name": "Temporäre Änderung bis"
+      },
+      "hv_control_state": {
+        "name": "Regelungsstatus",
+        "state": {
+          "off": "Aus",
+          "normal": "Normaler Lüftungsbetrieb",
+          "voc": "VOC-Modus",
+          "humidity": "Feuchtigkeitsmodus",
+          "frost_protection": "Frostschutz",
+          "coolvent": "CoolVent",
+          "fault": "Fehlerzustand",
+          "summer_humidity": "Sommerfeuchte",
+          "switch_off_stop": "Ausschaltstopp"
+        }
+      },
+      "hv_operating_selection": {
+        "name": "Betriebswahl",
+        "state": {
+          "standby": "Standby",
+          "week1": "Woche 1",
+          "week2": "Woche 2",
+          "constant": "Konstantbetrieb",
+          "eco": "Sparbetrieb"
+        }
+      },
+      "hv_air_quality_control": {
+        "name": "Luftqualitätsregelung (Code)"
+      },
+      "hv_constant_modulation": {
+        "name": "Luftmenge Konstantbetrieb"
+      },
+      "hv_eco_modulation": {
+        "name": "Luftmenge Sparbetrieb"
+      },
+      "hv_co2_extract": {
+        "name": "CO₂ Abluft"
+      },
+      "hv_voc_extract": {
+        "name": "VOC Abluft"
+      },
+      "hv_voc_outside": {
+        "name": "VOC Aussenluft"
       }
     },
     "climate": {
