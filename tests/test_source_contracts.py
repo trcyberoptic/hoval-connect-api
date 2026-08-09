@@ -124,6 +124,35 @@ class TestTemporaryChangeExposed:
             assert "temporary_change_end" in data["entity"]["sensor"], f
 
 
+class TestRawDatapoints:
+    """The ventilation operating state is only readable as a raw datapoint.
+
+    Addresses are `<circuitPath>.<DatapointId>`; the Modbus register number is
+    NOT accepted and returns an empty object instead of an error, which is what
+    made this endpoint look dead for a whole session.
+    """
+
+    def test_address_is_built_from_circuit_path_not_register(self):
+        src = _read("coordinator.py")
+        assert 'f"{path}.{i}" for i in dp_ids' in src
+
+    def test_not_fitted_marker_is_dropped(self):
+        src = _read("sensor.py")
+        assert "def _u8_percent" in src
+        # The CO2/VOC sensors must route through it, or they report 255 %.
+        for dp in ("37606", "37608", "37611"):
+            assert f'_u8_percent(c.datapoints.get("{dp}"))' in src
+
+    def test_enum_states_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            sensors = json.loads(_read(f))["entity"]["sensor"]
+            for key in ("hv_control_state", "hv_operating_selection"):
+                assert "state" in sensors[key], f"{key} has no state labels in {f}"
+            assert "coolvent" in sensors["hv_control_state"]["state"], f
+
+
 class TestRetryCoversNonStandardStatuses:
     def test_retry_is_a_range_not_an_enumeration(self):
         """Hoval's gateway emits 599; enumerating codes reintroduced the outage bug."""

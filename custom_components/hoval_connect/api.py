@@ -393,6 +393,30 @@ class HovalConnectApi:
             plant_id=plant_id,
         )
 
+    async def get_datapoints(self, plant_id: str, addresses: list[str]) -> dict[str, str]:
+        """Read raw controller datapoints straight off the device.
+
+        `addresses` are `<circuitPath>.<DatapointId>`, e.g. "520.50.0.39652".
+        The Modbus *register* number is not accepted here — see
+        CIRCUIT_DATAPOINT_IDS in const.py.
+
+        The endpoint never rejects an address: an unknown one is simply missing
+        from the returned map, and asking only for unknown addresses yields
+        `{}`. A short result therefore means "address not understood", not
+        "device has no data", and must not be treated as an error.
+        """
+        if not addresses:
+            return {}
+        result = await self._request(
+            "GET",
+            f"/api/telemetry-data/snapshots/live/{plant_id}",
+            plant_id=plant_id,
+            params={"dataPoints": ",".join(addresses)},
+        )
+        if not isinstance(result, dict):
+            return {}
+        return {k: v for k, v in result.items() if isinstance(v, str)}
+
     async def get_live_values(
         self, plant_id: str, circuit_path: str, circuit_type: str
     ) -> list[dict[str, str]]:

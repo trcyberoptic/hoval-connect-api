@@ -134,3 +134,59 @@ def clamp_hv_air_volume(percentage: float) -> int:
     Pure helper (no HA imports) so it is directly unit-testable.
     """
     return int(max(HV_AIR_VOLUME_MIN, min(HV_AIR_VOLUME_MAX, percentage)))
+
+
+# --- Raw controller datapoints -------------------------------------------------
+#
+# `GET /api/telemetry-data/snapshots/live/{plant}?dataPoints=…` reads values
+# straight off the controller. Addresses are
+# `<UnitId>.<FunctionGroup>.<FunctionNumber>.<DatapointId>` — the first three
+# groups are exactly the circuit path, so a fixed id per module type works for
+# any unit. The Modbus *register* number is NOT the identifier: it shifts with
+# the CAN unit id (HV 513 → 23540, 520 → 23631) while the DatapointId stays
+# 39652. An unknown address is answered with a missing key, never an error.
+#
+# Only ids carrying something the circuit DTO and live-values do not already
+# report are listed. Deliberately omitted because they are byte-identical to
+# existing sensors: 0 (outside temp), 37602 (exhaust temp), 37600 (humidity
+# actual), 40687 (humidity target), 38606 (modulation = airVolume).
+CIRCUIT_DATAPOINT_IDS: dict[str, tuple[str, ...]] = {
+    CIRCUIT_TYPE_HV: (
+        "39652",  # Status Lüftungsregelung — the operating state, reported nowhere else
+        "40650",  # Betriebswahl Lüftung
+        "39600",  # Luftqualität Regulierung (LIST, but Hoval ships no labels for it)
+        "40651",  # Normal-Lüftungsmodulation (setpoint for constant mode)
+        "40686",  # Spar-Lüftungsmodulation (setpoint for eco mode)
+        "37606",  # CO2 Abluft
+        "37608",  # VOC Abluft
+        "37611",  # VOC Aussenluft
+    ),
+}
+
+# Datapoint 39652. Hoval's own datapoint list spells entry 5 "CoolVet" — a typo
+# for CoolVent, corrected here.
+HV_CONTROL_STATES: dict[str, str] = {
+    "0": "off",
+    "1": "normal",
+    "2": "voc",
+    "3": "humidity",
+    "4": "frost_protection",
+    "5": "coolvent",
+    "6": "fault",
+    "7": "summer_humidity",
+    "8": "switch_off_stop",
+}
+
+# Datapoint 40650.
+HV_OPERATING_SELECTIONS: dict[str, str] = {
+    "0": "standby",
+    "1": "week1",
+    "2": "week2",
+    "3": "constant",
+    "4": "eco",
+}
+
+# U8 percentage datapoints are defined over 0..100; the controller reports 255
+# when the sensor is not fitted at all (observed on all three CO2/VOC inputs of
+# a HomeVent without an air-quality sensor).
+DATAPOINT_U8_UNAVAILABLE = "255"

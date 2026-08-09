@@ -36,7 +36,10 @@ from .const import (
     CIRCUIT_TYPE_HV,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
+    DATAPOINT_U8_UNAVAILABLE,
     DOMAIN,
+    HV_CONTROL_STATES,
+    HV_OPERATING_SELECTIONS,
 )
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
 
@@ -54,6 +57,16 @@ class HovalPlantSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval plant-level sensor entity."""
 
     value_fn: Callable[[HovalPlantData], Any | None]
+
+
+def _u8_percent(raw: str | None) -> str | None:
+    """Drop the controller's not-fitted marker from a U8 percentage datapoint.
+
+    These datapoints are defined over 0..100; 255 means the sensor is absent
+    (all three CO2/VOC inputs report it on a HomeVent without an air-quality
+    sensor). Surfacing 255 as a percentage would be a plausible-looking lie.
+    """
+    return None if raw is None or raw == DATAPOINT_U8_UNAVAILABLE else raw
 
 
 def _coerce_timestamp(value: Any) -> datetime | None:
@@ -124,6 +137,83 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         translation_key="circuit_status",
         icon="mdi:information-outline",
         value_fn=lambda c: c.circuit_status,
+    ),
+    # Raw controller datapoints (HV). See CIRCUIT_DATAPOINT_IDS in const.py.
+    HovalSensorEntityDescription(
+        key="hv_control_state",
+        translation_key="hv_control_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(dict.fromkeys(HV_CONTROL_STATES.values())),
+        icon="mdi:state-machine",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: HV_CONTROL_STATES.get(c.datapoints.get("39652", "")),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_operating_selection",
+        translation_key="hv_operating_selection",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(dict.fromkeys(HV_OPERATING_SELECTIONS.values())),
+        icon="mdi:tune-variant",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: HV_OPERATING_SELECTIONS.get(c.datapoints.get("40650", "")),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_air_quality_control",
+        translation_key="hv_air_quality_control",
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        # Hoval documents this as a list but ships no labels for it, so the raw
+        # code is surfaced rather than an invented mapping.
+        value_fn=lambda c: c.datapoints.get("39600"),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_constant_modulation",
+        translation_key="hv_constant_modulation",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:fan",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: c.datapoints.get("40651"),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_eco_modulation",
+        translation_key="hv_eco_modulation",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:fan-minus",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: c.datapoints.get("40686"),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_co2_extract",
+        translation_key="hv_co2_extract",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:molecule-co2",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: _u8_percent(c.datapoints.get("37606")),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_voc_extract",
+        translation_key="hv_voc_extract",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:air-filter",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: _u8_percent(c.datapoints.get("37608")),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_voc_outside",
+        translation_key="hv_voc_outside",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:weather-windy",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        value_fn=lambda c: _u8_percent(c.datapoints.get("37611")),
     ),
     HovalSensorEntityDescription(
         key="temporary_change_end",
