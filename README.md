@@ -468,7 +468,40 @@ Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs
 | GET | `/v2/api/statistics/total-energy/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Energy consumption |
 | GET | `/v2/api/statistics/heat-consumption/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Heat consumption |
 | GET | `/v2/api/statistics/solar-yield/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Solar yield |
-| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (array) | Raw telemetry snapshots — returns `200 {}` for every input tried, including invalid ones. Modbus register numbers (e.g. `23631`) are **not** accepted; no usable ID format found. |
+| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (comma-separated) | **Raw device datapoints.** Address as `UnitId.FunctionGroup.FunctionNumber.DatapointId`, i.e. the `circuitPath` plus the CAN DatapointId — e.g. `520.50.0.39652` → `{"520.50.0.39652":"1"}`. Modbus **register** numbers (`23631`) are not accepted and return `200 {}`, exactly like garbage input. |
+
+#### GET `/api/telemetry-data/snapshots/live/{plantId}`
+
+Reads raw controller datapoints — considerably more than `live-values` exposes, including the ventilation
+control status that no other endpoint reports.
+
+**Addressing:** `UnitId.FunctionGroup.FunctionNumber.DatapointId`. The first three groups are the
+circuit path you already know from `/v3/plants/{id}/circuits`; the fourth is the CAN **DatapointId**.
+The Modbus *register* number is a gateway-side artefact and is not accepted — it shifts with the unit id
+(HV unit 513 → register 23540, unit 520 → 23631) while the DatapointId stays 39652. A wrong identifier
+returns `200 {}` rather than an error, so an empty result means "unknown address", not "no data".
+
+```
+GET /api/telemetry-data/snapshots/live/604961716240055?dataPoints=520.50.0.39652,520.50.0.38606
+→ 200 { "520.50.0.39652": "1", "520.50.0.38606": "100" }
+```
+
+**HomeVent (HV) datapoints that answer** — verified on a HomeVent behind a Hoval Connect gateway:
+
+| DatapointId | Meaning | Type |
+|---|---|---|
+| `39652` | **Status Lüftungsregelung** — 0 off, 1 normal, 2 VOC, 3 humidity, 4 frost protection, 5 CoolVent, 6 fault, 7 summer humidity, 8 switch-off stop | U8 enum |
+| `40650` | Betriebswahl Lüftung | list |
+| `39600` | Luftqualität Regulierung | list |
+| `38606` | Lüftungsmodulation (= `airVolume`) | U8 % |
+| `40651` / `40686` | Normal- / Spar-Lüftungsmodulation | U8 % |
+| `40687` | Feuchte Sollwert (= `humidityTarget`) | U8 % |
+| `37600` | Feuchtigkeit Abluft (= `humidityActual`) | U8 % |
+| `0` / `37602` | Temperatur Aussenluft / Abluft | S16 °C |
+| `37606` / `37608` / `37611` | CO2 Abluft, VOC Abluft / Aussenluft — `255` when the sensor is not fitted | U8 |
+
+Service and error addresses under `520.0.0.*` (active faults, maintenance counters) returned nothing.
+Datapoint ids and their enum labels come from Hoval's TopTronic E datapoint list.
 
 #### GET `/v3/api/statistics/live-values/{plantId}`
 
