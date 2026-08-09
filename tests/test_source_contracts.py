@@ -84,6 +84,44 @@ class TestSensorAdditions:
                 assert key in sensors, f"{key} missing in {f}"
 
 
+class TestTemporaryChangeExposed:
+    """The cloud reports a running override in the circuit DTO's `temporaryChange`.
+
+    It went unparsed until 2026-08-09, which is why the bundled Blueprint had to
+    track a boost with its own input_boolean/input_datetime helpers.
+    """
+
+    def test_coordinator_parses_the_field(self):
+        src = _read("coordinator.py")
+        assert 'circuit.get("temporaryChange")' in src
+        assert "temporary_change_end" in src
+
+    def test_binary_sensor_reports_it(self):
+        src = _read("binary_sensor.py")
+        assert "circuit.temporary_change_end is not None" in src
+
+    def test_end_time_is_a_timestamp_sensor(self):
+        src = _read("sensor.py")
+        assert 'key="temporary_change_end"' in src
+        assert "SensorDeviceClass.TIMESTAMP" in src
+
+    def test_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            data = json.loads(_read(f))
+            assert "temporary_change" in data["entity"]["binary_sensor"], f
+            assert "temporary_change_end" in data["entity"]["sensor"], f
+
+
+class TestRetryCoversNonStandardStatuses:
+    def test_retry_is_a_range_not_an_enumeration(self):
+        """Hoval's gateway emits 599; enumerating codes reintroduced the outage bug."""
+        src = _read("api.py")
+        assert "def _is_retryable_status" in src
+        assert "_RETRYABLE_STATUS_CODES" not in src
+
+
 class TestOverrideLifecycle:
     def test_override_has_ttl(self):
         src = _read("coordinator.py")

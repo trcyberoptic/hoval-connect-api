@@ -162,6 +162,12 @@ class HovalCircuitData:
     # live-values payload — that only carries measurements, no status key.
     circuit_status: str | None = None
     active_program: str | None = None
+    # Circuit list field `temporaryChange` — present only while an override is
+    # running, e.g. {"type": "away", "value": 100.0, "end": "…+02:00"}. The cloud
+    # tracks this itself, so automations do not need their own bookkeeping helpers.
+    temporary_change_end: str | None = None
+    temporary_change_value: float | None = None
+    temporary_change_type: str | None = None
     # HV: air-volume percentage; HK: target temperature in °C. Coming from the
     # circuit list endpoint's `targetValue` (renamed from v1 `targetAirVolume`).
     target_value: float | None = None
@@ -436,12 +442,17 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 ) -> HovalCircuitData:
                     raw_program = circuit.get("activeProgram")
                     air_quality = circuit.get("airQuality") or {}
+                    # Absent (or null) whenever no override is running.
+                    temporary_change = circuit.get("temporaryChange") or {}
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
                         name=circuit.get("name") or ctype,
                         operation_mode=circuit.get("operationMode"),
                         circuit_status=circuit.get("circuitStatus"),
+                        temporary_change_end=temporary_change.get("end"),
+                        temporary_change_value=temporary_change.get("value"),
+                        temporary_change_type=temporary_change.get("type"),
                         active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
                         target_value=circuit.get("targetValue"),
                         is_air_quality_guided=bool(air_quality.get("isAirQualityGuided")),

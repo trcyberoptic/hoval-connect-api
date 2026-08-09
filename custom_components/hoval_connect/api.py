@@ -27,7 +27,20 @@ _LOGGER = logging.getLogger(__name__)
 # Retry configuration for transient errors
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds, doubled on each retry
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable_status(status: int) -> bool:
+    """Return True for rate limiting and every server-side error.
+
+    Deliberately a range, not an enumeration. Hoval's gateway emits non-standard
+    proxy codes — 599 ("network connect timeout") was observed ten times in a
+    single day on 2026-08-09, and because it was absent from the previous
+    enumerated set `{429, 500, 502, 503, 504}` it raised straight through, failing
+    the whole coordinator refresh and blanking every entity until the next poll.
+    Enumerating codes turns each new proxy quirk into the same bug.
+    """
+    return status == 429 or status >= 500
+
 
 # Hard upper bound on my-plants pagination. 50 pages x 12 plants/page = 600
 # plants — far beyond any real account. Without a cap, a server that keeps
@@ -250,7 +263,7 @@ class HovalConnectApi:
                         # Do not increment `attempt` — token refresh is a
                         # one-shot extra request, not a transient retry.
                         continue
-                    if resp.status in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES - 1:
+                    if _is_retryable_status(resp.status) and attempt < _MAX_RETRIES - 1:
                         delay = _RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
                             "Transient error HTTP %s on %s %s, retrying in %.1fs (%d/%d)",

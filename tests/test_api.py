@@ -31,10 +31,10 @@ import aiohttp  # noqa: E402
 
 from custom_components.hoval_connect.api import (  # noqa: E402
     _MAX_RETRIES,
-    _RETRYABLE_STATUS_CODES,
     HovalApiError,
     HovalAuthError,
     HovalConnectApi,
+    _is_retryable_status,
     _minutes_until_local_midnight,
     build_v4_temporary_change_body,
 )
@@ -271,6 +271,28 @@ class TestHovalConnectApiRequest:
             result = await api._request("GET", "/api/test")
 
         assert result == {"data": "recovered"}
+
+    @pytest.mark.asyncio
+    async def test_request_retries_on_nonstandard_gateway_status(self):
+        """Hoval's gateway sporadically answers 599 ("network connect timeout").
+
+        Observed live on 2026-08-09: ten one-poll outages in a day, each logged as
+        `Circuits endpoint failed ... HTTP 599`, each blanking every entity for the
+        60 s until the next refresh. 599 is not a standard code and was missing from
+        the old enumerated retry set.
+        """
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(
+            side_effect=[_make_response(599), _make_response(200, {"data": "recovered"})]
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with patch("custom_components.hoval_connect.api.asyncio.sleep", new_callable=AsyncMock):
+            result = await api._request("GET", "/api/test")
+
+        assert result == {"data": "recovered"}
+        assert session.request.call_count == 2
 
     @pytest.mark.asyncio
     async def test_request_retries_exhausted_raises(self):
@@ -615,13 +637,14 @@ class TestRetryConstants:
     """Tests for retry configuration."""
 
     def test_retryable_status_codes(self):
-        assert 429 in _RETRYABLE_STATUS_CODES
-        assert 500 in _RETRYABLE_STATUS_CODES
-        assert 502 in _RETRYABLE_STATUS_CODES
-        assert 503 in _RETRYABLE_STATUS_CODES
-        assert 504 in _RETRYABLE_STATUS_CODES
-        # 404 should NOT be retryable
-        assert 404 not in _RETRYABLE_STATUS_CODES
+        for status in (429, 500, 502, 503, 504):
+            assert _is_retryable_status(status), status
+        # Non-standard proxy codes from Hoval's gateway must retry too.
+        for status in (598, 599, 520, 524):
+            assert _is_retryable_status(status), status
+        # Client errors must NOT be retried — they never fix themselves.
+        for status in (400, 401, 403, 404, 422):
+            assert not _is_retryable_status(status), status
 
     def test_max_retries_is_reasonable(self):
         assert _MAX_RETRIES >= 2
