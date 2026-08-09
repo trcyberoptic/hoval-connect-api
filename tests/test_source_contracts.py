@@ -105,6 +105,16 @@ class TestTemporaryChangeExposed:
         assert 'key="temporary_change_end"' in src
         assert "SensorDeviceClass.TIMESTAMP" in src
 
+    def test_both_sensor_classes_coerce_timestamps(self):
+        """A TIMESTAMP sensor returning a str raises in HA and the entity is dropped.
+
+        v1.0.2 shipped the circuit-level timestamp description while only the
+        plant-level class coerced, so the entity died at setup with
+        `'str' object has no attribute 'tzinfo'`.
+        """
+        src = _read("sensor.py")
+        assert src.count("return _coerce_timestamp(val)") == 2
+
     def test_translated_everywhere(self):
         import json
 

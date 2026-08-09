@@ -540,7 +540,7 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         return super().available and self._circuit is not None
 
     @property
-    def native_value(self) -> float | str | None:
+    def native_value(self) -> datetime | float | str | None:
         """Return the sensor value."""
         circuit = self._circuit
         if circuit is None:
@@ -548,6 +548,11 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         val = self.entity_description.value_fn(circuit)
         if val is None:
             return None
+        # Must precede the unit-less string branch: HA requires a tz-aware
+        # datetime from a TIMESTAMP sensor and raises on a str, which drops the
+        # entity at setup instead of just showing a wrong value.
+        if self.entity_description.device_class == SensorDeviceClass.TIMESTAMP:
+            return _coerce_timestamp(val)
         # Monotonic counters are numeric even when unit-less (operation
         # cycles): route them past the string branch so the negative guard
         # below always applies to them.
