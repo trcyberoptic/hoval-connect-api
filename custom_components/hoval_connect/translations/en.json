@@ -53,6 +53,9 @@
       },
       "plant_error": {
         "name": "Error"
+      },
+      "temporary_change": {
+        "name": "Temporary change"
       }
     },
     "sensor": {
@@ -205,6 +208,9 @@
       },
       "ps_buffer_actual_pf2": {
         "name": "Buffer temperature bottom"
+      },
+      "temporary_change_end": {
+        "name": "Temporary change ends"
       }
     },
     "climate": {

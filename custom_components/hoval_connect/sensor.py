@@ -126,6 +126,13 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         value_fn=lambda c: c.circuit_status,
     ),
     HovalSensorEntityDescription(
+        key="temporary_change_end",
+        translation_key="temporary_change_end",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:timer-sand",
+        value_fn=lambda c: c.temporary_change_end,
+    ),
+    HovalSensorEntityDescription(
         key="operation_mode",
         translation_key="operation_mode",
         icon="mdi:cog",

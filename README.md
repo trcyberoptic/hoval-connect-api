@@ -49,7 +49,7 @@ Plants and circuits are discovered automatically from your account.
 - **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
 - **PS:** Buffer target temperature, buffer temperature top (PF1) / bottom (PF2)
-- **All:** Status, operation mode, active week program, active day program
+- **All:** Status, operation mode, active week program, active day program, temporary change ends (timestamp, v1.0.2 — empty when no override is running)
 
 > Outside temperature is created only on HV/HK circuits (v0.15.4+). Upgrading from ≤0.15.3: any outside-temperature sensors you already have on BL/WW circuits are preserved — only newly-discovered circuits get the filtered set.
 
@@ -58,9 +58,10 @@ Plants and circuits are discovered automatically from your account.
 - Latest event type, message, and timestamp
 - Active event count
 
-**Binary sensors** (per plant):
-- Online/offline (connectivity class)
-- Error status (problem class — on for an active `blocking`, `locking` or `warning` event, or when any circuit reports `hasError`)
+**Binary sensors:**
+- Online/offline (per plant, connectivity class)
+- Error status (per plant, problem class — on for an active `blocking`, `locking` or `warning` event, or when any circuit reports `hasError`)
+- Temporary change (per circuit, running class, v1.0.2) — on while a boost/override is active, with the target `value`, the cloud's `type` label and the `end` time as attributes. The cloud tracks this itself, so an automation that starts a boost no longer has to remember that it did.
 
 **Diagnostics:**
 - Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs)
@@ -395,6 +396,7 @@ Circuits represent the controllable components of a plant (heating, ventilation,
     "operationMode": "ventilation",
     "opMode": "ventilation",
     "manualStatus": "heating",
+    "temporaryChange": { "type": "away", "value": 100.0, "end": "2026-08-10T00:00:14+02:00" },
     "targetValue": 60.0,
     "actualValue": null,
     "manualValue": null,
@@ -415,6 +417,8 @@ Circuits represent the controllable components of a plant (heating, ventilation,
 `activeProgram` enum: `constant`, `ecoMode`, `standby`, `week1`, `week2`, `manual`, `externalConstant`. `targetValue` is the percentage for HV and degrees Celsius for HK.
 
 `opMode` and `manualStatus` are returned by the live API but appear in no OpenAPI schema; `opMode` mirrored `operationMode` in every observed response. Circuit *status* is only ever here — the `live-values` endpoint returns measurements and no status key.
+
+`temporaryChange` is present only while an override is running and disappears once it expires. Its `type` is the cloud's own label rather than an echo of the v4 request — a boost sent as `{"type": "duration", …}` came back as `"away"`. The `end` timestamp carries the plant's UTC offset.
 
 #### GET `/v3/plants/{plantId}/circuits/{circuitPath}`
 ```json
