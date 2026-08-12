@@ -161,6 +161,26 @@ class TestRetryCoversNonStandardStatuses:
         assert "_RETRYABLE_STATUS_CODES" not in src
 
 
+class TestControlRefreshBlocksUntilFresh:
+    """async_control_and_refresh must not return before fresh data arrived.
+
+    v1.0.0 made the post-control refresh a fire-and-forget task; entities
+    clear their _pending_* optimistic state when the call returns, so the
+    UI snapped back to stale data for ~2-4 s after every control action.
+    The bundled summer-boost Blueprint read that dip as a manual override,
+    released its latch, re-boosted, and spammed a notification every few
+    seconds. The lock must still be released before the settle+refresh.
+    """
+
+    def test_refresh_awaited_not_fire_and_forget(self):
+        src = _read("coordinator.py")
+        body = src.split("async def async_control_and_refresh", 1)[1].split(
+            "async def _async_update_data", 1
+        )[0]
+        assert "async_create_task" not in body
+        assert "await self.async_request_refresh()" in body
+
+
 class TestOverrideLifecycle:
     def test_override_has_ttl(self):
         src = _read("coordinator.py")

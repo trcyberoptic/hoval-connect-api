@@ -336,27 +336,32 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """Execute a control command with lock, optimistic state, and refresh.
 
         The API call and optimistic override are serialised inside
-        control_lock; the refresh runs as a fire-and-forget background task
-        OUTSIDE the lock (with a 2 s settle delay) so the calling entity
-        method returns promptly and a slow refresh cannot starve the lock.
-        A failed background refresh is dropped — the coordinator retries on
-        its normal poll schedule and entities stay on their optimistic state.
+        control_lock; the 2 s settle delay and the refresh run OUTSIDE the
+        lock so a slow refresh cannot starve concurrent control actions.
+
+        The refresh is deliberately AWAITED, not fired-and-forgotten:
+        entities keep optimistic ``_pending_*`` state exactly until this
+        method returns, so returning early hands the UI stale coordinator
+        data for the settle window. v1.0.0 did exactly that — after every
+        control action the fan slider dipped back to the pre-change value
+        for ~2-4 s, which the bundled summer-boost Blueprint interpreted as
+        a manual override and turned into a notification loop.
+        A failed refresh is swallowed — the coordinator retries on its
+        normal poll schedule and entities stay on their optimistic state.
         """
         async with self.control_lock:
             await coro
             self.set_mode_override(circuit_path, mode_override)
 
-        async def _do_refresh() -> None:
-            await asyncio.sleep(2)
-            try:
-                await self.async_request_refresh()
-            except Exception:  # noqa: BLE001 — see docstring
-                _LOGGER.debug(
-                    "Post-control refresh failed for %s; coordinator will retry on next poll",
-                    circuit_path,
-                )
-
-        self.hass.async_create_task(_do_refresh())
+        # Give the cloud time to commit the change before fetching.
+        await asyncio.sleep(2)
+        try:
+            await self.async_request_refresh()
+        except Exception:  # noqa: BLE001 — see docstring
+            _LOGGER.debug(
+                "Post-control refresh failed for %s; coordinator will retry on next poll",
+                circuit_path,
+            )
 
     async def _async_update_data(self) -> HovalData:
         """Fetch data from the API."""
