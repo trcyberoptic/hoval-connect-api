@@ -286,12 +286,19 @@ action:
             value_template: "{{ boost_active }}"
         sequence:
           - choose:
-              # User manually changed the fan speed → release silently
+              # User manually changed the fan speed → release silently.
+              # 60 s grace period after boost start: right after our own
+              # fan.set_percentage the integration may briefly report the
+              # old value (debounce + cloud settle + refresh). Without the
+              # grace, that dip reads as a manual override, releases the
+              # latch, and the entry branch re-boosts + re-notifies in a
+              # tight loop (observed as per-second notifications).
               - conditions:
                   - condition: template
                     value_template: >-
                       {{ fan_percentage is not none
-                         and fan_percentage != (boost_percentage | int) }}
+                         and fan_percentage != (boost_percentage | int)
+                         and (as_timestamp(now()) - boost_started_at_ts) > 60 }}
                 sequence:
                   - service: input_boolean.turn_off
                     target:
