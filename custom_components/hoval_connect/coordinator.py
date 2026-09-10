@@ -726,7 +726,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         except HovalAuthError as err:
             raise ConfigEntryAuthFailed("Authentication failed — check credentials") from err
         except HovalApiError as err:
-            raise UpdateFailed("Error fetching Hoval data") from err
+            raise UpdateFailed(f"Error fetching Hoval data: {err}") from err
 
         # Detect new circuits for dynamic entity discovery.
         # Fire on any newly seen circuit, including the first one. Skipping the

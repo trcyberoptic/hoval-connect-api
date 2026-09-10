@@ -160,6 +160,52 @@ class TestRetryCoversNonStandardStatuses:
         assert "def _is_retryable_status" in src
         assert "_RETRYABLE_STATUS_CODES" not in src
 
+    def test_token_endpoints_share_the_retry_path(self):
+        """Both token calls must go through the retrying helper.
+
+        They were the only requests in the client with no retry budget and no
+        timeout of their own: one 429/5xx at the IDP aborted setup with a bare
+        `cannot_connect`, and at runtime cost a whole coordinator refresh.
+        """
+        src = _read("api.py")
+        assert "async def _fetch_json_with_retry" in src
+        # once per token endpoint (IDP login + plant access token), plus the def
+        assert src.count("_fetch_json_with_retry") == 3
+        # No status may reach raise_for_status() again: it folded every HTTP
+        # error into "Connection error", which reads like a dead network.
+        assert "resp.raise_for_status()" not in src
+
+    def test_token_requests_pass_their_own_timeout(self):
+        """Without one they inherit aiohttp's 5-minute default; `_request`'s
+        timeout does not cover the token fetch nested inside `_headers()`."""
+        src = _read("api.py")
+        # _request + both token calls
+        assert src.count("aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)") == 3
+
+
+class TestFailuresNameTheirCause:
+    """A refresh failure must say what broke, in the line HA actually prints."""
+
+    def test_update_failed_carries_the_cause(self):
+        # DataUpdateCoordinator logs str(UpdateFailed); `raise ... from err`
+        # alone leaves the HTTP status in a traceback nobody sees at INFO.
+        src = _read("coordinator.py")
+        assert 'UpdateFailed(f"Error fetching Hoval data: {err}")' in src
+
+    def test_cannot_connect_points_at_the_log(self):
+        """`cannot_connect` covers six distinct causes; the dialog has to tell
+        the user where the distinguishing detail is (issue #11 arrived without
+        it and could not be diagnosed from the message alone)."""
+        import json
+
+        for f, needle in (
+            ("strings.json", "log"),
+            ("translations/en.json", "log"),
+            ("translations/de.json", "Protokoll"),
+        ):
+            msg = json.loads(_read(f))["config"]["error"]["cannot_connect"]
+            assert needle in msg, f
+
 
 class TestControlRefreshBlocksUntilFresh:
     """async_control_and_refresh must not return before fresh data arrived.
