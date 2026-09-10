@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  # Manual path, for cutting a release without a local git client. The tag is
+  # created by action-gh-release below rather than pushed, so this job does not
+  # re-trigger itself (events authored by GITHUB_TOKEN never start a workflow).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to release, e.g. "v1.0.6". Must match manifest.json.'
+        required: true
+        type: string
 
 jobs:
   release:
@@ -17,9 +26,26 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Get version from tag
+      - name: Resolve version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          # Empty on a tag push, set on workflow_dispatch.
+          VERSION="${INPUT_VERSION:-${GITHUB_REF#refs/tags/}}"
+          case "$VERSION" in
+            v[0-9]*) ;;
+            *) echo "::error::Version '$VERSION' must look like v1.2.3"; exit 1 ;;
+          esac
+          # A tag that disagrees with manifest.json ships a version HACS and the
+          # integration report differently. Cheap to check, expensive to undo:
+          # the release is what users install.
+          MANIFEST=$(python3 -c "import json;print(json.load(open('custom_components/hoval_connect/manifest.json'))['version'])")
+          if [ "$VERSION" != "v$MANIFEST" ]; then
+            echo "::error::Tag $VERSION does not match manifest.json version $MANIFEST"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
@@ -40,6 +66,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Explicit, because on workflow_dispatch there is no tag ref to infer
+          # from — the action creates the tag at the checked-out commit.
+          tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
           body: |
             ## Changes
