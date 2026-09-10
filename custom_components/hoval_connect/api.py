@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -128,6 +129,77 @@ class HovalConnectApi:
         self._id_token_lock = asyncio.Lock()
         self._pat_lock = asyncio.Lock()
 
+    async def _fetch_json_with_retry(
+        self,
+        description: str,
+        make_request: Callable[[], Any],
+        *,
+        auth_statuses: tuple[int, ...],
+        auth_message: str,
+    ) -> Any:
+        """Run a token-endpoint request, retrying transient failures like `_request`.
+
+        The two token endpoints were the only calls in this client with neither
+        a retry budget nor a timeout of their own, so a single 429 or 5xx from
+        the IDP — or a byte-dripping connection — became a hard failure where
+        the identical hiccup on a *data* request would have been ridden out over
+        three attempts. At setup that surfaces as a bare `cannot_connect` in the
+        config flow with no hint of which of six causes it was (issue #11 came
+        in exactly that shape, undiagnosable from the message alone); at runtime
+        it costs a whole coordinator refresh and blanks every entity until the
+        next poll — the same failure mode as the 2026-08-09 HTTP 599 outage.
+
+        `make_request` is called once per attempt and must return a *fresh*
+        response context manager. `auth_statuses` are the statuses that mean the
+        credentials or token were rejected — a permanent answer, never retried.
+        """
+        attempt = 0
+        while attempt < _MAX_RETRIES:
+            try:
+                async with make_request() as resp:
+                    if resp.status in auth_statuses:
+                        _LOGGER.warning("%s rejected (HTTP %s)", description, resp.status)
+                        raise HovalAuthError(f"{auth_message} (HTTP {resp.status})")
+                    if _is_retryable_status(resp.status) and attempt < _MAX_RETRIES - 1:
+                        delay = _RETRY_BASE_DELAY * (2**attempt)
+                        _LOGGER.warning(
+                            "Transient error HTTP %s during %s, retrying in %.1fs (%d/%d)",
+                            resp.status,
+                            description,
+                            delay,
+                            attempt + 1,
+                            _MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
+                    if resp.status >= 400:
+                        # Distinct from the transport message below on purpose:
+                        # `raise_for_status()` used to fold every HTTP error into
+                        # "Connection error during authentication", which reads
+                        # like a dead network when the server in fact answered.
+                        raise HovalApiError(f"{description} failed: HTTP {resp.status}")
+                    return await resp.json()
+            except (HovalAuthError, HovalApiError):
+                raise
+            except (aiohttp.ClientError, TimeoutError) as err:
+                if attempt < _MAX_RETRIES - 1:
+                    delay = _RETRY_BASE_DELAY * (2**attempt)
+                    _LOGGER.warning(
+                        "Connection error during %s, retrying in %.1fs (%d/%d): %s",
+                        description,
+                        delay,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        err,
+                    )
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+                raise HovalApiError(f"Connection error during {description}: {err}") from err
+
+        raise HovalApiError(f"{description} failed after {_MAX_RETRIES} retries")
+
     async def _get_id_token(self) -> str:
         """Get or refresh the ID token via OAuth2 password grant.
 
@@ -141,8 +213,9 @@ class HovalConnectApi:
             if self._id_token and time.time() < self._id_token_exp:
                 return self._id_token
 
-            try:
-                async with self._session.post(
+            data = await self._fetch_json_with_retry(
+                "authentication",
+                lambda: self._session.post(
                     IDP_URL,
                     data={
                         "grant_type": "password",
@@ -152,17 +225,20 @@ class HovalConnectApi:
                         "scope": "openid",
                     },
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
-                ) as resp:
-                    if resp.status in (400, 401, 403):
-                        _LOGGER.warning("IDP auth failed (HTTP %s)", resp.status)
-                        raise HovalAuthError(f"Invalid credentials (HTTP {resp.status})")
-                    resp.raise_for_status()
-                    data = await resp.json()
-            except HovalAuthError:
-                raise
-            except (aiohttp.ClientError, TimeoutError) as err:
-                raise HovalApiError(f"Connection error during authentication: {err}") from err
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                ),
+                auth_statuses=(400, 401, 403),
+                auth_message="Invalid credentials",
+            )
 
+            # A non-dict body would make the `.keys()` log below raise
+            # AttributeError, which escapes the config flow's HovalApiError
+            # handler and degrades the dialog to "unknown error".
+            if not isinstance(data, dict):
+                _LOGGER.error("IDP returned %s, expected a JSON object", type(data).__name__)
+                raise HovalApiError(
+                    f"IDP response is a {type(data).__name__}, expected a JSON object"
+                )
             if "id_token" not in data:
                 _LOGGER.error("IDP response missing id_token. Keys: %s", list(data.keys()))
                 raise HovalApiError("IDP response missing id_token")
@@ -189,19 +265,32 @@ class HovalConnectApi:
 
             id_token = await self._get_id_token()
             try:
-                async with self._session.get(
-                    f"{BASE_URL}/v1/plants/{plant_id}/settings",
-                    headers={"Authorization": f"Bearer {id_token}"},
-                ) as resp:
-                    if resp.status == 401:
-                        self._id_token = None
-                        raise HovalAuthError("ID token rejected")
-                    resp.raise_for_status()
-                    data = await resp.json()
-            except (HovalAuthError, HovalApiError):
+                data = await self._fetch_json_with_retry(
+                    "plant token fetch",
+                    lambda: self._session.get(
+                        f"{BASE_URL}/v1/plants/{plant_id}/settings",
+                        headers={"Authorization": f"Bearer {id_token}"},
+                        timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                    ),
+                    auth_statuses=(401,),
+                    auth_message="ID token rejected",
+                )
+            except HovalAuthError:
+                # The ID token we just sent is dead; drop it so the next call
+                # re-logs in instead of replaying the rejected token.
+                self._id_token = None
                 raise
-            except (aiohttp.ClientError, TimeoutError) as err:
-                raise HovalApiError(f"Connection error fetching plant token: {err}") from err
+
+            # `data["token"]` used to raise KeyError straight through the
+            # coordinator's HovalApiError handler and land as "Unexpected
+            # error fetching data" with no mention of Hoval.
+            if not isinstance(data, dict) or "token" not in data:
+                _LOGGER.error(
+                    "Plant settings for %s carried no access token (keys: %s)",
+                    plant_id,
+                    list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+                )
+                raise HovalApiError(f"Plant settings response for {plant_id} has no token")
 
             token = data["token"]
             self._pat_cache[plant_id] = (token, time.time() + PLANT_TOKEN_TTL.total_seconds())

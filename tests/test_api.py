@@ -42,7 +42,12 @@ from custom_components.hoval_connect.const import (  # noqa: E402
     DURATION_END_OF_PHASE,
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
+    REQUEST_TIMEOUT,
 )
+
+# Retrying token endpoints means the transport-failure tests now walk the whole
+# backoff ladder; patch the sleep or every one of them costs 3 real seconds.
+_SLEEP = "custom_components.hoval_connect.api.asyncio.sleep"
 
 
 def _make_response(status: int, json_data=None, text: str = "") -> MagicMock:
@@ -126,8 +131,13 @@ class TestHovalConnectApiAuth:
         session.post = MagicMock(side_effect=aiohttp.ClientError("connection failed"))
 
         api = HovalConnectApi(session, "test@example.com", "password123")
-        with pytest.raises(HovalApiError, match="Connection error"):
+        with (
+            patch(_SLEEP, new_callable=AsyncMock),
+            pytest.raises(HovalApiError, match="Connection error"),
+        ):
             await api._get_id_token()
+        # Transport failures exhaust the retry budget before giving up.
+        assert session.post.call_count == _MAX_RETRIES
 
     @pytest.mark.asyncio
     async def test_get_id_token_timeout(self):
@@ -135,8 +145,114 @@ class TestHovalConnectApiAuth:
         session.post = MagicMock(side_effect=_real_asyncio.TimeoutError())
 
         api = HovalConnectApi(session, "test@example.com", "password123")
-        with pytest.raises(HovalApiError, match="Connection error"):
+        with (
+            patch(_SLEEP, new_callable=AsyncMock),
+            pytest.raises(HovalApiError, match="Connection error"),
+        ):
             await api._get_id_token()
+        assert session.post.call_count == _MAX_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_retries_transient_idp_error(self):
+        """A 503 at the IDP must not fail the whole login.
+
+        Before this, the two token endpoints were the only calls in the client
+        with no retry budget: one hiccup at SAP IAS aborted the config flow with
+        a bare `cannot_connect`, or cost a full coordinator refresh at runtime,
+        while the identical hiccup on a data request was ridden out silently.
+        """
+        session = _make_session()
+        session.post = MagicMock(
+            side_effect=[_make_response(503), _make_response(200, {"id_token": "recovered"})]
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        with patch(_SLEEP, new_callable=AsyncMock):
+            assert await api._get_id_token() == "recovered"
+        assert session.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_retries_rate_limit(self):
+        """429 is retryable here too — a user re-trying the dialog can trip it."""
+        session = _make_session()
+        session.post = MagicMock(
+            side_effect=[_make_response(429), _make_response(200, {"id_token": "recovered"})]
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        with patch(_SLEEP, new_callable=AsyncMock):
+            assert await api._get_id_token() == "recovered"
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_persistent_server_error_names_the_status(self):
+        """A server that answered must not be reported as a connection error.
+
+        `raise_for_status()` folded every non-auth HTTP status into "Connection
+        error during authentication", which reads like a dead network and sent
+        at least one bug report chasing firewalls instead of an HTTP 5xx.
+        """
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(500))
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        with (
+            patch(_SLEEP, new_callable=AsyncMock),
+            pytest.raises(HovalApiError, match="authentication failed: HTTP 500"),
+        ):
+            await api._get_id_token()
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_permanent_client_error_is_not_retried(self):
+        """404 is neither an auth rejection nor transient — fail on the first answer."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(404))
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        with pytest.raises(HovalApiError, match="HTTP 404"):
+            await api._get_id_token()
+        assert session.post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_auth_rejection_is_not_retried(self):
+        """Wrong credentials are a permanent answer; retrying only risks a lockout."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(401))
+
+        api = HovalConnectApi(session, "test@example.com", "wrong")
+        with pytest.raises(HovalAuthError):
+            await api._get_id_token()
+        assert session.post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_id_token_non_dict_response(self):
+        """A JSON array body must not escape as AttributeError from `.keys()`.
+
+        Anything that is not HovalAuthError/HovalApiError bypasses the config
+        flow's handlers and degrades the dialog to "unknown error occurred".
+        """
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, ["not", "an", "object"]))
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        with pytest.raises(HovalApiError, match="expected a JSON object"):
+            await api._get_id_token()
+
+    @pytest.mark.asyncio
+    async def test_token_requests_are_bounded_by_request_timeout(self):
+        """Both token calls must pass their own timeout.
+
+        Neither did, so they inherited aiohttp's 5-minute default: a stalled
+        IDP could hold a coordinator refresh far past the 60 s scan interval
+        (`_request`'s own timeout does not cover the nested token fetch).
+        """
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+
+        api = HovalConnectApi(session, "test@example.com", "password123")
+        await api._get_id_token()
+
+        timeout = session.post.call_args.kwargs["timeout"]
+        assert timeout.total == REQUEST_TIMEOUT
 
     @pytest.mark.asyncio
     async def test_invalidate_tokens(self):
@@ -631,6 +747,67 @@ class TestBuildV4TemporaryChangeBody:
         """Should not raise when invalidating non-cached plant."""
         api = HovalConnectApi(MagicMock(), "test@example.com", "pass")
         api.invalidate_plant_token("nonexistent")  # Should not raise
+
+
+class TestPlantAccessTokenHardening:
+    """The PAT fetch shares the token-endpoint retry path with the IDP login.
+
+    It is the second of the two calls that used to run with neither a retry
+    budget nor a timeout of its own, and it runs on every coordinator refresh
+    once the 12-minute cache expires.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_error(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(
+            side_effect=[_make_response(503), _make_response(200, {"token": "pat-123"})]
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with patch(_SLEEP, new_callable=AsyncMock):
+            assert await api._get_plant_access_token("plant-1") == "pat-123"
+        assert session.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_401_drops_the_id_token(self):
+        """The ID token we just sent was rejected — replaying it only fails again."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(return_value=_make_response(401))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalAuthError, match="ID token rejected"):
+            await api._get_plant_access_token("plant-1")
+
+        assert api._id_token is None
+        # A rejection is permanent; it must not burn the retry budget.
+        assert session.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_token_field_raises_api_error(self):
+        """`data["token"]` used to raise KeyError straight past the coordinator's
+        HovalApiError handler, landing as "Unexpected error fetching data" with
+        nothing naming Hoval or the plant."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(return_value=_make_response(200, {"other": "field"}))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError, match="no token"):
+            await api._get_plant_access_token("plant-1")
+
+    @pytest.mark.asyncio
+    async def test_bounded_by_request_timeout(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(return_value=_make_response(200, {"token": "pat-123"}))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        await api._get_plant_access_token("plant-1")
+
+        assert session.get.call_args.kwargs["timeout"].total == REQUEST_TIMEOUT
 
 
 class TestRetryConstants:
