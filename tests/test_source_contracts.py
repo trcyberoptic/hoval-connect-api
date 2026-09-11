@@ -194,6 +194,14 @@ class TestUserAgentOverride:
         # their own header dicts and never pass through _headers().
         assert src.count('"User-Agent": USER_AGENT') == 3
 
+    def test_the_example_client_sets_it_too(self):
+        """examples/hoval_client.py uses `requests`, whose default User-Agent
+        (`python-requests/...`) the same gateway refuses — a reader following
+        the README would hit the very 403 this release fixes."""
+        src = (pathlib.Path("examples") / "hoval_client.py").read_text(encoding="utf-8")
+        assert "USER_AGENT" in src
+        assert src.count('"User-Agent": USER_AGENT') == 3
+
     def test_version_matches_the_manifest(self):
         """A stale version in the User-Agent misreports which client is calling."""
         import json
@@ -214,6 +222,29 @@ class TestUserAgentOverride:
         # Never impersonate a browser or Hoval's own app to get through.
         for disguise in ("Mozilla/", "Chrome/", "Safari/", "okhttp"):
             assert disguise not in const_src, disguise
+
+
+class TestGatewayBlockIsDistinguishable:
+    """v1.0.7 answered a gateway block with `no_plant_access`, sending issue #11's
+    reporters to check an account setting that was never the problem."""
+
+    def test_api_detects_the_block_page(self):
+        src = _read("api.py")
+        assert "def _is_gateway_block" in src
+        assert "microsoft-azure-application-gateway" in src.lower()
+        assert "gateway_blocked" in src
+
+    def test_config_flow_checks_it_before_the_403_branch(self):
+        src = _read("config_flow.py")
+        gw = src.index("err.gateway_blocked")
+        status_403 = src.index("err.status == 403")
+        assert gw < status_403, "gateway check must come first — a block is also a 403"
+
+    def test_translated_everywhere(self):
+        import json
+
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            assert "gateway_blocked" in json.loads(_read(f))["config"]["error"], f
 
 
 class TestFailuresNameTheirCause:

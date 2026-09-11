@@ -35,6 +35,7 @@ from custom_components.hoval_connect.api import (  # noqa: E402
     HovalApiError,
     HovalAuthError,
     HovalConnectApi,
+    _is_gateway_block,
     _is_retryable_status,
     _minutes_until_local_midnight,
     build_v4_temporary_change_body,
@@ -749,6 +750,95 @@ class TestBuildV4TemporaryChangeBody:
         """Should not raise when invalidating non-cached plant."""
         api = HovalConnectApi(MagicMock(), "test@example.com", "pass")
         api.invalidate_plant_token("nonexistent")  # Should not raise
+
+
+_GATEWAY_403 = (
+    "<html>\n<head><title>403 Forbidden</title></head>\n<body>\n"
+    "<center><h1>403 Forbidden</h1></center>\n"
+    "<hr><center>Microsoft-Azure-Application-Gateway/v2</center>\n</body>\n</html>"
+)
+
+
+class TestGatewayBlockIsToldApartFromHoval:
+    """A 403 from the gateway and a 403 from Hoval need different answers.
+
+    Hoval's API always speaks JSON, so an HTML body naming the Azure
+    Application Gateway means the request was refused in front of Hoval and
+    never reached them: not the account, not the password, not the network.
+    v1.0.7 called this "no_plant_access" and told both issue #11 reporters to
+    check their plant assignment — advice that could not have helped.
+    """
+
+    def test_signature_detection(self):
+        assert _is_gateway_block(_GATEWAY_403)
+        # case-insensitive: the header casing has varied across probes
+        assert _is_gateway_block("server: microsoft-azure-application-gateway/v2")
+        # Hoval's own errors are JSON and must never be mistaken for it
+        assert not _is_gateway_block('{"detail":"No static resource foo"}')
+        assert not _is_gateway_block("")
+
+    @pytest.mark.asyncio
+    async def test_data_request_flags_it(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(return_value=_make_response(403, text=_GATEWAY_403))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError) as excinfo:
+            await api._request("GET", "/api/my-plants")
+
+        assert excinfo.value.gateway_blocked is True
+        assert excinfo.value.status == 403
+
+    @pytest.mark.asyncio
+    async def test_hoval_own_403_is_not_flagged(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(
+            return_value=_make_response(403, text='{"detail":"not your plant"}')
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError) as excinfo:
+            await api._request("GET", "/api/my-plants")
+
+        assert excinfo.value.gateway_blocked is False
+        assert excinfo.value.status == 403
+
+    @pytest.mark.asyncio
+    async def test_plant_token_fetch_flags_it_too(self):
+        """The PAT fetch goes to BASE_URL, so it sits behind the same gateway."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(return_value=_make_response(403, text=_GATEWAY_403))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError) as excinfo:
+            await api._get_plant_access_token("plant-1")
+
+        assert excinfo.value.gateway_blocked is True
+
+    @pytest.mark.asyncio
+    async def test_token_endpoint_logs_the_body(self, caplog):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(404, text='{"detail":"gone"}'))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with caplog.at_level(logging.WARNING), pytest.raises(HovalApiError):
+            await api._get_id_token()
+
+        assert "gone" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_is_not_flagged(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(side_effect=aiohttp.ClientError("boom"))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with patch(_SLEEP, new_callable=AsyncMock), pytest.raises(HovalApiError) as excinfo:
+            await api._request("GET", "/api/my-plants")
+        assert excinfo.value.gateway_blocked is False
 
 
 class TestUserAgentIsSentOnEveryRequest:

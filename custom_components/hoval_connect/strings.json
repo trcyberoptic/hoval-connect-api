@@ -22,6 +22,7 @@
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Unable to connect to Hoval Connect. Please try again later. The Home Assistant log records which step failed.",
       "no_plant_access": "Signed in successfully, but the account is not allowed to list any plants (HTTP 403). Check in the Hoval Connect app that the plant is assigned to this account; retrying will not help.",
+      "gateway_blocked": "Hoval's gateway refused this client before the request reached Hoval (HTTP 403). This is not your account, your password or your network — the integration needs an update. See the integration's issue tracker on GitHub.",
       "wrong_account": "The email does not match the account this entry was set up with.",
       "unknown": "An unexpected error occurred."
     },

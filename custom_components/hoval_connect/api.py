@@ -44,6 +44,19 @@ def _is_retryable_status(status: int) -> bool:
     return status == 429 or status >= 500
 
 
+# Signature of the Azure Application Gateway's own block page. Hoval's API always
+# answers with JSON, so an HTML body naming the gateway means the request was
+# refused *in front of* Hoval and never reached them. Worth telling apart: a 403
+# from Hoval is about the account, a 403 from here is about the client — and
+# issue #11 showed how badly the two get confused when they share a message.
+_GATEWAY_BLOCK_SIGNATURE = "microsoft-azure-application-gateway"
+
+
+def _is_gateway_block(body: str) -> bool:
+    """Return True if `body` is the Azure Application Gateway's block page."""
+    return _GATEWAY_BLOCK_SIGNATURE in body.lower()
+
+
 # Hard upper bound on my-plants pagination. 50 pages x 12 plants/page = 600
 # plants — far beyond any real account. Without a cap, a server that keeps
 # answering `"last": false` would loop get_plants() forever; the config-flow
@@ -64,10 +77,13 @@ class HovalApiError(Exception):
     never got a status (transport failure, timeout, unusable body).
     """
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status: int | None = None, gateway_blocked: bool = False
+    ) -> None:
         """Initialize with an optional HTTP status."""
         super().__init__(message)
         self.status = status
+        self.gateway_blocked = gateway_blocked
 
 
 def _minutes_until_local_midnight(now: datetime | None = None) -> int:
@@ -189,8 +205,20 @@ class HovalConnectApi:
                         # `raise_for_status()` used to fold every HTTP error into
                         # "Connection error during authentication", which reads
                         # like a dead network when the server in fact answered.
+                        # The body is read here for the same reason as in
+                        # `_request`: it is the only place the far end explains
+                        # itself, and the PAT fetch sits behind the same gateway.
+                        body = await resp.text()
+                        _LOGGER.warning(
+                            "%s failed: HTTP %s, body: %s",
+                            description,
+                            resp.status,
+                            body[:500] or "<empty>",
+                        )
                         raise HovalApiError(
-                            f"{description} failed: HTTP {resp.status}", status=resp.status
+                            f"{description} failed: HTTP {resp.status}",
+                            status=resp.status,
+                            gateway_blocked=_is_gateway_block(body),
                         )
                     return await resp.json()
             except (HovalAuthError, HovalApiError):
@@ -407,9 +435,19 @@ class HovalConnectApi:
                             resp.status,
                             body[:500] or "<empty>",
                         )
+                        blocked = _is_gateway_block(body)
+                        if blocked:
+                            _LOGGER.error(
+                                "Hoval's gateway refused this client on %s %s (HTTP %s) — the "
+                                "request never reached Hoval. This is not an account problem.",
+                                method,
+                                path,
+                                resp.status,
+                            )
                         raise HovalApiError(
                             f"API request failed: HTTP {resp.status} on {method} {path}",
                             status=resp.status,
+                            gateway_blocked=blocked,
                         )
                     if resp.status == 204 or resp.content_length == 0:
                         return None

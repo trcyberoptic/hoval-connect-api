@@ -19,10 +19,21 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 # any request whose User-Agent contains the case-insensitive substring
 # "homeassistant" with its own 403 HTML page — the request never reaches Hoval,
 # so every user of this integration was locked out (issue #11, two independent
-# reporters). `python-requests` is refused the same way, which is the signature
-# of a stock bot/scanner rule set rather than a decision aimed at Home
-# Assistant; either way it is Hoval's gateway, not their API, and not something
-# this code can fix.
+# reporters). It is Hoval's gateway, not their API, and not something this code
+# can fix.
+#
+# It looks deliberate. `python-requests` is refused too, which first read like a
+# stock bot/scanner rule set catching Home Assistant by accident — but twelve
+# other common automation clients all pass: Go-http-client, Wget, urllib3,
+# python-httpx, PostmanRuntime, Java, Dart, node-fetch, axios, requests,
+# openhab and ioBroker. A managed bot rule set would refuse most of those;
+# Wget and Go-http-client are canonical entries. Two match values, one of them
+# Home Assistant by name, is the shape of a hand-written WAF custom rule —
+# which is also Microsoft's own documented example for Application Gateway
+# (User-Agent / Contains / Lowercase transform), and custom rules run before
+# managed ones. Other vendors did the same in 2026 (Risco in April, HomGar in
+# July, both resolved by exactly this change). Hoval's intent is still
+# inference, not measurement, but the accident reading no longer fits.
 #
 # Naming the software and its source is what an API client should send anyway —
 # it tells Hoval more than the generic Home Assistant string did. It is a
