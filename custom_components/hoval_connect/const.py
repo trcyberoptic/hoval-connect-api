@@ -32,7 +32,7 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 #
 # Keep in sync with manifest.json — pinned by a source contract in
 # tests/test_source_contracts.py.
-INTEGRATION_VERSION = "1.0.7"
+INTEGRATION_VERSION = "1.0.8"
 USER_AGENT = (
     f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
 )
