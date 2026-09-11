@@ -11,6 +11,13 @@ import time
 
 import requests
 
+# Identify this client. Hoval's Azure Application Gateway refuses a short list of
+# User-Agents outright, and `python-requests/<ver>` — what this module would send
+# by default — is on it, exactly like Home Assistant's own string. You get the
+# gateway's HTML 403 page before the request ever reaches Hoval, which looks
+# nothing like an auth error. Set a User-Agent naming your own software.
+USER_AGENT = "hoval-connect-api-example/1.0 (+https://github.com/trcyberoptic/hoval-connect-api)"
+
 
 class HovalClient:
     BASE_URL = "https://azure-iot-prod.hoval.com/core"
@@ -37,6 +44,7 @@ class HovalClient:
                 "password": self.password,
                 "scope": "openid",
             },
+            headers={"User-Agent": USER_AGENT},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -51,7 +59,10 @@ class HovalClient:
 
         resp = requests.get(
             f"{self.BASE_URL}/v1/plants/{plant_id}/settings",
-            headers={"Authorization": f"Bearer {self._get_id_token()}"},
+            headers={
+                "Authorization": f"Bearer {self._get_id_token()}",
+                "User-Agent": USER_AGENT,
+            },
         )
         resp.raise_for_status()
         token = resp.json()["token"]
@@ -59,7 +70,10 @@ class HovalClient:
         return token
 
     def _headers(self, plant_id: str | None = None) -> dict:
-        h = {"Authorization": f"Bearer {self._get_id_token()}"}
+        h = {
+            "Authorization": f"Bearer {self._get_id_token()}",
+            "User-Agent": USER_AGENT,
+        }
         if plant_id:
             h["X-Plant-Access-Token"] = self._get_plant_access_token(plant_id)
         return h

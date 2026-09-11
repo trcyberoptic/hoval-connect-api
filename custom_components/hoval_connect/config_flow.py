@@ -39,12 +39,19 @@ _VALIDATION_TIMEOUT_S = 30
 def _api_error_key(err: HovalApiError) -> str:
     """Map an API failure to the error the dialog should show.
 
-    A 403 means the login itself worked and the cloud then refused the account
-    access to the plant list — an authorisation problem that no amount of
-    retrying fixes. Telling such a user "unable to connect, try again later"
-    (issue #11) sends them to their router while the real answer sits in their
-    Hoval account. Everything else stays `cannot_connect`.
+    Three outcomes, because they need three different actions from the user:
+
+    - Hoval's gateway refused the client before the request reached Hoval. Not
+      the account, not the network, nothing the user can fix — the integration
+      needs an update. Checked first: it also arrives as a 403, and issue #11
+      showed the cost of conflating it with the case below.
+    - A 403 from Hoval itself: the login worked and the account was refused the
+      plant list. An authorisation answer that no amount of retrying fixes.
+    - Anything else: `cannot_connect`, which is the only one where "try again
+      later" is honest advice.
     """
+    if err.gateway_blocked:
+        return "gateway_blocked"
     if err.status == 403:
         return "no_plant_access"
     return "cannot_connect"

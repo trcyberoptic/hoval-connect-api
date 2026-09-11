@@ -52,6 +52,18 @@ class TestApiErrorKey:
     def test_403_gets_its_own_error(self):
         assert _api_error_key(HovalApiError("nope", status=403)) == "no_plant_access"
 
+    def test_gateway_block_wins_over_the_account_message(self):
+        """Both arrive as 403. Only one of them is about the user's account, and
+        telling a gateway-blocked user to check their plant assignment is what
+        v1.0.7 did to the issue #11 reporters."""
+        err = HovalApiError("nope", status=403, gateway_blocked=True)
+        assert _api_error_key(err) == "gateway_blocked"
+
+    def test_gateway_block_on_a_non_403_still_wins(self):
+        """The gateway is free to answer with any status; the body is the tell."""
+        err = HovalApiError("nope", status=406, gateway_blocked=True)
+        assert _api_error_key(err) == "gateway_blocked"
+
     def test_other_statuses_stay_cannot_connect(self):
         for status in (400, 404, 429, 500, 502, 599):
             err = HovalApiError("nope", status=status)

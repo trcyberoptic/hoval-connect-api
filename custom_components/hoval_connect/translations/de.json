@@ -22,6 +22,7 @@
       "invalid_auth": "Ungültige E-Mail oder Passwort.",
       "cannot_connect": "Verbindung zu Hoval Connect konnte nicht hergestellt werden. Bitte versuchen Sie es später erneut. Im Home-Assistant-Protokoll steht, welcher Schritt fehlgeschlagen ist.",
       "no_plant_access": "Anmeldung erfolgreich, aber das Konto darf keine Anlagen abrufen (HTTP 403). Prüfe in der Hoval-Connect-App, ob die Anlage diesem Konto zugeordnet ist; erneutes Versuchen hilft nicht.",
+      "gateway_blocked": "Hovals Gateway hat diesen Client abgewiesen, bevor die Anfrage Hoval erreicht hat (HTTP 403). Das liegt nicht an deinem Konto, deinem Passwort oder deinem Netzwerk — die Integration braucht ein Update. Siehe den Issue-Tracker der Integration auf GitHub.",
       "wrong_account": "Die E-Mail-Adresse gehört nicht zu dem Konto, mit dem dieser Eintrag eingerichtet wurde.",
       "unknown": "Ein unerwarteter Fehler ist aufgetreten."
     },
