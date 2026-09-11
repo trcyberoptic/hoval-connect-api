@@ -56,7 +56,17 @@ class HovalAuthError(Exception):
 
 
 class HovalApiError(Exception):
-    """General API error."""
+    """General API error.
+
+    Carries the HTTP status when the cloud actually answered, so callers can
+    branch on it instead of re-parsing the message. `None` means the request
+    never got a status (transport failure, timeout, unusable body).
+    """
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        """Initialize with an optional HTTP status."""
+        super().__init__(message)
+        self.status = status
 
 
 def _minutes_until_local_midnight(now: datetime | None = None) -> int:
@@ -178,7 +188,9 @@ class HovalConnectApi:
                         # `raise_for_status()` used to fold every HTTP error into
                         # "Connection error during authentication", which reads
                         # like a dead network when the server in fact answered.
-                        raise HovalApiError(f"{description} failed: HTTP {resp.status}")
+                        raise HovalApiError(
+                            f"{description} failed: HTTP {resp.status}", status=resp.status
+                        )
                     return await resp.json()
             except (HovalAuthError, HovalApiError):
                 raise
@@ -368,8 +380,23 @@ class HovalConnectApi:
                         continue
                     if resp.status >= 400:
                         body = await resp.text()
-                        _LOGGER.debug("API error body: %s", body[:500])
-                        raise HovalApiError(f"API request failed: HTTP {resp.status}")
+                        # WARNING, not DEBUG: this body is the only place the
+                        # cloud explains itself, and a user reporting a bug has
+                        # no reason to have debug logging on. Issue #11 cost two
+                        # round trips for exactly that reason — the report said
+                        # "API request failed: HTTP 403" with neither the
+                        # endpoint nor Hoval's own reason for refusing.
+                        _LOGGER.warning(
+                            "API %s %s → HTTP %s, body: %s",
+                            method,
+                            path,
+                            resp.status,
+                            body[:500] or "<empty>",
+                        )
+                        raise HovalApiError(
+                            f"API request failed: HTTP {resp.status} on {method} {path}",
+                            status=resp.status,
+                        )
                     if resp.status == 204 or resp.content_length == 0:
                         return None
                     return await resp.json()

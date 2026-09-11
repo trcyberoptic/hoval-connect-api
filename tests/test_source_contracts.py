@@ -192,6 +192,30 @@ class TestFailuresNameTheirCause:
         src = _read("coordinator.py")
         assert 'UpdateFailed(f"Error fetching Hoval data: {err}")' in src
 
+    def test_api_errors_name_the_endpoint(self):
+        """`API request failed: HTTP 403` alone cannot be acted on (issue #11)."""
+        src = _read("api.py")
+        assert 'f"API request failed: HTTP {resp.status} on {method} {path}"' in src
+
+    def test_error_body_is_logged_above_debug(self):
+        """The 4xx/5xx body carries the cloud's own reason; a bug reporter does
+        not have debug logging on."""
+        src = _read("api.py")
+        assert '_LOGGER.debug("API error body' not in src
+        assert '"API %s %s → HTTP %s, body: %s"' in src
+
+    def test_403_has_its_own_dialog_error(self):
+        """A 403 is an authorisation answer — retrying never helps, so it must
+        not share `cannot_connect`'s "try again later" wording."""
+        import json
+
+        src = _read("config_flow.py")
+        assert "def _api_error_key" in src
+        assert "err.status == 403" in src
+        assert '"no_plant_access"' in src
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            assert "no_plant_access" in json.loads(_read(f))["config"]["error"], f
+
     def test_cannot_connect_points_at_the_log(self):
         """`cannot_connect` covers six distinct causes; the dialog has to tell
         the user where the distinguishing detail is (issue #11 arrived without

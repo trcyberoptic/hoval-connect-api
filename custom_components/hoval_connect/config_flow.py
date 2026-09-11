@@ -35,6 +35,21 @@ _LOGGER = logging.getLogger(__name__)
 # byte-dripping server hangs the setup dialog indefinitely.
 _VALIDATION_TIMEOUT_S = 30
 
+
+def _api_error_key(err: HovalApiError) -> str:
+    """Map an API failure to the error the dialog should show.
+
+    A 403 means the login itself worked and the cloud then refused the account
+    access to the plant list — an authorisation problem that no amount of
+    retrying fixes. Telling such a user "unable to connect, try again later"
+    (issue #11) sends them to their router while the real answer sits in their
+    Hoval account. Everything else stays `cannot_connect`.
+    """
+    if err.status == 403:
+        return "no_plant_access"
+    return "cannot_connect"
+
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required("email"): str,
@@ -72,7 +87,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except HovalApiError as err:
                 _LOGGER.error("Hoval API error during setup: %s", err)
-                errors["base"] = "cannot_connect"
+                errors["base"] = _api_error_key(err)
             else:
                 await self.async_set_unique_id(user_input["email"].lower())
                 self._abort_if_unique_id_configured()
@@ -122,8 +137,9 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                 except HovalAuthError:
                     errors["base"] = "invalid_auth"
-                except HovalApiError:
-                    errors["base"] = "cannot_connect"
+                except HovalApiError as err:
+                    _LOGGER.error("Hoval API error during reauth: %s", err)
+                    errors["base"] = _api_error_key(err)
                 else:
                     return self.async_update_reload_and_abort(
                         reauth_entry,
