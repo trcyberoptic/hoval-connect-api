@@ -19,6 +19,25 @@ Reverse-engineered API documentation for the **Hoval Connect** IoT platform (use
 
 Plants and circuits are discovered automatically from your account.
 
+> [!IMPORTANT]
+> **Use v1.0.8 or newer — older releases cannot connect at all.**
+>
+> Hoval's Azure Application Gateway refuses every request whose `User-Agent` contains
+> `homeassistant`, and that is exactly what Home Assistant sends by default on behalf of
+> every integration. On v1.0.7 and earlier, setup therefore fails with an HTTP 403 that
+> reads like a wrong password, a permissions problem or a broken network. It is none of
+> those: the request never reaches Hoval at all. Since v1.0.8 the integration sends its
+> own identifier (`hoval-connect-api/<version>`) instead, which the gateway accepts.
+>
+> If you are on an older release, update in HACS and then **restart Home Assistant
+> completely** — a config-entry reload does not re-import Python modules. Do not change
+> any User-Agent yourself; the integration handles it.
+>
+> This is a workaround for a rule on Hoval's side, not a fix for its cause. If Hoval
+> widens the rule it will stop working. Background and measurements: [#11][issue-11].
+
+[issue-11]: https://github.com/trcyberoptic/hoval-connect-api/issues/11
+
 ### What You Get
 
 **Fan entity** (per HV ventilation circuit):
@@ -651,6 +670,14 @@ The plant access token response includes a feature map indicating what operation
 
 - Token lifetime: 30 min (id_token), ~15 min (plant access token)
 - No documented rate limits, but be respectful
+- **Send a `User-Agent` naming your own software.** The gateway in front of the API
+  refuses a short list of client identifiers before the request reaches Hoval, answering
+  with its own HTML block page (`Microsoft-Azure-Application-Gateway/v2`) instead of JSON.
+  Both `homeassistant` and `python-requests` are refused as case-insensitive substrings —
+  so Python's `requests` library is blocked by its default header, while `curl`, `httpx`,
+  `urllib3`, `Go-http-client` and a dozen others pass. `examples/hoval_client.py` sets one
+  explicitly; do the same rather than sending nothing or disguising your client as a
+  browser or as Hoval's own app.
 - The API may lock out accounts after repeated failed auth attempts
 - Some endpoints are partner/business-only (403 for regular users)
 - `business/` endpoints may require elevated access roles
