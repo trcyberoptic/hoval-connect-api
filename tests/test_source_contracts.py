@@ -194,6 +194,34 @@ class TestUserAgentOverride:
         # their own header dicts and never pass through _headers().
         assert src.count('"User-Agent": USER_AGENT') == 3
 
+    def test_the_canary_reads_the_shipped_string(self):
+        """The canary must import const.py, never repeat the User-Agent.
+
+        A hardcoded copy would keep passing after the next version bump while
+        vouching for a string no user sends — a green canary that proves nothing
+        is worse than none, because it is believed.
+        """
+        wf = (pathlib.Path(".github") / "workflows" / "ua-canary.yml").read_text(encoding="utf-8")
+        assert "const.USER_AGENT" in wf
+        assert "custom_components/hoval_connect/const.py" in wf
+        # No literal of the shipped identifier anywhere in the job.
+        assert "hoval-connect-api/" not in wf
+
+    def test_the_canary_has_a_control_probe(self):
+        """Without a UA that is *expected* to be refused, a green run cannot tell
+        "we are still allowed through" from "this probe stopped working"."""
+        wf = (pathlib.Path(".github") / "workflows" / "ua-canary.yml").read_text(encoding="utf-8")
+        assert "CONTROL_UA" in wf
+        assert "HomeAssistant/" in wf
+
+    def test_the_canary_does_not_alarm_on_transport_failures(self):
+        """One unreachable run must not mail the maintainer. An alarm that cries
+        wolf gets filtered, and then the real block goes unread."""
+        wf = (pathlib.Path(".github") / "workflows" / "ua-canary.yml").read_text(encoding="utf-8")
+        assert "inconclusive" in wf
+        # Exactly one failure exit, reserved for the shipped UA being blocked.
+        assert wf.count("raise SystemExit(1)") == 1
+
     def test_the_example_client_sets_it_too(self):
         """examples/hoval_client.py uses `requests`, whose default User-Agent
         (`python-requests/...`) the same gateway refuses — a reader following

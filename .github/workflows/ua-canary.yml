@@ -1,0 +1,163 @@
+name: User-Agent Canary
+
+# Watches the one thing this integration cannot control: whether Hoval's Azure
+# Application Gateway still accepts the User-Agent we send. Around 2026-09-09 the
+# gateway started refusing any UA containing "homeassistant", which took every
+# install down at once (issue #11) and was only noticed when three users filed
+# reports. Since v1.0.8 we send our own identifier instead — an honest, greppable
+# string, and therefore the easiest thing in the world for Hoval to add to the
+# same rule. This job exists so that the next block arrives as one e-mail to the
+# maintainer rather than as a stream of issues.
+#
+# No credentials: /v3/api-docs is public, and the question is only whether the
+# gateway lets our UA through, not what the API answers.
+#
+# Note: GitHub disables scheduled workflows in a repository with no activity for
+# 60 days. If this has been quiet for a while, check that it is still enabled.
+
+on:
+  schedule:
+    # Daily at 06:17 UTC — off the hour, where the runner queues are shorter.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Is our User-Agent still accepted?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe the gateway
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import os
+          import pathlib
+          import time
+          import urllib.error
+          import urllib.request
+
+          URL = "https://azure-iot-prod.hoval.com/core/v3/api-docs"
+          SIGNATURE = "microsoft-azure-application-gateway"
+          # The string Home Assistant's shared session sends. Used as a control:
+          # it must still be refused, otherwise this probe cannot detect a block
+          # at all and a green run would mean nothing.
+          CONTROL_UA = "HomeAssistant/2026.9.1 aiohttp/3.12.15 Python/3.13"
+
+          # Read the shipped User-Agent from the source rather than repeating it
+          # here. A hardcoded copy would drift on the next version bump and this
+          # job would then vouch for a string no user ever sends.
+          spec = importlib.util.spec_from_file_location(
+              "hoval_const", "custom_components/hoval_connect/const.py"
+          )
+          const = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(const)
+          SHIPPED_UA = const.USER_AGENT
+          print(f"shipped User-Agent: {SHIPPED_UA}")
+
+          def probe(ua):
+              """Return 'blocked', 'pass', or 'inconclusive:<reason>'."""
+              req = urllib.request.Request(URL, headers={"User-Agent": ua})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      body = resp.read(4096).decode("utf-8", "replace")
+                      status = resp.status
+              except urllib.error.HTTPError as err:
+                  body = err.read(4096).decode("utf-8", "replace")
+                  status = err.code
+              except Exception as err:  # noqa: BLE001 — any transport failure
+                  return f"inconclusive:{type(err).__name__}: {err}"
+              if SIGNATURE in body.lower():
+                  return "blocked"
+              if status == 200:
+                  return "pass"
+              return f"inconclusive:HTTP {status}"
+
+          def probe_repeatedly(ua, label):
+              """Probe up to three times; a single odd answer must not raise an alarm."""
+              results = []
+              for attempt in range(3):
+                  if attempt:
+                      time.sleep(5)
+                  r = probe(ua)
+                  print(f"  {label} attempt {attempt + 1}: {r}")
+                  results.append(r)
+                  # Both real states are deterministic, so two agreeing answers
+                  # are enough and a third request would only add load.
+                  if len(results) >= 2 and results[-1] == results[-2]:
+                      return results[-1]
+              return results[-1]
+
+          print("probing with the shipped User-Agent")
+          shipped = probe_repeatedly(SHIPPED_UA, "shipped")
+          print("probing with Home Assistant's own User-Agent (control)")
+          control = probe_repeatedly(CONTROL_UA, "control")
+
+          summary = pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"])
+          def report(lines):
+              summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          # Expected state: our UA passes, Home Assistant's is refused.
+          if shipped == "pass" and control == "blocked":
+              report([
+                  "## User-Agent still accepted",
+                  "",
+                  f"- shipped `{SHIPPED_UA}` → **accepted**",
+                  "- control (Home Assistant's own UA) → still refused, so this probe "
+                  "can detect a block",
+              ])
+              print("OK — nothing to do")
+              raise SystemExit(0)
+
+          # The alarm this job exists for.
+          if shipped == "blocked":
+              report([
+                  "## Our User-Agent is being refused",
+                  "",
+                  f"`{SHIPPED_UA}` now gets Hoval's gateway block page. Every install is "
+                  "down or will be at its next poll, exactly as in issue #11.",
+                  "",
+                  f"- shipped UA → **blocked**",
+                  f"- control UA → {control}",
+                  "",
+                  "The integration cannot fix this by itself. Deciding what to do is a "
+                  "judgement call, not a code change — see the User-Agent notes in "
+                  "CLAUDE.md before reaching for another string.",
+              ])
+              print("::error::Hoval's gateway now refuses this integration's User-Agent")
+              raise SystemExit(1)
+
+          # Good news, but it also means the control no longer proves anything.
+          if control == "pass":
+              report([
+                  "## The rule appears to be gone",
+                  "",
+                  "Home Assistant's own User-Agent is being accepted again, so Hoval may "
+                  "have removed or narrowed the rule. Two consequences: the workaround "
+                  "may no longer be needed, and this probe can no longer prove that it "
+                  "would detect a block.",
+                  "",
+                  f"- shipped UA → {shipped}",
+                  "- control UA → **accepted**",
+              ])
+              print("::notice::Home Assistant's User-Agent is accepted again — the rule may be gone")
+              raise SystemExit(0)
+
+          # Anything else: say so plainly rather than implying a clean bill of health.
+          report([
+              "## Inconclusive",
+              "",
+              "The gateway could not be reached well enough to judge. Not treated as an "
+              "alarm — a network hiccup that mailed the maintainer would train them to "
+              "ignore this job.",
+              "",
+              f"- shipped UA → {shipped}",
+              f"- control UA → {control}",
+          ])
+          print(f"::warning::Inconclusive — shipped: {shipped}, control: {control}")
+          raise SystemExit(0)
+          PY
