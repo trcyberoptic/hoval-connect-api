@@ -183,6 +183,39 @@ class TestRetryCoversNonStandardStatuses:
         assert src.count("aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)") == 3
 
 
+class TestUserAgentOverride:
+    """Hoval's Azure Application Gateway 403s any User-Agent containing
+    "homeassistant" (issue #11). HA sets exactly that as a session default, so
+    every call site must override it per request."""
+
+    def test_all_three_header_sites_set_it(self):
+        src = _read("api.py")
+        # _headers() for every _request, plus the two token endpoints that build
+        # their own header dicts and never pass through _headers().
+        assert src.count('"User-Agent": USER_AGENT') == 3
+
+    def test_version_matches_the_manifest(self):
+        """A stale version in the User-Agent misreports which client is calling."""
+        import json
+        import re
+
+        const_src = _read("const.py")
+        m = re.search(r'INTEGRATION_VERSION = "([^"]+)"', const_src)
+        assert m, "INTEGRATION_VERSION not found in const.py"
+        manifest_version = json.loads(_read("manifest.json"))["version"]
+        assert m.group(1) == manifest_version, (
+            f"const.py INTEGRATION_VERSION {m.group(1)} != manifest.json {manifest_version}"
+        )
+
+    def test_it_stays_honest(self):
+        const_src = _read("const.py")
+        assert "hoval-connect-api/" in const_src
+        assert "github.com/trcyberoptic/hoval-connect-api" in const_src
+        # Never impersonate a browser or Hoval's own app to get through.
+        for disguise in ("Mozilla/", "Chrome/", "Safari/", "okhttp"):
+            assert disguise not in const_src, disguise
+
+
 class TestFailuresNameTheirCause:
     """A refresh failure must say what broke, in the line HA actually prints."""
 
