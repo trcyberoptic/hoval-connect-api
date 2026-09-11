@@ -44,6 +44,7 @@ from custom_components.hoval_connect.const import (  # noqa: E402
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
     REQUEST_TIMEOUT,
+    USER_AGENT,
 )
 
 # Retrying token endpoints means the transport-failure tests now walk the whole
@@ -748,6 +749,78 @@ class TestBuildV4TemporaryChangeBody:
         """Should not raise when invalidating non-cached plant."""
         api = HovalConnectApi(MagicMock(), "test@example.com", "pass")
         api.invalidate_plant_token("nonexistent")  # Should not raise
+
+
+class TestUserAgentIsSentOnEveryRequest:
+    """Every call must carry this client's own User-Agent.
+
+    Home Assistant sets "HomeAssistant/<ver> aiohttp/<ver> Python/<ver>" as a
+    session default for all integrations, and since ~2026-09-09 the Azure
+    Application Gateway in front of the Hoval API answers anything containing
+    the substring "homeassistant" with its own 403 HTML page — the request never
+    reaches Hoval, which locked out every user (issue #11, two reporters).
+    A per-request header is what overrides a session default in aiohttp, so the
+    override has to be present on each of the three call sites, not set once.
+    """
+
+    @pytest.mark.asyncio
+    async def test_data_requests_carry_it(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(return_value=_make_response(200, {"ok": True}))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        await api._request("GET", "/api/my-plants")
+
+        assert session.request.call_args.kwargs["headers"]["User-Agent"] == USER_AGENT
+
+    @pytest.mark.asyncio
+    async def test_id_token_request_carries_it(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        await api._get_id_token()
+
+        assert session.post.call_args.kwargs["headers"]["User-Agent"] == USER_AGENT
+
+    @pytest.mark.asyncio
+    async def test_plant_token_request_carries_it(self):
+        """The PAT fetch goes to BASE_URL, so it is behind the same gateway."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.get = MagicMock(return_value=_make_response(200, {"token": "pat"}))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        await api._get_plant_access_token("plant-1")
+
+        assert session.get.call_args.kwargs["headers"]["User-Agent"] == USER_AGENT
+
+    @pytest.mark.asyncio
+    async def test_it_survives_a_token_refresh(self):
+        """_request rebuilds headers after a 401; the override must not be lost."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(
+            side_effect=[_make_response(401), _make_response(200, {"ok": True})]
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        await api._get_id_token()
+        await api._request("GET", "/api/my-plants")
+
+        for call in session.request.call_args_list:
+            assert call.kwargs["headers"]["User-Agent"] == USER_AGENT
+
+    def test_it_does_not_contain_the_blocked_substring(self):
+        """The whole point: "homeassistant" in any casing is what the gateway drops."""
+        assert "homeassistant" not in USER_AGENT.lower()
+        assert "python-requests" not in USER_AGENT.lower()
+
+    def test_it_identifies_the_software_honestly(self):
+        """Not a disguise — it names this client and where its source lives."""
+        assert USER_AGENT.startswith("hoval-connect-api/")
+        assert "github.com/trcyberoptic/hoval-connect-api" in USER_AGENT
 
 
 class TestErrorsIdentifyTheEndpoint:

@@ -11,6 +11,32 @@ IDP_URL = "https://akwc5scsc.accounts.ondemand.com/oauth2/token"
 # Extracted from the official Android/iOS app; required by the SAP IAS identity provider.
 CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 
+# Identify this client by name on every request.
+#
+# Home Assistant's shared aiohttp session sets a session-default User-Agent of
+# "HomeAssistant/<ver> aiohttp/<ver> Python/<ver>" for every integration. Since
+# around 2026-09-09 the Azure Application Gateway in front of BASE_URL answers
+# any request whose User-Agent contains the case-insensitive substring
+# "homeassistant" with its own 403 HTML page — the request never reaches Hoval,
+# so every user of this integration was locked out (issue #11, two independent
+# reporters). `python-requests` is refused the same way, which is the signature
+# of a stock bot/scanner rule set rather than a decision aimed at Home
+# Assistant; either way it is Hoval's gateway, not their API, and not something
+# this code can fix.
+#
+# Naming the software and its source is what an API client should send anyway —
+# it tells Hoval more than the generic Home Assistant string did. It is a
+# workaround for a gateway rule, not a fix for it: if the rule is ever widened,
+# this stops working and the answer is a conversation with Hoval, not a
+# less honest User-Agent.
+#
+# Keep in sync with manifest.json — pinned by a source contract in
+# tests/test_source_contracts.py.
+INTEGRATION_VERSION = "1.0.7"
+USER_AGENT = (
+    f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
+)
+
 # Token TTLs (with safety margins)
 ID_TOKEN_TTL = timedelta(minutes=25)
 PLANT_TOKEN_TTL = timedelta(minutes=12)

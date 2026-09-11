@@ -21,6 +21,7 @@ from .const import (
     IDP_URL,
     PLANT_TOKEN_TTL,
     REQUEST_TIMEOUT,
+    USER_AGENT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -236,7 +237,10 @@ class HovalConnectApi:
                         "password": self._password,
                         "scope": "openid",
                     },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "User-Agent": USER_AGENT,
+                    },
                     timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
                 ),
                 auth_statuses=(400, 401, 403),
@@ -281,7 +285,10 @@ class HovalConnectApi:
                     "plant token fetch",
                     lambda: self._session.get(
                         f"{BASE_URL}/v1/plants/{plant_id}/settings",
-                        headers={"Authorization": f"Bearer {id_token}"},
+                        headers={
+                            "Authorization": f"Bearer {id_token}",
+                            "User-Agent": USER_AGENT,
+                        },
                         timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
                     ),
                     auth_statuses=(401,),
@@ -309,9 +316,16 @@ class HovalConnectApi:
             return token
 
     async def _headers(self, plant_id: str | None = None) -> dict[str, str]:
-        """Build request headers with auth tokens."""
+        """Build request headers with auth tokens.
+
+        The User-Agent is set per request on purpose. Home Assistant assigns its
+        own as a *session* default, and aiohttp lets a per-request header of the
+        same name win — which is the only way to override it while still using
+        HA's shared session (and with it HA's connector, SSL context and
+        cleanup). See USER_AGENT in const.py for why it matters here.
+        """
         id_token = await self._get_id_token()
-        headers = {"Authorization": f"Bearer {id_token}"}
+        headers = {"Authorization": f"Bearer {id_token}", "User-Agent": USER_AGENT}
         if plant_id:
             pat = await self._get_plant_access_token(plant_id)
             headers["X-Plant-Access-Token"] = pat
