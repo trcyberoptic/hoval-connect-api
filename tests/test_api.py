@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -747,6 +748,77 @@ class TestBuildV4TemporaryChangeBody:
         """Should not raise when invalidating non-cached plant."""
         api = HovalConnectApi(MagicMock(), "test@example.com", "pass")
         api.invalidate_plant_token("nonexistent")  # Should not raise
+
+
+class TestErrorsIdentifyTheEndpoint:
+    """A failure must name the call that failed and carry its status.
+
+    Issue #11 was reported as `API request failed: HTTP 403` — no endpoint, no
+    reason. Identifying the call needed the traceback's line number plus the
+    knowledge that the config flow makes exactly one request; at runtime, where
+    the coordinator hits a dozen endpoints, the same message says nothing at all.
+    """
+
+    @pytest.mark.asyncio
+    async def test_message_names_method_and_path(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(return_value=_make_response(403, text='{"detail":"nope"}'))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError, match=r"HTTP 403 on GET /api/my-plants"):
+            await api._request("GET", "/api/my-plants")
+
+    @pytest.mark.asyncio
+    async def test_status_is_attached(self):
+        """Callers branch on `.status`, not on substrings of the message."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(return_value=_make_response(403))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with pytest.raises(HovalApiError) as excinfo:
+            await api._request("GET", "/api/my-plants")
+        assert excinfo.value.status == 403
+
+    @pytest.mark.asyncio
+    async def test_error_body_is_logged_above_debug(self, caplog):
+        """The body is where the cloud explains itself, and a bug reporter has
+        no reason to have debug logging switched on."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(
+            return_value=_make_response(403, text='{"detail":"plant not assigned"}')
+        )
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with caplog.at_level(logging.WARNING), pytest.raises(HovalApiError):
+            await api._request("GET", "/api/my-plants")
+
+        assert "plant not assigned" in caplog.text
+        assert "/api/my-plants" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_has_no_status(self):
+        """`None` distinguishes "never got an answer" from "answered with 4xx"."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "token"}))
+        session.request = MagicMock(side_effect=aiohttp.ClientError("boom"))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with patch(_SLEEP, new_callable=AsyncMock), pytest.raises(HovalApiError) as excinfo:
+            await api._request("GET", "/api/my-plants")
+        assert excinfo.value.status is None
+
+    @pytest.mark.asyncio
+    async def test_token_endpoint_status_is_attached(self):
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(500))
+
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        with patch(_SLEEP, new_callable=AsyncMock), pytest.raises(HovalApiError) as excinfo:
+            await api._get_id_token()
+        assert excinfo.value.status == 500
 
 
 class TestPlantAccessTokenHardening:

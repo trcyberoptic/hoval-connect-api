@@ -27,6 +27,8 @@ sys.modules.setdefault("homeassistant.helpers.dispatcher", ha_mock)
 sys.modules.setdefault("homeassistant.util", ha_mock)
 sys.modules.setdefault("homeassistant.util.dt", ha_mock)
 
+from custom_components.hoval_connect.api import HovalApiError  # noqa: E402
+from custom_components.hoval_connect.config_flow import _api_error_key  # noqa: E402
 from custom_components.hoval_connect.const import SCAN_INTERVAL_OPTIONS  # noqa: E402
 
 
@@ -35,6 +37,29 @@ def _scan_interval_schema() -> vol.Schema:
     return vol.Schema(
         {vol.Required("scan_interval"): vol.All(vol.Coerce(int), vol.In(SCAN_INTERVAL_OPTIONS))}
     )
+
+
+class TestApiErrorKey:
+    """403 is an authorisation answer, not a connection failure.
+
+    Issue #11: the login worked, `/api/my-plants` answered 403, and the dialog
+    said "unable to connect, please try again later" — which sent the reporter
+    looking at their network while the cause sat in their Hoval account. A 403
+    never fixes itself on retry, so it must not share a message with one that
+    might.
+    """
+
+    def test_403_gets_its_own_error(self):
+        assert _api_error_key(HovalApiError("nope", status=403)) == "no_plant_access"
+
+    def test_other_statuses_stay_cannot_connect(self):
+        for status in (400, 404, 429, 500, 502, 599):
+            err = HovalApiError("nope", status=status)
+            assert _api_error_key(err) == "cannot_connect", status
+
+    def test_missing_status_stays_cannot_connect(self):
+        """Transport failures carry no status and really are connection problems."""
+        assert _api_error_key(HovalApiError("boom")) == "cannot_connect"
 
 
 class TestScanIntervalSchema:
