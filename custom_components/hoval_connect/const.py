@@ -43,7 +43,7 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 #
 # Keep in sync with manifest.json — pinned by a source contract in
 # tests/test_source_contracts.py.
-INTEGRATION_VERSION = "1.0.9"
+INTEGRATION_VERSION = "1.0.10"
 USER_AGENT = (
     f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
 )
@@ -59,6 +59,10 @@ SCAN_INTERVAL_OPTIONS = {30: "30 seconds", 60: "60 seconds", 120: "2 minutes", 3
 
 # Program cache TTL — programs change rarely, no need to fetch every poll
 PROGRAM_CACHE_TTL = timedelta(minutes=5)
+
+# A 417 may mean this circuit has no programs. Recheck later rather than
+# permanently excluding it or querying it on every sensor update.
+PROGRAM_UNAVAILABLE_RETRY_INTERVAL = timedelta(hours=1)
 
 # Plant-level cache TTLs — weather and events are slow-changing, so fetching
 # them on every (default 60 s) poll wastes round-trips and risks rate limits.
