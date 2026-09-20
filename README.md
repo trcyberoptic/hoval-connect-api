@@ -101,7 +101,8 @@ Plants and circuits are discovered automatically from your account.
 - 2-step token management (ID token + Plant Access Token) with TTL caching, auto-refresh, and single-flight locking (concurrent requests trigger at most one token refresh)
 - Skips API calls when plant is offline, invalidates token cache on reconnect
 - Parallel API fetches for circuits, live values, programs, events, and weather
-- Tiered caching reduces API calls: programs 5 min, events 3 min, weather forecast 15 min
+- Tiered caching reduces API calls: programs 5 min (including empty responses), events 3 min, weather forecast 15 min. Program caches are separate for each plant and circuit.
+- A circuit's program endpoint returning HTTP 417 is checked again after one hour, with one warning per attempt. Live values continue updating normally; authentication errors, gateway blocks and transient failures do not trigger this pause.
 - Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on the circuits, live-values and both plant-event endpoints (not on the weather forecast — a wrapped response there yields no forecast), the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback

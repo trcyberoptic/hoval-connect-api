@@ -26,6 +26,7 @@ from .const import (
     DOMAIN,
     EVENTS_CACHE_TTL,
     PROGRAM_CACHE_TTL,
+    PROGRAM_UNAVAILABLE_RETRY_INTERVAL,
     SUPPORTED_CIRCUIT_TYPES,
     WEATHER_CACHE_TTL,
 )
@@ -295,8 +296,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # _MODE_OVERRIDE_TTL_S). Key: circuit_path,
         # value: (operation mode string, monotonic timestamp).
         self._mode_override: dict[str, tuple[str, float]] = {}
-        # Program cache: key=circuit_path, value=(programs_data, timestamp)
-        self._program_cache: dict[str, tuple[Any, float]] = {}
+        # Circuit paths repeat across plants. Cache both data and empty
+        # results per plant, with a monotonic deadline for the next probe.
+        self._program_cache: dict[tuple[str, str], tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
         # Plant-level caches: (parsed value(s), monotonic timestamp)
         self._weather_cache: dict[str, tuple[HovalWeatherData | None, float]] = {}
@@ -469,11 +471,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     )
 
                     # Check program cache
-                    cached_prog = self._program_cache.get(path)
-                    need_programs = (
-                        cached_prog is None
-                        or time.time() - cached_prog[1] > self._program_cache_ttl
-                    )
+                    program_key = (_plant_id, path)
+                    cached_prog = self._program_cache.get(program_key)
+                    need_programs = cached_prog is None or time.monotonic() >= cached_prog[1]
 
                     # Fetch live values (always) + programs (only if cache expired)
                     # + raw controller datapoints (only for types that define any).
@@ -535,9 +535,39 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         _LOGGER.debug("Datapoints not available for %s", path)
 
                     programs = results[1]
+                    if need_programs:
+                        if (
+                            isinstance(programs, HovalApiError)
+                            and programs.status == 417
+                            and not programs.gateway_blocked
+                            and programs.request_path
+                            == f"/v3/plants/{_plant_id}/circuits/{path}/programs"
+                        ):
+                            retry_interval = PROGRAM_UNAVAILABLE_RETRY_INTERVAL.total_seconds()
+                            self._program_cache[program_key] = (
+                                None,
+                                time.monotonic() + retry_interval,
+                            )
+                            _LOGGER.warning(
+                                "Programs unavailable for plant %s circuit %s (HTTP 417); "
+                                "checking again in %d minutes. Live values continue to update.",
+                                _plant_id,
+                                path,
+                                retry_interval / 60,
+                            )
+                            programs = None
+                        elif (
+                            isinstance(programs, dict)
+                            or programs is None
+                            or (isinstance(programs, list) and not programs)
+                        ):
+                            # Empty successful responses also need a cache;
+                            # otherwise circuits without schedules poll forever.
+                            self._program_cache[program_key] = (
+                                programs,
+                                time.monotonic() + self._program_cache_ttl,
+                            )
                     if isinstance(programs, dict):
-                        if need_programs:
-                            self._program_cache[path] = (programs, time.time())
                         # Isolation barrier: any residual exception here must
                         # degrade the program fields only — never propagate out
                         # of _fetch_circuit, which would discard the whole

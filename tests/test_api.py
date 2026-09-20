@@ -984,6 +984,102 @@ class TestErrorsIdentifyTheEndpoint:
         assert excinfo.value.status == 500
 
 
+class TestProgramEndpointErrors:
+    """Only actual program-endpoint 417s are delegated to the coordinator."""
+
+    @pytest.mark.asyncio
+    async def test_program_417_preserves_origin_without_duplicate_warning(self, caplog):
+        session = _make_session()
+        session.request = MagicMock(return_value=_make_response(417))
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        api._headers = AsyncMock(return_value={})
+
+        with caplog.at_level(logging.DEBUG), pytest.raises(HovalApiError) as excinfo:
+            await api.get_programs("plant-a", "1.10.1")
+
+        assert excinfo.value.status == 417
+        assert excinfo.value.request_path == "/v3/plants/plant-a/circuits/1.10.1/programs"
+        assert not excinfo.value.gateway_blocked
+        session.request.assert_called_once()
+        assert "HTTP 417" in caplog.text
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("GET", "/v3/plants/plant-a/circuits"),
+            ("POST", "/v3/plants/plant-a/circuits/1.10.1/programs/week1"),
+        ],
+    )
+    async def test_417_on_other_operations_still_warns(self, caplog, method, path):
+        session = _make_session()
+        session.request = MagicMock(return_value=_make_response(417))
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        api._headers = AsyncMock(return_value={})
+
+        with caplog.at_level(logging.WARNING), pytest.raises(HovalApiError):
+            await api._request(method, path)
+
+        assert "HTTP 417" in caplog.text
+        assert path in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [403, 500, 599])
+    async def test_other_program_errors_still_warn_and_retry(self, caplog, status):
+        session = _make_session()
+        session.request = MagicMock(return_value=_make_response(status))
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        api._headers = AsyncMock(return_value={})
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch(_SLEEP, new_callable=AsyncMock),
+            pytest.raises(HovalApiError) as excinfo,
+        ):
+            await api.get_programs("plant-a", "1.10.1")
+
+        assert excinfo.value.status == status
+        assert session.request.call_count == (3 if status >= 500 else 1)
+        assert f"HTTP {status}" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_gateway_417_remains_visible(self, caplog):
+        session = _make_session()
+        session.request = MagicMock(
+            return_value=_make_response(417, text="Microsoft-Azure-Application-Gateway/v2")
+        )
+        api = HovalConnectApi(session, "test@example.com", "pass")
+        api._headers = AsyncMock(return_value={})
+
+        with caplog.at_level(logging.WARNING), pytest.raises(HovalApiError) as excinfo:
+            await api.get_programs("plant-a", "1.10.1")
+
+        assert excinfo.value.gateway_blocked
+        assert "HTTP 417" in caplog.text
+        assert "gateway refused" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed_step", ["authentication", "plant token fetch"])
+    async def test_token_417_is_not_attributed_to_program_endpoint(self, caplog, failed_step):
+        session = _make_session()
+        session.post = MagicMock(
+            return_value=_make_response(
+                417 if failed_step == "authentication" else 200, {"id_token": "token"}
+            )
+        )
+        session.get = MagicMock(return_value=_make_response(417))
+        api = HovalConnectApi(session, "test@example.com", "pass")
+
+        with caplog.at_level(logging.WARNING), pytest.raises(HovalApiError) as excinfo:
+            await api.get_programs("plant-a", "1.10.1")
+
+        assert excinfo.value.status == 417
+        assert excinfo.value.request_path is None
+        session.request.assert_not_called()
+        assert f"{failed_step} failed: HTTP 417" in caplog.text
+
+
 class TestPlantAccessTokenHardening:
     """The PAT fetch shares the token-endpoint retry path with the IDP login.
 

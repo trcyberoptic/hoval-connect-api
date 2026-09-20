@@ -78,12 +78,20 @@ class HovalApiError(Exception):
     """
 
     def __init__(
-        self, message: str, *, status: int | None = None, gateway_blocked: bool = False
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        gateway_blocked: bool = False,
+        request_path: str | None = None,
     ) -> None:
         """Initialize with an optional HTTP status."""
         super().__init__(message)
         self.status = status
         self.gateway_blocked = gateway_blocked
+        # Only data-endpoint responses carry this. Token fetch errors happen
+        # before that request and must not be mistaken for missing capabilities.
+        self.request_path = request_path
 
 
 def _minutes_until_local_midnight(now: datetime | None = None) -> int:
@@ -366,6 +374,8 @@ class HovalConnectApi:
         plant_id: str | None = None,
         params: dict[str, str] | None = None,
         json_data: Any = None,
+        *,
+        quiet_statuses: tuple[int, ...] = (),
     ) -> Any:
         """Make an authenticated API request with token retry and transient error backoff.
 
@@ -422,20 +432,27 @@ class HovalConnectApi:
                         continue
                     if resp.status >= 400:
                         body = await resp.text()
+                        blocked = _is_gateway_block(body)
                         # WARNING, not DEBUG: this body is the only place the
                         # cloud explains itself, and a user reporting a bug has
                         # no reason to have debug logging on. Issue #11 cost two
                         # round trips for exactly that reason — the report said
                         # "API request failed: HTTP 403" with neither the
                         # endpoint nor Hoval's own reason for refusing.
-                        _LOGGER.warning(
+                        # Optional endpoints can let their caller handle a
+                        # specific status and report its retry policy once.
+                        log = (
+                            _LOGGER.debug
+                            if resp.status in quiet_statuses and not blocked
+                            else _LOGGER.warning
+                        )
+                        log(
                             "API %s %s → HTTP %s, body: %s",
                             method,
                             path,
                             resp.status,
                             body[:500] or "<empty>",
                         )
-                        blocked = _is_gateway_block(body)
                         if blocked:
                             _LOGGER.error(
                                 "Hoval's gateway refused this client on %s %s (HTTP %s) — the "
@@ -448,6 +465,7 @@ class HovalConnectApi:
                             f"API request failed: HTTP {resp.status} on {method} {path}",
                             status=resp.status,
                             gateway_blocked=blocked,
+                            request_path=path,
                         )
                     if resp.status == 204 or resp.content_length == 0:
                         return None
@@ -559,6 +577,7 @@ class HovalConnectApi:
             "GET",
             f"/v3/plants/{plant_id}/circuits/{circuit_path}/programs",
             plant_id=plant_id,
+            quiet_statuses=(417,),
         )
 
     async def get_datapoints(self, plant_id: str, addresses: list[str]) -> dict[str, str]:
