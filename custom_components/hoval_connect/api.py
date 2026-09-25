@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from math import isfinite
 from typing import Any
 
 import aiohttp
@@ -23,12 +24,17 @@ from .const import (
     REQUEST_TIMEOUT,
     USER_AGENT,
 )
+from .privacy import redact_remote_error_body
 
 _LOGGER = logging.getLogger(__name__)
 
 # Retry configuration for transient errors
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0  # seconds, doubled on each retry
+_SAFE_RETRY_METHODS = frozenset({"GET", "HEAD"})
+_VALID_PROGRAMS = frozenset(
+    {"constant", "ecoMode", "standby", "week1", "week2", "manual", "externalConstant"}
+)
 
 
 def _is_retryable_status(status: int) -> bool:
@@ -94,6 +100,28 @@ class HovalApiError(Exception):
         self.request_path = request_path
 
 
+def _require_identifier(value: Any, field: str) -> str:
+    """Validate one URL segment without imposing model-specific identifiers."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 128
+        or any(char.isspace() or ord(char) < 32 or char in "/\\?#%" for char in value)
+        or value in {".", ".."}
+    ):
+        raise HovalApiError(f"Invalid {field}")
+    return value
+
+
+def _topology_list(result: Any, endpoint: str) -> list[Any]:
+    """Require a complete list response, accepting the cloud's page wrapper."""
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict) and isinstance(result.get("content"), list):
+        return result["content"]
+    raise HovalApiError(f"Unexpected {endpoint} response: expected a list or list 'content'")
+
+
 def _minutes_until_local_midnight(now: datetime | None = None) -> int:
     """Minutes from `now` (default: naive local now) until the next 00:00.
 
@@ -126,6 +154,14 @@ def build_v4_temporary_change_body(
     Pure function — broken out for unit testing. `now` is only used when
     `duration == DURATION_MIDNIGHT` and exists so tests can pin time.
     """
+    if isinstance(value, bool):
+        raise HovalApiError("Temporary-change value must be a finite number")
+    try:
+        value = float(value)
+    except (TypeError, ValueError, OverflowError) as err:
+        raise HovalApiError("Temporary-change value must be a finite number") from err
+    if not isfinite(value):
+        raise HovalApiError("Temporary-change value must be a finite number")
     if duration == DURATION_END_OF_PHASE:
         return {"type": "endOfPhase", "value": value}
     if duration == DURATION_FOUR_HOURS:
@@ -221,7 +257,7 @@ class HovalConnectApi:
                             "%s failed: HTTP %s, body: %s",
                             description,
                             resp.status,
-                            body[:500] or "<empty>",
+                            redact_remote_error_body(body) or "<empty>",
                         )
                         raise HovalApiError(
                             f"{description} failed: HTTP {resp.status}",
@@ -389,6 +425,10 @@ class HovalConnectApi:
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         token_refreshed = False
         attempt = 0
+        # A lost response can follow an already committed control action.
+        # Only reads are repeated on ambiguous failures; 401 remains a
+        # definite rejection and gets its one token-refresh retry below.
+        safe_to_retry = method.upper() in _SAFE_RETRY_METHODS
 
         while attempt < _MAX_RETRIES:
             # Re-fetch headers every iteration: after a 401 we cleared the
@@ -416,7 +456,11 @@ class HovalConnectApi:
                         # Do not increment `attempt` — token refresh is a
                         # one-shot extra request, not a transient retry.
                         continue
-                    if _is_retryable_status(resp.status) and attempt < _MAX_RETRIES - 1:
+                    if (
+                        safe_to_retry
+                        and _is_retryable_status(resp.status)
+                        and attempt < _MAX_RETRIES - 1
+                    ):
                         delay = _RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
                             "Transient error HTTP %s on %s %s, retrying in %.1fs (%d/%d)",
@@ -451,7 +495,7 @@ class HovalConnectApi:
                             method,
                             path,
                             resp.status,
-                            body[:500] or "<empty>",
+                            redact_remote_error_body(body) or "<empty>",
                         )
                         if blocked:
                             _LOGGER.error(
@@ -473,7 +517,7 @@ class HovalConnectApi:
             except (HovalAuthError, HovalApiError):
                 raise
             except TimeoutError as err:
-                if attempt < _MAX_RETRIES - 1:
+                if safe_to_retry and attempt < _MAX_RETRIES - 1:
                     delay = _RETRY_BASE_DELAY * (2**attempt)
                     _LOGGER.warning(
                         "Request timeout on %s %s, retrying in %.1fs (%d/%d)",
@@ -488,7 +532,7 @@ class HovalConnectApi:
                     continue
                 raise HovalApiError(f"Request timeout: {err}") from err
             except aiohttp.ClientError as err:
-                if attempt < _MAX_RETRIES - 1:
+                if safe_to_retry and attempt < _MAX_RETRIES - 1:
                     delay = _RETRY_BASE_DELAY * (2**attempt)
                     _LOGGER.warning(
                         "Connection error on %s %s, retrying in %.1fs (%d/%d)",
@@ -515,40 +559,30 @@ class HovalConnectApi:
             integration iterates all pages and returns a flat list.
         """
         all_plants: list[dict[str, Any]] = []
-        page = 0
-        while True:
+        for page in range(_MAX_PLANT_PAGES):
             result = await self._request(
                 "GET", "/api/my-plants", params={"size": "12", "page": str(page)}
             )
+            content = _topology_list(result, "get_plants")
+            for plant in content:
+                if not isinstance(plant, dict):
+                    raise HovalApiError("get_plants returned a non-object plant")
+                _require_identifier(plant.get("plantExternalId"), "plant ID")
             if isinstance(result, list):
                 # Old (pre-pagination) API shape: plain list, no further pages.
-                return result
-            if not isinstance(result, dict):
-                _LOGGER.warning(
-                    "Unexpected get_plants response type %s on page %d; aborting pagination",
-                    type(result).__name__,
-                    page,
-                )
-                break
-            content = result.get("content", [])
-            if not isinstance(content, list):
-                _LOGGER.warning("get_plants 'content' is not a list (%s); stopping", type(content))
-                break
+                if page:
+                    raise HovalApiError("get_plants changed response shape during pagination")
+                return content
+            last = result.get("last", True)
+            if not isinstance(last, bool) or (not last and not content):
+                raise HovalApiError("get_plants returned inconsistent pagination metadata")
             all_plants.extend(content)
-            # "last" is False when more pages exist; True (or absent) means done.
-            if result.get("last", True) or not content:
-                break
-            page += 1
-            if page >= _MAX_PLANT_PAGES:
-                _LOGGER.warning(
-                    "get_plants pagination exceeded %d pages (%d plants so far); "
-                    "truncating — the cloud keeps reporting more pages, which is "
-                    "almost certainly an upstream fault",
-                    _MAX_PLANT_PAGES,
-                    len(all_plants),
-                )
-                break
-        return all_plants
+            if last:
+                return all_plants
+        raise HovalApiError(
+            f"get_plants pagination exceeded {_MAX_PLANT_PAGES} pages; "
+            "refusing to return partial account topology"
+        )
 
     async def get_plant_settings(self, plant_id: str) -> dict[str, Any]:
         """Get plant settings (also refreshes PAT as side effect)."""
@@ -560,16 +594,13 @@ class HovalConnectApi:
         Hoval removed the v1 endpoint around 2026-04-21; v3 is the only path that
         still works. Response shape changed: see coordinator field mapping.
         A Spring-Page wrapper {"content": [...], ...} is normalised to its
-        content list; any other non-list shape degrades to [].
+        content list; malformed or incomplete topology raises an API error.
         """
         result = await self._request("GET", f"/v3/plants/{plant_id}/circuits", plant_id=plant_id)
-        if isinstance(result, dict):
-            _LOGGER.debug(
-                "get_circuits returned paginated wrapper for plant %s; extracting 'content'",
-                plant_id,
-            )
-            return result.get("content", [])
-        return result if isinstance(result, list) else []
+        content = _topology_list(result, "get_circuits")
+        if isinstance(result, dict) and result.get("last", True) is not True:
+            raise HovalApiError("get_circuits returned incomplete topology")
+        return content
 
     async def get_programs(self, plant_id: str, circuit_path: str) -> Any:
         """Get time programs for a circuit."""
@@ -681,7 +712,7 @@ class HovalConnectApi:
 
         v4: POST /v4/plants/{plantId}/circuits/{circuitPath}/temporary-change with
             {"type": "endOfPhase"|"duration", "value": <float>,
-             "duration": <seconds>|null}
+             "duration": <minutes>|null}
         For HV the value is the air volume percentage (15..100); for HK it is the
         temperature in degrees Celsius (e.g. 21.5).
 
@@ -698,6 +729,8 @@ class HovalConnectApi:
         is marked legacy by the cloud (operationId `activateTemporaryChange_1`).
         Reset is still v3-only: see `reset_temporary_change`.
         """
+        plant_id = _require_identifier(plant_id, "plant ID")
+        circuit_path = _require_identifier(circuit_path, "circuit path")
         body = build_v4_temporary_change_body(value, duration)
         _LOGGER.debug(
             "set_temporary_change: plant=%s circuit=%s duration=%s body=%s",
@@ -721,6 +754,8 @@ class HovalConnectApi:
         v3: DELETE /v3/plants/{plantId}/circuits/{circuitPath}/temporary-change
         Replaces the removed v1 .../temporary-change/reset POST.
         """
+        plant_id = _require_identifier(plant_id, "plant ID")
+        circuit_path = _require_identifier(circuit_path, "circuit path")
         _LOGGER.debug(
             "reset_temporary_change: plant=%s circuit=%s",
             plant_id,
@@ -749,6 +784,10 @@ class HovalConnectApi:
         POST /v3/plants/{plantExternalId}/circuits/{circuitPath}/programs/{program}
         Program enum: constant, ecoMode, standby, week1, week2, manual, externalConstant.
         """
+        plant_id = _require_identifier(plant_id, "plant ID")
+        circuit_path = _require_identifier(circuit_path, "circuit path")
+        if not isinstance(program, str) or program not in _VALID_PROGRAMS:
+            raise HovalApiError("Invalid circuit program")
         _LOGGER.debug(
             "set_program: plant=%s circuit=%s program=%s",
             plant_id,

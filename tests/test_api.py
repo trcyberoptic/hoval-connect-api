@@ -1226,7 +1226,7 @@ class TestGetPlantsPageCap:
     """A server that never reports last=True must not loop forever."""
 
     @pytest.mark.asyncio
-    async def test_endless_pagination_is_truncated(self):
+    async def test_endless_pagination_rejects_partial_topology(self):
         from custom_components.hoval_connect.api import _MAX_PLANT_PAGES
 
         session = _make_session()
@@ -1243,10 +1243,10 @@ class TestGetPlantsPageCap:
         session.request = MagicMock(side_effect=_endless_page)
 
         api = HovalConnectApi(session, "test@example.com", "pass")
-        result = await api.get_plants()
+        with pytest.raises(HovalApiError, match="partial account topology"):
+            await api.get_plants()
 
-        # One plant per page, capped at _MAX_PLANT_PAGES pages/requests.
-        assert len(result) == _MAX_PLANT_PAGES
+        # The page cap bounds work without publishing an incomplete account.
         assert session.request.call_count == _MAX_PLANT_PAGES
 
     @pytest.mark.asyncio
@@ -1262,3 +1262,117 @@ class TestGetPlantsPageCap:
         result = await api.get_plants()
         assert [p["plantExternalId"] for p in result] == ["p0", "p1"]
         assert session.request.call_count == 2
+
+
+class TestReadOnlyRetryPolicy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"])
+    @pytest.mark.parametrize("failure", [429, 500, 599, "timeout", "transport"])
+    async def test_only_reads_repeat_ambiguous_failures(self, method, failure):
+        session = _make_session()
+        if failure == "timeout":
+            session.request.side_effect = TimeoutError("response lost after commit")
+        elif failure == "transport":
+            session.request.side_effect = aiohttp.ClientConnectionError("response lost")
+        else:
+            session.request.return_value = _make_response(failure)
+        api = HovalConnectApi(session, "account", "password")
+        api._headers = AsyncMock(return_value={})
+        with patch(_SLEEP, new_callable=AsyncMock), pytest.raises(HovalApiError):
+            await api._request(method, "/test")
+        assert session.request.call_count == (3 if method in {"GET", "HEAD"} else 1)
+
+    @pytest.mark.asyncio
+    async def test_write_can_retry_explicit_401_rejection(self):
+        session = _make_session()
+        session.request.side_effect = [_make_response(401), _make_response(204)]
+        api = HovalConnectApi(session, "account", "password")
+        api._headers = AsyncMock(return_value={})
+        assert await api._request("POST", "/test") is None
+        assert session.request.call_count == 2
+
+
+class TestTopologyValidation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", [None, 1, "oops", {}, {"content": None}, {"content": {}}])
+    @pytest.mark.parametrize("endpoint", ["plants", "circuits"])
+    async def test_invalid_response_is_not_an_empty_topology(self, payload, endpoint):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock(return_value=payload)
+        with pytest.raises(HovalApiError, match="expected a list"):
+            if endpoint == "plants":
+                await api.get_plants()
+            else:
+                await api.get_circuits("P1")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "second_page", [None, {}, {"content": {}}, [], {"content": [], "last": False}]
+    )
+    async def test_bad_later_page_never_returns_earlier_plants(self, second_page):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock(
+            side_effect=[{"content": [{"plantExternalId": "P1"}], "last": False}, second_page]
+        )
+        with pytest.raises(HovalApiError):
+            await api.get_plants()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "plant", [None, [], {}, {"plantExternalId": []}, {"plantExternalId": "../other"}]
+    )
+    async def test_malformed_plant_is_not_silently_lost(self, plant):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock(return_value=[{"plantExternalId": "P1"}, plant])
+        with pytest.raises(HovalApiError):
+            await api.get_plants()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["plants", "circuits"])
+    @pytest.mark.parametrize("payload", [[], {"content": [], "last": True}])
+    async def test_genuinely_empty_topology_is_valid(self, endpoint, payload):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock(return_value=payload)
+        result = await (api.get_plants() if endpoint == "plants" else api.get_circuits("P1"))
+        assert result == []
+
+
+class TestControlInputValidation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value", [float("nan"), float("inf"), float("-inf"), "nan", True, None, {}, "invalid"]
+    )
+    async def test_nonfinite_or_invalid_override_never_reaches_network(self, value):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock()
+        with pytest.raises(HovalApiError, match="finite number"):
+            await api.set_temporary_change("P1", "1.2.3", value)
+        api._request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("program", [None, [], "../reset", "week1?other=value", "week3"])
+    async def test_invalid_program_never_changes_the_request_path(self, program):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock()
+        with pytest.raises(HovalApiError, match="Invalid circuit program"):
+            await api.set_program("P1", "1.2.3", program)
+        api._request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "plant,path",
+        [("P1/other", "1.2.3"), ("P1", "1.2.3?other=true"), ("P1", ".."), ("P1", "1%2f2")],
+    )
+    async def test_malformed_control_identifiers_never_reach_network(self, plant, path):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock()
+        with pytest.raises(HovalApiError, match="Invalid"):
+            await api.set_program(plant, path, "week1")
+        api._request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_duration_keeps_existing_end_of_phase_fallback(self):
+        api = HovalConnectApi(_make_session(), "account", "password")
+        api._request = AsyncMock()
+        await api.set_temporary_change("P1", "1.2.3", 21.5, "legacy-unknown")
+        assert api._request.call_args.kwargs["json_data"] == {"type": "endOfPhase", "value": 21.5}

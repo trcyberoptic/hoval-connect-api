@@ -18,14 +18,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .api import HovalApiError, HovalConnectApi
+from .compat import OPTIONS_FLOW_RELOADS
 from .const import (
     CIRCUIT_TYPE_NAMES,
-    CONF_SCAN_INTERVAL,
-    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OPERATION_MODE_REGULAR,
 )
 from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
+from .options import get_scan_interval
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,8 +82,7 @@ def circuit_device_info(
 
 def _get_scan_interval(entry: HovalConnectConfigEntry) -> timedelta:
     """Get the scan interval from options or use default."""
-    seconds = entry.options.get(CONF_SCAN_INTERVAL, int(DEFAULT_SCAN_INTERVAL.total_seconds()))
-    return timedelta(seconds=seconds)
+    return timedelta(seconds=get_scan_interval(entry.options))
 
 
 def _resolve_circuit_from_unique_id(
@@ -142,7 +141,10 @@ async def _async_handle_reset_temporary_change(
         runtime = config_entry.runtime_data
         try:
             await runtime.coordinator.async_control_and_refresh(
-                runtime.api.reset_temporary_change(plant_id, circuit_path),
+                lambda api=runtime.api, pid=plant_id, path=circuit_path: api.reset_temporary_change(
+                    pid, path
+                ),
+                plant_id=plant_id,
                 circuit_path=circuit_path,
                 mode_override=OPERATION_MODE_REGULAR,
             )
@@ -195,8 +197,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
 
     _async_register_services(hass)
 
-    # Listen for options changes to update polling interval dynamically
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    # New HA reloads via the options flow. Combining that with an update
+    # listener is rejected; old HA keeps the existing in-place interval update.
+    if not OPTIONS_FLOW_RELOADS:
+        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
 
@@ -214,6 +218,8 @@ async def _async_options_updated(
 async def async_unload_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unloaded:
+        return False
     # Remove the integration-level service once the last config entry goes away
     remaining = [
         e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id

@@ -7,16 +7,15 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
+from .compat import HovalOptionsFlowBase
 from .const import (
     CONF_OVERRIDE_DURATION,
     CONF_SCAN_INTERVAL,
     CONF_TURN_ON_MODE,
-    DEFAULT_OVERRIDE_DURATION,
-    DEFAULT_TURN_ON_MODE,
     DOMAIN,
     DURATION_END_OF_PHASE,
     DURATION_FOUR_HOURS,
@@ -26,6 +25,7 @@ from .const import (
     TURN_ON_WEEK1,
     TURN_ON_WEEK2,
 )
+from .options import get_override_duration, get_scan_interval, get_turn_on_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-class HovalConnectOptionsFlow(OptionsFlow):
+class HovalConnectOptionsFlow(HovalOptionsFlowBase):
     """Handle options for Hoval Connect."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -171,11 +171,9 @@ class HovalConnectOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current_duration = self.config_entry.options.get(
-            CONF_OVERRIDE_DURATION, DEFAULT_OVERRIDE_DURATION
-        )
-        current_turn_on = self.config_entry.options.get(CONF_TURN_ON_MODE, DEFAULT_TURN_ON_MODE)
-        current_interval = int(self.config_entry.options.get(CONF_SCAN_INTERVAL, 60))
+        current_duration = get_override_duration(self.config_entry.options)
+        current_turn_on = get_turn_on_mode(self.config_entry.options)
+        current_interval = get_scan_interval(self.config_entry.options)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import isfinite
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -16,7 +18,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import HovalApiError, HovalAuthError, HovalConnectApi
+from .api import HovalApiError, HovalAuthError, HovalConnectApi, _require_identifier
 from .const import (
     CIRCUIT_DATAPOINT_IDS,
     CIRCUIT_TYPE_BL,
@@ -37,6 +39,7 @@ SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 # normally cleared at the end of the next successful poll, but if polls keep
 # failing an override must not mask the device's real state indefinitely.
 _MODE_OVERRIDE_TTL_S = 120.0
+_MAX_CONCURRENT_CIRCUIT_FETCHES = 8
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +51,32 @@ _V1_PROGRAM_MAP: dict[str, str] = {
     "nightReduction": "week1",
     "dayCooling": "week1",
 }
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Accept actual API booleans, never truthy strings such as 'false'."""
+    return value if isinstance(value, bool) else default
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    """Ignore malformed optional strings without discarding their circuit."""
+    return value if isinstance(value, str) else None
+
+
+def _coerce_finite_number(value: Any) -> float | None:
+    """Normalize numeric DTO fields without exposing NaN or infinity to HA."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        number = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _is_circuit_selectable(circuit: dict[str, Any]) -> bool:
+    """Prefer the required v3 field, accepting the legacy field when absent."""
+    return _coerce_bool(circuit.get("isSelectable", circuit.get("selectable", False)))
 
 
 def _resolve_active_program_value(
@@ -83,9 +112,13 @@ def _resolve_active_program_value(
         return None, None, None
 
     # Build lookup: id -> day config. Entries that are not dicts or lack an
-    # "id" are skipped instead of raising.
+    # usable scalar "id" are skipped instead of raising.
     config_by_id: dict[Any, dict] = {
-        d["id"]: d for d in day_configs if isinstance(d, dict) and "id" in d
+        d["id"]: d
+        for d in day_configs
+        if isinstance(d, dict)
+        and isinstance(d.get("id"), (str, int))
+        and not isinstance(d["id"], bool)
     }
 
     # Pick week1 or week2 based on what the controller reports as active.
@@ -94,7 +127,7 @@ def _resolve_active_program_value(
     if not isinstance(week, dict):
         # Week entry missing or wrong shape — no week/day info resolvable.
         return None, None, None
-    week_name = week.get("name")
+    week_name = _coerce_optional_str(week.get("name"))
     day_program_ids = week.get("dayProgramIds")
     if not isinstance(day_program_ids, list):
         day_program_ids = []
@@ -105,11 +138,13 @@ def _resolve_active_program_value(
         return week_name, None, None
 
     day_prog_id = day_program_ids[weekday]
+    if not isinstance(day_prog_id, (str, int)) or isinstance(day_prog_id, bool):
+        return week_name, None, None
     day_config = config_by_id.get(day_prog_id)
     if day_config is None:
         return week_name, None, None
 
-    day_name = day_config.get("name")
+    day_name = _coerce_optional_str(day_config.get("name"))
 
     # Find active phase based on current time. Malformed phases (non-dict,
     # missing/non-dict start or end, non-numeric times) are skipped, not fatal.
@@ -127,10 +162,10 @@ def _resolve_active_program_value(
         try:
             start_min = int(start["hours"]) * 60 + int(start["minutes"])
             end_min = int(end["hours"]) * 60 + int(end["minutes"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
         if start_min <= current_minutes < end_min:
-            return week_name, day_name, phase.get("value")
+            return week_name, day_name, _coerce_finite_number(phase.get("value"))
 
     return week_name, day_name, None
 
@@ -290,12 +325,14 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.api = api
-        self.control_lock = asyncio.Lock()
+        self._circuit_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._circuit_fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_CIRCUIT_FETCHES)
         # Optimistic mode override per circuit (set by control actions,
         # cleared at the END of the next successful poll or after
-        # _MODE_OVERRIDE_TTL_S). Key: circuit_path,
+        # _MODE_OVERRIDE_TTL_S). Key: (plant_id, circuit_path),
         # value: (operation mode string, monotonic timestamp).
-        self._mode_override: dict[str, tuple[str, float]] = {}
+        self._mode_override: dict[tuple[str, str], tuple[str, float]] = {}
+        self._last_week_program: dict[tuple[str, str], str] = {}
         # Circuit paths repeat across plants. Cache both data and empty
         # results per plant, with a monotonic deadline for the next probe.
         self._program_cache: dict[tuple[str, str], tuple[Any, float]] = {}
@@ -310,35 +347,54 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
 
-    def set_mode_override(self, circuit_path: str, mode: str) -> None:
+    def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
-        self._mode_override[circuit_path] = (mode, time.monotonic())
+        self._mode_override[(plant_id, circuit_path)] = (mode, time.monotonic())
 
-    def get_mode_override(self, circuit_path: str) -> str | None:
+    def get_mode_override(self, plant_id: str, circuit_path: str) -> str | None:
         """Get the optimistic mode override for a circuit.
 
         Returns None once the override exceeds _MODE_OVERRIDE_TTL_S so a stale
         optimistic value cannot mask the device's real state when polls fail.
         """
-        entry = self._mode_override.get(circuit_path)
+        key = (plant_id, circuit_path)
+        entry = self._mode_override.get(key)
         if entry is None:
             return None
         mode, ts = entry
         if time.monotonic() - ts > _MODE_OVERRIDE_TTL_S:
-            self._mode_override.pop(circuit_path, None)
+            self._mode_override.pop(key, None)
             return None
         return mode
 
+    def resolve_resume_program(self, plant_id: str, circuit_path: str) -> str:
+        """Resume the last observed weekly schedule for this specific circuit."""
+        data = self.data
+        plant = data.plants.get(plant_id) if data is not None else None
+        circuit = plant.circuits.get(circuit_path) if plant is not None else None
+        if circuit is not None and circuit.active_program in {"week1", "week2"}:
+            return circuit.active_program
+        return self._last_week_program.get((plant_id, circuit_path), "week1")
+
+    def _get_circuit_lock(self, plant_id: str, circuit_path: str) -> asyncio.Lock:
+        """Serialize writes to one circuit while leaving other circuits free."""
+        key = (plant_id, circuit_path)
+        if key not in self._circuit_locks:
+            self._circuit_locks[key] = asyncio.Lock()
+        return self._circuit_locks[key]
+
     async def async_control_and_refresh(
         self,
-        coro: Any,
+        action_factory: Callable[[], Awaitable[Any]],
+        *,
+        plant_id: str,
         circuit_path: str,
         mode_override: str,
     ) -> None:
         """Execute a control command with lock, optimistic state, and refresh.
 
         The API call and optimistic override are serialised inside
-        control_lock; the 2 s settle delay and the refresh run OUTSIDE the
+        the circuit's lock; the 2 s settle delay and the refresh run OUTSIDE the
         lock so a slow refresh cannot starve concurrent control actions.
 
         The refresh is deliberately AWAITED, not fired-and-forgotten:
@@ -351,9 +407,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         A failed refresh is swallowed — the coordinator retries on its
         normal poll schedule and entities stay on their optimistic state.
         """
-        async with self.control_lock:
-            await coro
-            self.set_mode_override(circuit_path, mode_override)
+        async with self._get_circuit_lock(plant_id, circuit_path):
+            # A cancelled lock waiter must never leave an unawaited coroutine.
+            await action_factory()
+            self.set_mode_override(plant_id, circuit_path, mode_override)
 
         # Give the cloud time to commit the change before fetching.
         await asyncio.sleep(2)
@@ -376,18 +433,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         try:
             plants = await self.api.get_plants()
 
+            if not isinstance(plants, list):
+                raise HovalApiError("Plant topology must be a list")
             for plant in plants:
-                plant_id = plant.get("plantExternalId")
-                if not plant_id:
-                    _LOGGER.debug("Skipping plant with missing plantExternalId")
+                if not isinstance(plant, dict):
+                    raise HovalApiError("Plant topology contains a non-object plant")
+                plant_id = _require_identifier(plant.get("plantExternalId"), "plant ID")
+                if plant_id in data.plants:
+                    _LOGGER.warning("Ignoring duplicate plant in topology: %s", plant_id)
                     continue
 
-                plant_name = plant.get("description", plant_id)
+                plant_name = _coerce_optional_str(plant.get("description")) or plant_id
 
                 plant_data = HovalPlantData(
                     plant_id=plant_id,
                     name=plant_name,
-                    is_online=plant.get("isOnline", True),
+                    is_online=_coerce_bool(plant.get("isOnline", True)),
                 )
 
                 # Skip all API calls when plant is offline
@@ -417,32 +478,44 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 # BL/WW/PS circuits have selectable=False but still provide live values
                 _non_selectable_types = {CIRCUIT_TYPE_BL, CIRCUIT_TYPE_WW, CIRCUIT_TYPE_PS}
 
-                _LOGGER.debug(
-                    "Fetched %d circuits (%d supported)",
-                    len(circuits_raw),
-                    sum(
-                        1
-                        for c in circuits_raw
-                        if c.get("type") in SUPPORTED_CIRCUIT_TYPES
-                        and (c.get("selectable") or c.get("type") in _non_selectable_types)
-                    ),
-                )
+                if not isinstance(circuits_raw, list):
+                    raise HovalApiError("Circuit topology must be a list")
 
                 # Build list of supported circuits
                 supported_circuits: list[tuple[str, str, dict]] = []
+                seen_paths: set[str] = set()
                 for circuit in circuits_raw:
-                    ctype = circuit.get("type", "")
+                    if not isinstance(circuit, dict):
+                        _LOGGER.warning("Ignoring non-object circuit for plant %s", plant_id)
+                        continue
+                    ctype = _coerce_optional_str(circuit.get("type"))
                     if ctype not in SUPPORTED_CIRCUIT_TYPES:
                         continue
-                    if not circuit.get("selectable", False) and ctype not in _non_selectable_types:
+                    if not _is_circuit_selectable(circuit) and ctype not in _non_selectable_types:
                         continue
-                    path = circuit["path"]
+                    try:
+                        path = _require_identifier(circuit.get("path"), "circuit path")
+                    except HovalApiError:
+                        _LOGGER.warning("Ignoring circuit with invalid path for plant %s", plant_id)
+                        continue
+                    if path in seen_paths:
+                        _LOGGER.warning(
+                            "Ignoring duplicate circuit %s for plant %s", path, plant_id
+                        )
+                        continue
+                    seen_paths.add(path)
                     _LOGGER.debug(
                         "Circuit %s raw: %s",
                         path,
                         {k: v for k, v in circuit.items() if k != "name"},
                     )
                     supported_circuits.append((path, ctype, circuit))
+
+                _LOGGER.debug(
+                    "Fetched %d circuits (%d supported)",
+                    len(circuits_raw),
+                    len(supported_circuits),
+                )
 
                 # Fetch live values + programs for all circuits in parallel
                 async def _fetch_circuit(
@@ -451,24 +524,30 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     circuit: dict,
                     _plant_id: str = plant_id,
                 ) -> HovalCircuitData:
-                    raw_program = circuit.get("activeProgram")
-                    air_quality = circuit.get("airQuality") or {}
+                    raw_program = _coerce_optional_str(circuit.get("activeProgram"))
+                    air_quality = circuit.get("airQuality")
+                    if not isinstance(air_quality, dict):
+                        air_quality = {}
                     # Absent (or null) whenever no override is running.
-                    temporary_change = circuit.get("temporaryChange") or {}
+                    temporary_change = circuit.get("temporaryChange")
+                    if not isinstance(temporary_change, dict):
+                        temporary_change = {}
                     circuit_data = HovalCircuitData(
                         circuit_type=ctype,
                         path=path,
-                        name=circuit.get("name") or ctype,
-                        operation_mode=circuit.get("operationMode"),
-                        circuit_status=circuit.get("circuitStatus"),
-                        temporary_change_end=temporary_change.get("end"),
-                        temporary_change_value=temporary_change.get("value"),
-                        temporary_change_type=temporary_change.get("type"),
+                        name=_coerce_optional_str(circuit.get("name")) or ctype,
+                        operation_mode=_coerce_optional_str(circuit.get("operationMode")),
+                        circuit_status=_coerce_optional_str(circuit.get("circuitStatus")),
+                        temporary_change_end=_coerce_optional_str(temporary_change.get("end")),
+                        temporary_change_value=_coerce_finite_number(temporary_change.get("value")),
+                        temporary_change_type=_coerce_optional_str(temporary_change.get("type")),
                         active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
-                        target_value=circuit.get("targetValue"),
-                        is_air_quality_guided=bool(air_quality.get("isAirQualityGuided")),
-                        has_error=circuit.get("hasError", False),
+                        target_value=_coerce_finite_number(circuit.get("targetValue")),
+                        is_air_quality_guided=_coerce_bool(air_quality.get("isAirQualityGuided")),
+                        has_error=_coerce_bool(circuit.get("hasError")),
                     )
+                    if circuit_data.active_program in {"week1", "week2"}:
+                        self._last_week_program[(_plant_id, path)] = circuit_data.active_program
 
                     # Check program cache
                     program_key = (_plant_id, path)
@@ -516,7 +595,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         circuit_data.live_values = {
                             v["key"]: v["value"]
                             for v in lv_raw
-                            if isinstance(v, dict) and "key" in v and "value" in v
+                            if isinstance(v, dict)
+                            and isinstance(v.get("key"), str)
+                            and "value" in v
                         }
                         _LOGGER.debug("Circuit %s live_values: %s", path, circuit_data.live_values)
                     else:
@@ -611,8 +692,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 # Run circuits in parallel. Plant-level events/weather are only
                 # appended when their cache is stale (they are slow-changing and
                 # plant-scoped, so fetching them every poll wastes round-trips).
+                async def _fetch_circuit_bounded(path: str, ctype: str, circ: dict):
+                    async with self._circuit_fetch_semaphore:
+                        return await _fetch_circuit(path, ctype, circ)
+
                 all_tasks = [
-                    _fetch_circuit(path, ctype, circ) for path, ctype, circ in supported_circuits
+                    _fetch_circuit_bounded(path, ctype, circ)
+                    for path, ctype, circ in supported_circuits
                 ]
                 num_circuits = len(all_tasks)
                 now_mono = time.monotonic()
