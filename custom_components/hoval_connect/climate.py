@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from math import isfinite
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -18,15 +19,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
-from .api import HovalApiError
+from .api import HovalApiError, HovalAuthError
 from .const import (
     CIRCUIT_TYPE_HK,
-    CONF_OVERRIDE_DURATION,
-    DEFAULT_OVERRIDE_DURATION,
     OPERATION_MODE_REGULAR,
     OPERATION_MODE_STANDBY,
 )
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .options import get_override_duration
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         self._attr_unique_id = f"{plant_id}_{circuit_path}_climate"
         self._attr_device_info = circuit_device_info(plant_id, circuit_data)
         self._pending_temperature: float | None = None
+        self._pending_temperature_request: object | None = None
 
     @property
     def _circuit(self) -> HovalCircuitData | None:
@@ -152,8 +153,10 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        override = self.coordinator.get_mode_override(self._circuit_path)
+        override = self.coordinator.get_mode_override(self._plant_id, self._circuit_path)
         mode = override if override is not None else circuit.operation_mode
+        if mode is None:
+            return None
         if mode == OPERATION_MODE_STANDBY:
             return HVACMode.OFF
         # If a time program is active, show as AUTO
@@ -168,8 +171,10 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        override = self.coordinator.get_mode_override(self._circuit_path)
+        override = self.coordinator.get_mode_override(self._plant_id, self._circuit_path)
         mode = override if override is not None else circuit.operation_mode
+        if mode is None:
+            return None
         if mode == OPERATION_MODE_STANDBY:
             return HVACAction.OFF
         status = (circuit.circuit_status or "").upper()
@@ -184,24 +189,40 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         try:
             if hvac_mode == HVACMode.OFF:
                 await self.coordinator.async_control_and_refresh(
-                    self.coordinator.api.set_circuit_mode(
+                    lambda: self.coordinator.api.set_circuit_mode(
                         self._plant_id,
                         self._circuit_path,
                         OPERATION_MODE_STANDBY,
                     ),
+                    plant_id=self._plant_id,
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_STANDBY,
                 )
-            elif hvac_mode in (HVACMode.AUTO, HVACMode.HEAT):
+            elif hvac_mode == HVACMode.HEAT:
                 await self.coordinator.async_control_and_refresh(
-                    self.coordinator.api.reset_circuit(
-                        self._plant_id,
-                        self._circuit_path,
+                    lambda: self.coordinator.api.set_program(
+                        self._plant_id, self._circuit_path, "constant"
                     ),
+                    plant_id=self._plant_id,
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_REGULAR,
                 )
-        except HovalApiError as err:
+            elif hvac_mode == HVACMode.AUTO:
+                await self.coordinator.async_control_and_refresh(
+                    lambda: self.coordinator.api.reset_circuit(
+                        self._plant_id,
+                        self._circuit_path,
+                        program=self.coordinator.resolve_resume_program(
+                            self._plant_id, self._circuit_path
+                        ),
+                    ),
+                    plant_id=self._plant_id,
+                    circuit_path=self._circuit_path,
+                    mode_override=OPERATION_MODE_REGULAR,
+                )
+            else:
+                raise HomeAssistantError(f"Unsupported HVAC mode: {hvac_mode!r}")
+        except (HovalApiError, HovalAuthError) as err:
             raise HomeAssistantError(f"Failed to set HVAC mode: {err}") from err
 
     async def async_set_temperature(self, **kwargs) -> None:
@@ -209,31 +230,39 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         temperature = kwargs.get("temperature")
         if temperature is None:
             return
-        temperature = float(temperature)
-        duration = self._entry.options.get(
-            CONF_OVERRIDE_DURATION,
-            DEFAULT_OVERRIDE_DURATION,
-        )
+        try:
+            if isinstance(temperature, bool):
+                raise ValueError("Boolean temperature")
+            temperature = float(temperature)
+            if not isfinite(temperature):
+                raise ValueError("Non-finite temperature")
+        except (ValueError, TypeError, OverflowError) as err:
+            raise HomeAssistantError(f"Invalid target temperature: {temperature!r}") from err
+        temperature = max(self._attr_min_temp, min(self._attr_max_temp, temperature))
+        duration = get_override_duration(self._entry.options)
         # Hold the new setpoint across the API call + refresh so the card
         # does not flicker back to the old value during the ~3-5s window.
+        request = self._pending_temperature_request = object()
         self._pending_temperature = temperature
         self.async_write_ha_state()
         try:
             await self.coordinator.async_control_and_refresh(
-                self.coordinator.api.set_temporary_change(
+                lambda: self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
                     value=temperature,
                     duration=duration,
                 ),
+                plant_id=self._plant_id,
                 circuit_path=self._circuit_path,
                 mode_override=OPERATION_MODE_REGULAR,
             )
-        except HovalApiError as err:
-            if self._pending_temperature == temperature:
-                self._pending_temperature = None
-                self.async_write_ha_state()
+        except (HovalApiError, HovalAuthError) as err:
             raise HomeAssistantError(f"Failed to set temperature: {err}") from err
-        if self._pending_temperature == temperature:
-            self._pending_temperature = None
-            self.async_write_ha_state()
+        finally:
+            # Equal temperatures can belong to different requests. An older
+            # refresh must not clear a newer 21.5 -> 23 -> 21.5 adjustment.
+            if self._pending_temperature_request is request:
+                self._pending_temperature = None
+                self._pending_temperature_request = None
+                self.async_write_ha_state()

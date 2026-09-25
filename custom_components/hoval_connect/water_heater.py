@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
+from math import isfinite
 
 from homeassistant.components.water_heater import (
     STATE_HEAT_PUMP,
-    STATE_HIGH_DEMAND,
     STATE_OFF,
     WaterHeaterEntity,
     WaterHeaterEntityFeature,
@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
-from .api import HovalApiError
+from .api import HovalApiError, HovalAuthError
 from .const import (
     CIRCUIT_TYPE_WW,
     DURATION_MIDNIGHT,
@@ -38,7 +38,6 @@ WW_TEMP_STEP = 0.5
 
 # Operation modes exposed to HA
 _OP_HEAT_PUMP = STATE_HEAT_PUMP  # "heat_pump"  — normal week-program operation
-_OP_HIGH_DEMAND = STATE_HIGH_DEMAND  # "high_demand" — temporary boost override active
 _OP_OFF = STATE_OFF  # "off"         — circuit in standby
 
 
@@ -82,7 +81,7 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
     Exposes:
     - current_temperature  — live top-of-tank sensor (tempSf1Actual)
     - target_temperature   — active setpoint (tempTarget from live values)
-    - operation_mode       — heat_pump (normal) / high_demand (boost override) / off (standby)
+    - operation_mode       — heat_pump (normal) / off (standby)
     - set_temperature()    — posts a temporary-change override until midnight
     - set_operation_mode() — switches between heat_pump (reset to week program) and off (standby)
     """
@@ -93,7 +92,9 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
     _attr_min_temp = WW_MIN_TEMP
     _attr_max_temp = WW_MAX_TEMP
     _attr_target_temperature_step = WW_TEMP_STEP
-    _attr_operation_list = [_OP_HEAT_PUMP, _OP_HIGH_DEMAND, _OP_OFF]
+    # A boost is started by setting a temperature, and reported by the existing
+    # temporary-change sensors. There is no separate high_demand command.
+    _attr_operation_list = [_OP_HEAT_PUMP, _OP_OFF]
     _attr_supported_features = (
         WaterHeaterEntityFeature.TARGET_TEMPERATURE | WaterHeaterEntityFeature.OPERATION_MODE
     )
@@ -156,18 +157,17 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         return None
 
     @property
-    def current_operation(self) -> str:
+    def current_operation(self) -> str | None:
         """Return current operation mode."""
         circuit = self._circuit
         if circuit is None:
-            return _OP_OFF
-        override = self.coordinator.get_mode_override(self._circuit_path)
+            return None
+        override = self.coordinator.get_mode_override(self._plant_id, self._circuit_path)
         mode = override if override is not None else circuit.operation_mode
+        if mode is None:
+            return None
         if mode == OPERATION_MODE_STANDBY:
             return _OP_OFF
-        # If a temporary change is active, show as high_demand
-        if circuit.live_values.get("temporaryChangeActive") == "true":
-            return _OP_HIGH_DEMAND
         return _OP_HEAT_PUMP
 
     async def async_set_temperature(self, **kwargs) -> None:
@@ -180,6 +180,15 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         temperature = kwargs.get("temperature")
         if temperature is None:
             return
+        try:
+            if isinstance(temperature, bool):
+                raise ValueError("Boolean temperature")
+            temperature = float(temperature)
+            if not isfinite(temperature):
+                raise ValueError("Non-finite temperature")
+        except (ValueError, TypeError, OverflowError) as err:
+            raise HomeAssistantError(f"Invalid target temperature: {temperature!r}") from err
+        temperature = max(self._attr_min_temp, min(self._attr_max_temp, temperature))
         _LOGGER.debug(
             "WW set_temperature: circuit=%s temp=%s (override until midnight)",
             self._circuit_path,
@@ -187,16 +196,17 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         )
         try:
             await self.coordinator.async_control_and_refresh(
-                self.coordinator.api.set_temporary_change(
+                lambda: self.coordinator.api.set_temporary_change(
                     self._plant_id,
                     self._circuit_path,
                     value=float(temperature),
                     duration=DURATION_MIDNIGHT,
                 ),
+                plant_id=self._plant_id,
                 circuit_path=self._circuit_path,
                 mode_override=OPERATION_MODE_REGULAR,
             )
-        except HovalApiError as err:
+        except (HovalApiError, HovalAuthError) as err:
             raise HomeAssistantError(f"Failed to set hot water temperature: {err}") from err
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
@@ -204,23 +214,33 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         try:
             if operation_mode == _OP_OFF:
                 await self.coordinator.async_control_and_refresh(
-                    self.coordinator.api.set_program(
+                    lambda: self.coordinator.api.set_program(
                         self._plant_id,
                         self._circuit_path,
                         "standby",
                     ),
+                    plant_id=self._plant_id,
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_STANDBY,
                 )
-            elif operation_mode in (_OP_HEAT_PUMP, _OP_HIGH_DEMAND):
+            elif operation_mode == _OP_HEAT_PUMP:
                 # Reset to the normal week program
                 await self.coordinator.async_control_and_refresh(
-                    self.coordinator.api.reset_circuit(
+                    lambda: self.coordinator.api.reset_circuit(
                         self._plant_id,
                         self._circuit_path,
+                        program=self.coordinator.resolve_resume_program(
+                            self._plant_id, self._circuit_path
+                        ),
                     ),
+                    plant_id=self._plant_id,
                     circuit_path=self._circuit_path,
                     mode_override=OPERATION_MODE_REGULAR,
                 )
-        except HovalApiError as err:
+            else:
+                raise HomeAssistantError(
+                    f"Unsupported operation mode: {operation_mode!r}; "
+                    "set a temperature to start a temporary boost"
+                )
+        except (HovalApiError, HovalAuthError) as err:
             raise HomeAssistantError(f"Failed to set operation mode: {err}") from err

@@ -23,6 +23,8 @@ class HovalClient:
     BASE_URL = "https://azure-iot-prod.hoval.com/core"
     IDP_URL = "https://akwc5scsc.accounts.ondemand.com/oauth2/token"
     CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
+    TIMEOUT = (10, 30)  # Connect/read timeout, in seconds.
+    MAX_PLANT_PAGES = 50
 
     def __init__(self, email: str, password: str):
         self.email = email
@@ -45,6 +47,7 @@ class HovalClient:
                 "scope": "openid",
             },
             headers={"User-Agent": USER_AGENT},
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -63,6 +66,7 @@ class HovalClient:
                 "Authorization": f"Bearer {self._get_id_token()}",
                 "User-Agent": USER_AGENT,
             },
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         token = resp.json()["token"]
@@ -79,26 +83,59 @@ class HovalClient:
         return h
 
     def get_plants(self) -> list:
-        resp = requests.get(
-            f"{self.BASE_URL}/api/my-plants?size=12&page=0",
-            headers=self._headers(),
-        )
-        resp.raise_for_status()
-        return resp.json()
+        """Read all account pages; never silently return a partial plant list."""
+        plants = []
+        for page in range(self.MAX_PLANT_PAGES):
+            resp = requests.get(
+                f"{self.BASE_URL}/api/my-plants",
+                params={"size": 12, "page": page},
+                headers=self._headers(),
+                timeout=self.TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = self._list_payload(data)
+            plants.extend(content)
+            if isinstance(data, list):
+                if page:
+                    raise ValueError("Plant response shape changed during pagination")
+                return plants
+            last = data.get("last", True)
+            if not isinstance(last, bool):
+                raise ValueError("Invalid plant pagination flag")
+            if last:
+                return plants
+            if not content:
+                raise ValueError("Empty non-final plant page")
+        raise ValueError("Plant pagination limit reached; refusing a partial result")
+
+    @staticmethod
+    def _list_payload(data) -> list:
+        content = data.get("content") if isinstance(data, dict) else data
+        if not isinstance(content, list) or any(not isinstance(row, dict) for row in content):
+            raise ValueError("Expected a list of objects or a page with list content")
+        return content
+
+    @staticmethod
+    def is_circuit_selectable(circuit: dict) -> bool:
+        selectable = circuit.get("isSelectable", circuit.get("selectable", False))
+        return selectable is True
 
     def get_circuits(self, plant_id: str) -> list:
         resp = requests.get(
-            f"{self.BASE_URL}/v1/plants/{plant_id}/circuits",
+            f"{self.BASE_URL}/v3/plants/{plant_id}/circuits",
             headers=self._headers(plant_id),
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
-        return resp.json()
+        return self._list_payload(resp.json())
 
     def get_live_values(self, plant_id: str, circuit_path: str, circuit_type: str) -> list:
         resp = requests.get(
             f"{self.BASE_URL}/v3/api/statistics/live-values/{plant_id}",
             params={"circuitPath": circuit_path, "circuitType": circuit_type},
             headers=self._headers(plant_id),
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -107,6 +144,7 @@ class HovalClient:
         resp = requests.get(
             f"{self.BASE_URL}/v2/api/weather/forecast/{plant_id}",
             headers=self._headers(plant_id),
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -115,39 +153,47 @@ class HovalClient:
         resp = requests.get(
             f"{self.BASE_URL}/v1/plant-events/{plant_id}",
             headers=self._headers(),
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
 
     def is_online(self, plant_id: str) -> bool:
+        """Partner-only endpoint; regular accounts should read the plant's isOnline field."""
         resp = requests.get(
             f"{self.BASE_URL}/business/plants/{plant_id}/is-online",
             headers=self._headers(plant_id),
+            timeout=self.TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """Read credentials interactively or from the environment, never from argv."""
+    import getpass
+    import os
     import sys
 
-    if len(sys.argv) < 3:
-        print(f"Usage: python {sys.argv[0]} <email> <password>")
-        sys.exit(1)
+    if len(sys.argv) != 1:
+        print("Run without arguments. Use HOVAL_EMAIL/HOVAL_PASSWORD or the prompts.")
+        return 2
 
-    client = HovalClient(sys.argv[1], sys.argv[2])
+    email = os.environ.get("HOVAL_EMAIL") or input("Hoval account email: ")
+    password = os.environ.get("HOVAL_PASSWORD") or getpass.getpass("Hoval account password: ")
+    client = HovalClient(email, password)
 
     plants = client.get_plants()
     print(f"Plants: {plants}")
 
     for plant in plants:
         pid = plant["plantExternalId"]
-        print(f"\n--- Plant {pid} ({plant['description']}) ---")
-        print(f"Online: {client.is_online(pid)}")
+        print(f"\n--- Plant {pid} ({plant.get('description', '')}) ---")
+        print(f"Online: {plant.get('isOnline')}")
 
         circuits = client.get_circuits(pid)
         for circuit in circuits:
-            if circuit.get("selectable"):
+            if client.is_circuit_selectable(circuit):
                 path = circuit["path"]
                 ctype = circuit["type"]
                 print(f"\nCircuit: {circuit.get('name', ctype)} ({path})")
@@ -157,3 +203,8 @@ if __name__ == "__main__":
 
         print(f"\nWeather: {client.get_weather(pid)}")
         print(f"Events: {client.get_plant_events(pid)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

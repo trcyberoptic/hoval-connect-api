@@ -30,6 +30,7 @@ class _CoordinatorBase:
 
     def __init__(self, hass, *args, **kwargs):
         self.hass = hass
+        self.data = None
 
 
 class _Clock:
@@ -184,6 +185,7 @@ def _unsupported(runtime, key):
 
 def _refresh(coordinator, api):
     data = asyncio.run(coordinator._async_update_data())
+    coordinator.data = data
     # Optional program data must never discard a circuit or its fresh counters.
     for (plant, path), count in api.live_calls.items():
         circuit = data.plants[plant].circuits[path]

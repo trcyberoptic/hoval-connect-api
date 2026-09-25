@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
@@ -12,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info
-from .api import HovalApiError
+from .api import HovalApiError, HovalAuthError
 from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, OPERATION_MODE_REGULAR
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
 
@@ -36,6 +37,31 @@ DEFAULT_NAMES: dict[str, str] = {
     "standby": "Standby",
     "constant": "Constant",
 }
+
+
+def resolve_program_display_names(program_names: dict[str, str]) -> dict[str, str]:
+    """Give each selectable program a unique label, preserving unique names.
+
+    Reserve the original names before generating suffixes: a custom name such
+    as "Standby (standby)" must not collide with a generated standby label.
+    """
+    names = {}
+    for api_key in API_PROGRAMS:
+        name = program_names.get(api_key)
+        names[api_key] = name if isinstance(name, str) and name else DEFAULT_NAMES[api_key]
+    counts = Counter(names.values())
+    reserved = set(names.values())
+    labels: dict[str, str] = {}
+    for api_key, default in names.items():
+        label = default
+        if counts[default] > 1:
+            label = f"{default} ({api_key})"
+            suffix = 2
+            while label in reserved or label in labels.values():
+                label = f"{default} ({api_key} {suffix})"
+                suffix += 1
+        labels[api_key] = label
+    return labels
 
 
 async def async_setup_entry(
@@ -100,49 +126,22 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
             return None
         return plant.circuits.get(self._circuit_path)
 
-    def _display_name(self, api_key: str) -> str:
-        """Get display name for an API program key.
-
-        If a default name (e.g. "Eco mode") collides with a user-customised
-        schedule name in `program_names`, disambiguate by suffixing the API
-        key — otherwise the `options` list would contain two identical
-        entries and the reverse lookup could never tell them apart.
-        """
+    def _all_display_names(self) -> dict[str, str]:
+        """Resolve names together so collisions can be disambiguated."""
         circuit = self._circuit
-        if circuit and api_key in circuit.program_names:
-            return circuit.program_names[api_key]
-        default = DEFAULT_NAMES.get(api_key, api_key)
-        if circuit:
-            custom_values = set(circuit.program_names.values())
-            if default in custom_values:
-                return f"{default} ({api_key})"
-        return default
+        return resolve_program_display_names(circuit.program_names if circuit else {})
 
     def _api_key_from_display(self, display: str) -> str:
-        """Reverse-lookup: display name → API key.
-
-        Custom `program_names` win (so the user-renamed schedule round-trips
-        correctly). The fallback to DEFAULT_NAMES also accepts the
-        disambiguated form `"<default> (<api_key>)"` emitted by
-        `_display_name` when a default collides with a custom schedule
-        name — without this, "Eco mode (ecoMode)" would fall through to the
-        literal-return branch and the integration would send an invalid
-        API key.
-        """
-        circuit = self._circuit
-        if circuit:
-            for key, name in circuit.program_names.items():
-                if name == display:
-                    return key
-        for key, name in DEFAULT_NAMES.items():
-            if name == display or f"{name} ({key})" == display:
-                return key
-        return display
+        """Resolve a displayed option, accepting raw API keys for automations."""
+        return next(
+            (key for key, label in self._all_display_names().items() if label == display),
+            display,
+        )
 
     @property
     def options(self) -> list[str]:
         """Return list of program display names."""
-        return [self._display_name(k) for k in API_PROGRAMS]
+        return list(self._all_display_names().values())
 
     @property
     def available(self) -> bool:
@@ -155,7 +154,7 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         circuit = self._circuit
         if circuit is None or circuit.active_program is None:
             return None
-        return self._display_name(circuit.active_program)
+        return self._all_display_names().get(circuit.active_program)
 
     async def async_select_option(self, option: str) -> None:
         """Set the active program."""
@@ -174,13 +173,14 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         mode = OPERATION_MODE_REGULAR if api_program != "standby" else "standby"
         try:
             await self.coordinator.async_control_and_refresh(
-                self.coordinator.api.set_program(
+                lambda: self.coordinator.api.set_program(
                     self._plant_id,
                     self._circuit_path,
                     api_program,
                 ),
+                plant_id=self._plant_id,
                 circuit_path=self._circuit_path,
                 mode_override=mode,
             )
-        except HovalApiError as err:
+        except (HovalApiError, HovalAuthError) as err:
             raise HomeAssistantError(f"Failed to set program: {err}") from err

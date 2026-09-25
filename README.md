@@ -43,23 +43,25 @@ Plants and circuits are discovered automatically from your account.
 **Fan entity** (per HV ventilation circuit):
 - Continuous speed slider: 0–100% (temporary override, keeps time program active); values below the device minimum are clamped to 15 %, 0 turns the circuit off
 - Turn on/off toggle (standby mode)
-- Configurable turn-on mode: resume last program, or activate week1/week2
+- Configurable turn-on mode: resume the last observed week1/week2 program, or explicitly activate week1/week2 (resume defaults to week1 until a weekly program has been observed)
 - Debounced slider input (1.5s) to prevent API rate-limiting
+- Turning on/off cancels any slider command still waiting for its debounce timer; commands already being sent finish in order
 
 **Climate entity** (per HK heating circuit):
 - Target temperature control
 - Current room temperature (v1.0.0 — reads the correct `roomTempActual` live value)
-- HVAC modes: Heat / Auto / Off (standby)
+- HVAC modes: Heat (constant program) / Auto (last observed weekly program) / Off (standby)
 - HVAC action reflects actual circuit status
 
 **Water heater entity** (per WW hot-water circuit, v1.0.0):
 - Target temperature 10–65 °C in 0.5 °C steps — sets a temporary boost that expires at midnight, then the week program resumes
-- Operation modes: heat pump (week program), high demand (shown while a boost is active — selecting it does *not* start a boost; it resets the circuit to week1 exactly like heat pump, cancelling an active boost), off (standby)
+- Operation modes: heat pump (last observed weekly program) and off (standby). Start a boost by setting the target temperature; its status and expiry are shown by the temporary-change sensors. The former misleading high-demand selector is no longer offered.
 - Current temperature from the top-of-tank sensor
 
 **Program select** (per HV/HK/WW circuit):
 - Switch between week1, week2, eco mode, standby, constant
 - Shows user-defined program names from the Hoval app
+- Disambiguates duplicate names, including names matching built-in labels, so each choice selects exactly one program
 - Current program pre-selected
 
 **Sensor entities** (per circuit, filtered by type):
@@ -87,7 +89,7 @@ Plants and circuits are discovered automatically from your account.
 - Temporary change (per circuit, running class, v1.0.2) — on while a boost/override is active, with the target `value`, the cloud's `type` label and the `end` time as attributes. The cloud tracks this itself, so an automation that starts a boost no longer has to remember that it did.
 
 **Diagnostics:**
-- Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs)
+- Full diagnostic data export with automatic PII redaction (tokens, credentials, plant IDs, including IDs embedded in dictionary keys and URLs)
 
 **Options** (configurable per integration entry):
 - Turn-on mode: resume / week1 / week2
@@ -100,13 +102,20 @@ Plants and circuits are discovered automatically from your account.
 **Under the hood:**
 - 2-step token management (ID token + Plant Access Token) with TTL caching, auto-refresh, and single-flight locking (concurrent requests trigger at most one token refresh)
 - Skips API calls when plant is offline, invalidates token cache on reconnect
-- Parallel API fetches for circuits, live values, programs, events, and weather
+- Parallel API fetches for circuits, live values, programs, events, and weather, with at most eight circuit fetches in flight
+- Control commands are serialized per plant and circuit. Ambiguous write failures (timeouts, connection errors, 429/5xx) are reported without automatically repeating the command; reads retain their transient-error retries.
 - Tiered caching reduces API calls: programs 5 min (including empty responses), events 3 min, weather forecast 15 min. Program caches are separate for each plant and circuit.
 - A circuit's program endpoint returning HTTP 417 is checked again after one hour, with one warning per attempt. Live values continue updating normally; authentication errors, gateway blocks and transient failures do not trigger this pause.
 - Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on the circuits, live-values and both plant-event endpoints (not on the weather forecast — a wrapped response there yields no forecast), the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
 - Temporary overrides use the `/v4` API (v0.15.0+) for forward-compatibility; `endOfPhase`/`duration` body shape, reset still on `/v3` DELETE
+
+### Standalone examples
+
+The Python reader in [`examples/hoval_client.py`](examples/hoval_client.py) follows plant pagination, uses v3 circuit discovery, and reads live values, weather and events. Install `requests`, then run `python examples/hoval_client.py` without arguments. It prompts for the account email and password (password input is hidden); scripts can supply `HOVAL_EMAIL` and `HOVAL_PASSWORD` through their environment. Every request has a connection/read timeout.
+
+The Bash/curl live-value example also has bounded timeouts and encodes special characters in form/query values. The reviewed fork improvements and deliberately excluded changes are documented in the [GMH224 adoption review](docs/superpowers/specs/2026-09-20-gmh224-adoptions.md).
 
 ### Summer-boost Blueprint (optional)
 
