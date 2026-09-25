@@ -105,9 +105,8 @@ def runtime(monkeypatch):
         device_registry.DeviceInfo = dict
         device_registry.async_get = lambda hass: SimpleNamespace(async_get_or_create=MagicMock())
         sys.modules["homeassistant.helpers.entity_registry"].async_get = lambda hass: hass.registry
-        sys.modules["homeassistant.helpers.aiohttp_client"].async_get_clientsession = (
-            lambda hass: object()
-        )
+        aiohttp_client = sys.modules["homeassistant.helpers.aiohttp_client"]
+        aiohttp_client.async_get_clientsession = lambda hass: object()
 
         name = f"_lifecycle_component_{modern}"
         packages.add(name)
