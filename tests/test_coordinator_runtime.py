@@ -287,7 +287,7 @@ def _online_records(caplog):
     return [
         (record.levelno, record.getMessage())
         for record in caplog.records
-        if "reports plant" in record.getMessage()
+        if "Hoval cloud" in record.getMessage() or "New circuits" in record.getMessage()
     ]
 
 
@@ -295,36 +295,79 @@ def _set_online(api, online):
     api.get_plants = AsyncMock(return_value=[{"plantExternalId": "P1", "isOnline": online}])
 
 
-def test_offline_transitions_are_logged_once_each(runtime, caplog):
-    """An offline plant turns every entity unavailable; that must not be silent."""
-    caplog.set_level(logging.INFO)
-    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None] * 3})
-    api.invalidate_plant_token = MagicMock()
+def _offline_poll(coordinator):
+    data = asyncio.run(coordinator._async_update_data())
+    coordinator.data = data
+    return data.plants["P1"]
 
+
+def test_single_offline_poll_keeps_previous_data_silently(runtime, caplog):
+    """The gateway reconnects about every 48 minutes; one offline poll is not an outage."""
+    key = ("P1", _PATH)
+    coordinator, api = _coordinator(runtime, {key: [None] * 3})
+    api.invalidate_plant_token = MagicMock()
+    _refresh(coordinator, api)
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    live_calls = api.live_calls[key]
+
+    _set_online(api, False)
+    plant = _offline_poll(coordinator)
+    assert plant.is_online is False
+    assert list(plant.circuits) == [_PATH]
+    assert api.live_calls[key] == live_calls
+
+    _set_online(api, True)
     _refresh(coordinator, api)
     assert _online_records(caplog) == []
 
+
+def test_persistent_offline_is_logged_once_each_way(runtime, caplog):
+    """A real outage must not be silent: unavailable plus one warning, then one info."""
+    caplog.set_level(logging.INFO)
+    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None] * 3})
+    api.invalidate_plant_token = MagicMock()
+    _refresh(coordinator, api)
+    caplog.clear()
+
     _set_online(api, False)
-    for _ in range(2):
-        data = asyncio.run(coordinator._async_update_data())
-        assert data.plants["P1"].circuits == {}
+    assert list(_offline_poll(coordinator).circuits) == [_PATH]
+    for _ in range(3):
+        assert _offline_poll(coordinator).circuits == {}
     records = _online_records(caplog)
-    assert len(records) == 1
-    assert records[0][0] == logging.WARNING
+    assert [level for level, _ in records] == [logging.WARNING]
     assert "P1" in records[0][1]
 
     _set_online(api, True)
     _refresh(coordinator, api)
-    records = _online_records(caplog)
-    assert len(records) == 2
-    assert records[1][0] == logging.INFO
-    assert "P1" in records[1][1]
+    records = [record for record in _online_records(caplog) if "Hoval cloud" in record[1]]
+    assert [level for level, _ in records] == [logging.WARNING, logging.INFO]
 
 
-def test_plant_offline_at_startup_is_logged(runtime, caplog):
+def test_plant_offline_at_startup_is_logged_on_second_poll(runtime, caplog):
     caplog.set_level(logging.INFO)
     coordinator, api = _coordinator(runtime, {("P1", _PATH): [None]})
     api.invalidate_plant_token = MagicMock()
     _set_online(api, False)
-    asyncio.run(coordinator._async_update_data())
+    assert _offline_poll(coordinator).circuits == {}
+    assert _online_records(caplog) == []
+    assert _offline_poll(coordinator).circuits == {}
     assert [level for level, _ in _online_records(caplog)] == [logging.WARNING]
+
+
+def test_mode_override_survives_a_poll_served_from_previous_data(runtime):
+    """A poll that fetched nothing must not discard a pending optimistic mode."""
+    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None] * 3})
+    api.invalidate_plant_token = MagicMock()
+    _refresh(coordinator, api)
+    coordinator.set_mode_override("P1", _PATH, "standby")
+    runtime.clock.advance(1)
+
+    _set_online(api, False)
+    _offline_poll(coordinator)
+    assert coordinator.get_mode_override("P1", _PATH) == "standby"
+
+    _set_online(api, True)
+    runtime.clock.advance(1)
+    _refresh(coordinator, api)
+    assert coordinator.get_mode_override("P1", _PATH) is None
