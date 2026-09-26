@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from math import isfinite
 from typing import Any
@@ -40,6 +40,12 @@ SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 # failing an override must not mask the device's real state indefinitely.
 _MODE_OVERRIDE_TTL_S = 120.0
 _MAX_CONCURRENT_CIRCUIT_FETCHES = 8
+# The gateway reconnects to Azure IoT Hub about every 48 minutes, and a poll
+# that lands inside the reconnect reads isOnline=false once (2026-09-26: ten
+# of ten such offline polls were single and on that grid). The first offline
+# poll therefore keeps the previous data; this many in a row blank the
+# circuit entities and log a warning.
+_OFFLINE_POLLS_BEFORE_UNAVAILABLE = 2
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -346,8 +352,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._events_cache_ttl = EVENTS_CACHE_TTL.total_seconds()
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
-        # Last reported isOnline per plant, to log transitions exactly once.
-        self._plant_online: dict[str, bool] = {}
+        # Consecutive polls per plant that reported isOnline=false.
+        self._offline_polls: dict[str, int] = {}
 
     def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -431,6 +437,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # the pruning at the end must leave them alone.
         poll_start = time.monotonic()
         data = HovalData()
+        # Plants served from the previous poll's data; nothing was fetched.
+        stale_plants: set[str] = set()
 
         try:
             plants = await self.api.get_plants()
@@ -453,24 +461,35 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     is_online=_coerce_bool(plant.get("isOnline", True)),
                 )
 
-                # Offline makes every circuit entity of the plant unavailable
-                # without any request failing, so nothing else would reach the log.
-                # Unseen plants count as online: offline at startup is logged.
-                was_online = self._plant_online.get(plant_id, True)
-                self._plant_online[plant_id] = plant_data.is_online
-                if was_online and not plant_data.is_online:
-                    _LOGGER.warning(
-                        "Hoval cloud reports plant %s offline; its circuit entities "
-                        "stay unavailable until the gateway reconnects to the cloud",
-                        plant_id,
-                    )
-                elif not was_online and plant_data.is_online:
-                    _LOGGER.info("Hoval cloud reports plant %s online again", plant_id)
-
-                # Skip all API calls when plant is offline
-                if not plant_data.is_online:
+                previous_offline_polls = self._offline_polls.pop(plant_id, 0)
+                if plant_data.is_online:
+                    if previous_offline_polls >= _OFFLINE_POLLS_BEFORE_UNAVAILABLE:
+                        _LOGGER.info("Hoval cloud reports plant %s online again", plant_id)
+                else:
+                    # Skip all API calls while the plant is offline.
+                    offline_polls = previous_offline_polls + 1
+                    self._offline_polls[plant_id] = offline_polls
                     # Invalidate cached PAT so we get a fresh token when back
                     self.api.invalidate_plant_token(plant_id)
+                    previous = self.data.plants.get(plant_id) if self.data is not None else None
+                    if offline_polls < _OFFLINE_POLLS_BEFORE_UNAVAILABLE and previous is not None:
+                        _LOGGER.debug(
+                            "Plant %s reported offline for one poll; keeping its previous data",
+                            plant_id,
+                        )
+                        data.plants[plant_id] = replace(previous, name=plant_name, is_online=False)
+                        stale_plants.add(plant_id)
+                        continue
+                    # Offline blanks every circuit entity without any request
+                    # failing, so nothing else would reach the log.
+                    if offline_polls == _OFFLINE_POLLS_BEFORE_UNAVAILABLE:
+                        _LOGGER.warning(
+                            "Hoval cloud has reported plant %s offline for %d consecutive "
+                            "polls; its circuit entities are unavailable until the gateway "
+                            "reconnects to the cloud",
+                            plant_id,
+                            offline_polls,
+                        )
                     data.plants[plant_id] = plant_data
                     continue
 
@@ -885,7 +904,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # the poll's pre-change data snapshot would snap the entity back to
         # its old state. Mid-poll overrides survive until a poll that STARTED
         # after them succeeds (or the TTL in get_mode_override expires).
+        # A plant served from previous data got no fresh snapshot either.
         self._mode_override = {
-            path: entry for path, entry in self._mode_override.items() if entry[1] >= poll_start
+            key: entry
+            for key, entry in self._mode_override.items()
+            if entry[1] >= poll_start or key[0] in stale_plants
         }
         return data
