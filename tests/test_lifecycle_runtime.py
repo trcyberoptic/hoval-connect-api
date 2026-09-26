@@ -7,6 +7,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import TypedDict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -47,6 +48,16 @@ class _Flow:
 
 class _ReloadingOptionsFlow(_Flow):
     automatic_reload = True
+
+
+class _ModernDeviceInfo(TypedDict, total=False):
+    """DeviceInfo as of Home Assistant 2026.8: the parent is linked by registry id."""
+
+    identifiers: set[tuple[str, str]]
+    name: str | None
+    manufacturer: str | None
+    model: str | None
+    via_device_id: str
 
 
 @pytest.fixture
@@ -102,7 +113,7 @@ def runtime(monkeypatch):
         errors.ServiceValidationError = type("ServiceValidationError", (Exception,), {})
         sys.modules["homeassistant.helpers.config_validation"].entity_ids = list
         device_registry = sys.modules["homeassistant.helpers.device_registry"]
-        device_registry.DeviceInfo = dict
+        device_registry.DeviceInfo = _ModernDeviceInfo if modern else dict
         device_registry.async_get = lambda hass: SimpleNamespace(async_get_or_create=MagicMock())
         sys.modules["homeassistant.helpers.entity_registry"].async_get = lambda hass: hass.registry
         aiohttp_client = sys.modules["homeassistant.helpers.aiohttp_client"]
@@ -269,3 +280,36 @@ async def test_reset_service_defers_and_binds_each_target_command(runtime):
         ("plant-a", "1.2.3"),
         ("plant-b", "1.2.3"),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modern", [False, True])
+async def test_circuit_devices_link_to_their_plant_device(runtime, modern):
+    """HA 2026.8 added via_device_id; the via_device tuple breaks in 2027.8."""
+    ctx = runtime(modern)
+    plant = SimpleNamespace(name="Plant")
+    ctx.component.HovalDataCoordinator = lambda *args: SimpleNamespace(
+        data=SimpleNamespace(plants={"P1": plant}),
+        async_config_entry_first_refresh=AsyncMock(),
+    )
+    registry = SimpleNamespace(
+        async_get_or_create=MagicMock(return_value=SimpleNamespace(id="device-P1"))
+    )
+    ctx.component.dr.async_get = lambda hass: registry
+    entry = _ConfigEntry()
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.plant_device_ids == {"P1": "device-P1"}
+
+    circuit = SimpleNamespace(circuit_type="HV", path="520.50.0", name="Ventilation")
+    info = ctx.component.circuit_device_info(coordinator, "P1", circuit)
+    if modern:
+        assert info["via_device_id"] == "device-P1"
+        assert "via_device" not in info
+    else:
+        assert info["via_device"] == ("hoval_connect", "P1")
+        assert "via_device_id" not in info
+
+    # A plant without a registered device gets no parent link rather than a bad one.
+    orphan = ctx.component.circuit_device_info(coordinator, "P2", circuit)
+    assert "via_device_id" not in orphan

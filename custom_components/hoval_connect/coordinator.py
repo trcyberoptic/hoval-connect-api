@@ -354,6 +354,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._known_circuits: set[str] = set()
         # Consecutive polls per plant that reported isOnline=false.
         self._offline_polls: dict[str, int] = {}
+        # Device-registry ids of the plant devices, filled by async_setup_entry.
+        self.plant_device_ids: dict[str, str] = {}
 
     def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""

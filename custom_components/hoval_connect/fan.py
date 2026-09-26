@@ -85,7 +85,7 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._plant_id = plant_id
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_fan"
-        self._attr_device_info = circuit_device_info(plant_id, circuit_data)
+        self._attr_device_info = circuit_device_info(coordinator, plant_id, circuit_data)
         self._debounce_task: asyncio.Task | None = None
         self._committed_task: asyncio.Task | None = None
         self._pending_percentage: int | None = None
