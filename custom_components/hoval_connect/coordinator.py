@@ -346,6 +346,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._events_cache_ttl = EVENTS_CACHE_TTL.total_seconds()
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
+        # Last reported isOnline per plant, to log transitions exactly once.
+        self._plant_online: dict[str, bool] = {}
 
     def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -450,6 +452,20 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     name=plant_name,
                     is_online=_coerce_bool(plant.get("isOnline", True)),
                 )
+
+                # Offline makes every circuit entity of the plant unavailable
+                # without any request failing, so nothing else would reach the log.
+                # Unseen plants count as online: offline at startup is logged.
+                was_online = self._plant_online.get(plant_id, True)
+                self._plant_online[plant_id] = plant_data.is_online
+                if was_online and not plant_data.is_online:
+                    _LOGGER.warning(
+                        "Hoval cloud reports plant %s offline; its circuit entities "
+                        "stay unavailable until the gateway reconnects to the cloud",
+                        plant_id,
+                    )
+                elif not was_online and plant_data.is_online:
+                    _LOGGER.info("Hoval cloud reports plant %s online again", plant_id)
 
                 # Skip all API calls when plant is offline
                 if not plant_data.is_online:
