@@ -116,7 +116,7 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
         self._plant_id = plant_id
         self._circuit_path = circuit_path
         self._attr_unique_id = f"{plant_id}_{circuit_path}_program"
-        self._attr_device_info = circuit_device_info(plant_id, circuit_data)
+        self._attr_device_info = circuit_device_info(coordinator, plant_id, circuit_data)
 
     @property
     def _circuit(self) -> HovalCircuitData | None:

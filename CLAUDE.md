@@ -86,6 +86,7 @@ PS = buffer tank (Pufferspeicher), NOT "pool"; PF1/PF2 = Pufferfühler top/botto
 
 - `OptionsFlow.config_entry` is a **read-only property** in modern HA — do NOT assign it in `__init__`. The base class sets it automatically.
 - `async_get_options_flow()` should return the flow instance without passing `config_entry`.
+- **Circuit devices link to the plant device with `via_device_id` where HA supports it (v1.0.14).** HA 2026.8 added `DeviceInfo["via_device_id"]`: it takes the parent's **device-registry id**, not the `(DOMAIN, plant_id)` identifier tuple. HA 2026.9 removed `via_device` from the `DeviceInfo` TypedDict. HA still accepts it at runtime, but logs a deprecation warning, and it stops working in 2027.8.0 (`_DEPRECATED_DEVICE_INFO_PARAMETERS` in `helpers/device_registry.py`). HA 2024.11 to 2026.7 know only the tuple. So `compat.DEVICE_INFO_HAS_VIA_DEVICE_ID` checks the TypedDict's keys, and `circuit_device_info(coordinator, …)` chooses the field: the tuple on old HA, or on new HA the id that `async_setup_entry` stores in `coordinator.plant_device_ids` when it registers the plant devices. The minimum HA version stays 2024.11. Checked against the `device_registry.py` of the release tags 2026.7.0, 2026.8.0 and 2026.9.0 and of `dev`. Current core already uses Python 3.14 syntax (`except A, B:`), so `ast.parse` from Python ≤ 3.13 fails on it; scan the lines instead.
 
 ## Known Pitfalls
 

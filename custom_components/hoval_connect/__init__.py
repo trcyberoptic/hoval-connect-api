@@ -18,7 +18,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .api import HovalApiError, HovalConnectApi
-from .compat import OPTIONS_FLOW_RELOADS
+from .compat import DEVICE_INFO_HAS_VIA_DEVICE_ID, OPTIONS_FLOW_RELOADS
 from .const import (
     CIRCUIT_TYPE_NAMES,
     DOMAIN,
@@ -66,18 +66,23 @@ def plant_device_info(plant_data: HovalPlantData) -> DeviceInfo:
 
 
 def circuit_device_info(
+    coordinator: HovalDataCoordinator,
     plant_id: str,
     circuit_data: HovalCircuitData,
 ) -> DeviceInfo:
-    """Build DeviceInfo for a circuit device."""
+    """Build DeviceInfo for a circuit device, linked to its plant device."""
     model = CIRCUIT_TYPE_NAMES.get(circuit_data.circuit_type, circuit_data.circuit_type)
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, f"{plant_id}_{circuit_data.path}")},
         name=f"Hoval {circuit_data.name}",
         manufacturer="Hoval",
         model=model,
-        via_device=(DOMAIN, plant_id),
     )
+    if not DEVICE_INFO_HAS_VIA_DEVICE_ID:
+        info["via_device"] = (DOMAIN, plant_id)
+    elif (plant_device_id := coordinator.plant_device_ids.get(plant_id)) is not None:
+        info["via_device_id"] = plant_device_id
+    return info
 
 
 def _get_scan_interval(entry: HovalConnectConfigEntry) -> timedelta:
@@ -182,16 +187,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
 
     entry.runtime_data = HovalRuntimeData(coordinator=coordinator, api=api)
 
-    # Register a parent device for each plant so circuit devices can use via_device
+    # Register a parent device for each plant before the platforms set up, so
+    # circuit devices can link to it by registry id (see circuit_device_info).
     device_reg = dr.async_get(hass)
+    plant_device_ids: dict[str, str] = {}
     for plant_id, plant_data in coordinator.data.plants.items():
-        device_reg.async_get_or_create(
+        plant_device = device_reg.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, plant_id)},
             name=f"Hoval {plant_data.name}",
             manufacturer="Hoval",
             model="Plant",
         )
+        plant_device_ids[plant_id] = plant_device.id
+    coordinator.plant_device_ids = plant_device_ids
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
