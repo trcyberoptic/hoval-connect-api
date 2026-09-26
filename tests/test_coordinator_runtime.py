@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -280,3 +281,50 @@ async def test_control_waits_for_refresh_before_returning(runtime, monkeypatch):
     assert not coordinator._get_circuit_lock("P1", _PATH).locked()
     release.set()
     await task
+
+
+def _online_records(caplog):
+    return [
+        (record.levelno, record.getMessage())
+        for record in caplog.records
+        if "reports plant" in record.getMessage()
+    ]
+
+
+def _set_online(api, online):
+    api.get_plants = AsyncMock(return_value=[{"plantExternalId": "P1", "isOnline": online}])
+
+
+def test_offline_transitions_are_logged_once_each(runtime, caplog):
+    """An offline plant turns every entity unavailable; that must not be silent."""
+    caplog.set_level(logging.INFO)
+    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None] * 3})
+    api.invalidate_plant_token = MagicMock()
+
+    _refresh(coordinator, api)
+    assert _online_records(caplog) == []
+
+    _set_online(api, False)
+    for _ in range(2):
+        data = asyncio.run(coordinator._async_update_data())
+        assert data.plants["P1"].circuits == {}
+    records = _online_records(caplog)
+    assert len(records) == 1
+    assert records[0][0] == logging.WARNING
+    assert "P1" in records[0][1]
+
+    _set_online(api, True)
+    _refresh(coordinator, api)
+    records = _online_records(caplog)
+    assert len(records) == 2
+    assert records[1][0] == logging.INFO
+    assert "P1" in records[1][1]
+
+
+def test_plant_offline_at_startup_is_logged(runtime, caplog):
+    caplog.set_level(logging.INFO)
+    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None]})
+    api.invalidate_plant_token = MagicMock()
+    _set_online(api, False)
+    asyncio.run(coordinator._async_update_data())
+    assert [level for level, _ in _online_records(caplog)] == [logging.WARNING]

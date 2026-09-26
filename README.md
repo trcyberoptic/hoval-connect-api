@@ -101,7 +101,7 @@ Plants and circuits are discovered automatically from your account.
 
 **Under the hood:**
 - 2-step token management (ID token + Plant Access Token) with TTL caching, auto-refresh, and single-flight locking (concurrent requests trigger at most one token refresh)
-- Skips API calls when plant is offline, invalidates token cache on reconnect
+- Skips API calls when plant is offline, invalidates token cache on reconnect. The circuit entities are unavailable while the plant is offline, although no request fails. The integration logs one warning when the cloud reports the plant offline and one info message when the plant is back online
 - Parallel API fetches for circuits, live values, programs, events, and weather, with at most eight circuit fetches in flight
 - Control commands are serialized per plant and circuit. Ambiguous write failures (timeouts, connection errors, 429/5xx) are reported without automatically repeating the command; reads retain their transient-error retries.
 - Tiered caching reduces API calls: programs 5 min (including empty responses), events 3 min, weather forecast 15 min. Program caches are separate for each plant and circuit.
