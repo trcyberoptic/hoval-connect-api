@@ -202,6 +202,38 @@ CIRCUIT_DATAPOINT_IDS: dict[str, tuple[str, ...]] = {
         "37608",  # VOC Abluft
         "37611",  # VOC Aussenluft
     ),
+    CIRCUIT_TYPE_HK: (
+        "2051",  # Status Heizkreisregelung (Modbus register 1501 for HK1)
+    ),
+}
+
+# Datapoint 2051, verbatim from Hoval's TTE-GW-Modbus-datapoints.xlsx (sheet
+# "Deutsch"; the English sheet carries no labels). 20, 21, 24 and 25 are gaps
+# in Hoval's own list, not omissions here. 16-19 are the screed-drying program.
+HK_CONTROL_STATES: dict[str, str] = {
+    "0": "off",
+    "1": "normal_heating",
+    "2": "comfort_heating",
+    "3": "eco_heating",
+    "4": "frost_protection",
+    "5": "forced_heat_consumption",  # Zwangsabnahme, at a demand > +50 %
+    "6": "forced_throttling",  # Zwangsdrosselung, at a demand < -50 %
+    "7": "holiday",
+    "8": "party",
+    "9": "normal_cooling",
+    "10": "comfort_cooling",
+    "11": "eco_cooling",
+    "12": "fault",
+    "13": "manual",
+    "14": "cooling_protection",
+    "15": "party_cooling",
+    "16": "screed_drying_heat_up",
+    "17": "screed_drying_steady",
+    "18": "screed_drying_cool_down",
+    "19": "screed_drying_end",
+    "22": "external_constant_cooling",
+    "23": "external_constant_heating",
+    "26": "smart_grid_preferred",
 }
 
 # Datapoint 39652. Hoval's own datapoint list spells entry 5 "CoolVet" — a typo

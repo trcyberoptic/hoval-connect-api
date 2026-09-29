@@ -589,6 +589,42 @@ class TestRawDatapointConstants:
         assert HV_CONTROL_STATES["5"] == "coolvent"
         assert HV_CONTROL_STATES["7"] == "summer_humidity"
 
+    def test_hk_status_datapoint_requested(self):
+        """2051 answered on three reporters' plants (issue #14) as 1.1.0.2051."""
+        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+
+        assert CIRCUIT_DATAPOINT_IDS["HK"] == ("2051",)
+
+    def test_hk_control_state_enum_matches_hoval_list(self):
+        """The gaps at 20, 21, 24, 25 are Hoval's, so the keys are listed, not ranged."""
+        from custom_components.hoval_connect.const import HK_CONTROL_STATES
+
+        assert [*HK_CONTROL_STATES] == [*map(str, range(20)), "22", "23", "26"]
+        assert HK_CONTROL_STATES["5"] == "forced_heat_consumption"
+        assert HK_CONTROL_STATES["16"] == "screed_drying_heat_up"
+        assert HK_CONTROL_STATES["26"] == "smart_grid_preferred"
+
+    def test_every_datapoint_enum_value_is_translated(self):
+        """An untranslated ENUM option shows the raw key in the UI; check all three files."""
+        import json
+        from pathlib import Path
+
+        from custom_components.hoval_connect.const import (
+            HK_CONTROL_STATES,
+            HV_CONTROL_STATES,
+            HV_OPERATING_SELECTIONS,
+        )
+
+        base = Path("custom_components/hoval_connect")
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            sensors = json.loads((base / f).read_text(encoding="utf-8"))["entity"]["sensor"]
+            for key, enum in (
+                ("hv_control_state", HV_CONTROL_STATES),
+                ("hv_operating_selection", HV_OPERATING_SELECTIONS),
+                ("hk_control_state", HK_CONTROL_STATES),
+            ):
+                assert set(sensors[key]["state"]) == set(enum.values()), f"{key} in {f}"
+
     def test_operating_selection_matches_active_program_names(self):
         """40650 = 2 was observed together with activeProgram "week2"."""
         from custom_components.hoval_connect.const import HV_OPERATING_SELECTIONS

@@ -238,6 +238,34 @@
           "eco": "Eco"
         }
       },
+      "hk_control_state": {
+        "name": "Control status",
+        "state": {
+          "off": "Off",
+          "normal_heating": "Normal heating",
+          "comfort_heating": "Comfort heating",
+          "eco_heating": "Eco heating",
+          "frost_protection": "Frost protection",
+          "forced_heat_consumption": "Forced heat consumption",
+          "forced_throttling": "Forced throttling",
+          "holiday": "Holiday",
+          "party": "Party",
+          "normal_cooling": "Normal cooling",
+          "comfort_cooling": "Comfort cooling",
+          "eco_cooling": "Eco cooling",
+          "fault": "Fault",
+          "manual": "Manual operation",
+          "cooling_protection": "Cooling protection",
+          "party_cooling": "Party cooling",
+          "screed_drying_heat_up": "Screed drying: heat-up phase",
+          "screed_drying_steady": "Screed drying: steady phase",
+          "screed_drying_cool_down": "Screed drying: cool-down phase",
+          "screed_drying_end": "Screed drying: end phase",
+          "external_constant_cooling": "Cooling (external/constant demand)",
+          "external_constant_heating": "Heating (external/constant demand)",
+          "smart_grid_preferred": "SmartGrid preferred operation"
+        }
+      },
       "hv_air_quality_control": {
         "name": "Air quality control (code)"
       },

@@ -238,6 +238,34 @@
           "eco": "Sparbetrieb"
         }
       },
+      "hk_control_state": {
+        "name": "Regelungsstatus",
+        "state": {
+          "off": "Abgeschaltet",
+          "normal_heating": "Normal Heizbetrieb",
+          "comfort_heating": "Komfort Heizbetrieb",
+          "eco_heating": "Spar Heizbetrieb",
+          "frost_protection": "Frostbetrieb",
+          "forced_heat_consumption": "Zwangsabnahme",
+          "forced_throttling": "Zwangsdrosselung",
+          "holiday": "Ferienbetrieb",
+          "party": "Partybetrieb",
+          "normal_cooling": "Normal Kühlbetrieb",
+          "comfort_cooling": "Komfort Kühlbetrieb",
+          "eco_cooling": "Spar Kühlbetrieb",
+          "fault": "Störung",
+          "manual": "Handbetrieb",
+          "cooling_protection": "Schutz Kühlbetrieb",
+          "party_cooling": "Partybetrieb Kühlen",
+          "screed_drying_heat_up": "Austrocknung Aufheizphase",
+          "screed_drying_steady": "Austrocknung Stationärphase",
+          "screed_drying_cool_down": "Austrocknung Abkühlphase",
+          "screed_drying_end": "Austrocknung Endphase",
+          "external_constant_cooling": "Kühlbetrieb Extern/Konstantanforderung",
+          "external_constant_heating": "Heizbetrieb Extern/Konstantanforderung",
+          "smart_grid_preferred": "Vorzugsbetrieb SmartGrid"
+        }
+      },
       "hv_air_quality_control": {
         "name": "Luftqualitätsregelung (Code)"
       },
