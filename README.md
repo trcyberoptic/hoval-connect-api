@@ -70,7 +70,7 @@ Plants and circuits are discovered automatically from your account.
 > The control status is the only place any Hoval interface reveals *why* the unit deviates from its
 > schedule. `operationMode` on the circuit stayed `ventilation` through a full day in which CoolVent and
 > summer humidity both ran — it is not a substitute.
-- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint)
+- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint), and — as the raw datapoint `2051` (v1.0.15) — **control status** (off / normal, comfort, eco heating / frost protection / holiday / party / normal, comfort, eco cooling / fault / manual / screed drying phases / external or constant demand / SmartGrid preferred; 23 states in total)
 - **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
 - **PS:** Buffer target temperature, buffer temperature top (PF1) / bottom (PF2)
@@ -534,7 +534,18 @@ GET /api/telemetry-data/snapshots/live/604961716240055?dataPoints=520.50.0.39652
 | `37606` / `37608` / `37611` | CO2 Abluft, VOC Abluft / Aussenluft — `255` when the sensor is not fitted | U8 |
 
 Service and error addresses under `520.0.0.*` (active faults, maintenance counters) returned nothing.
-Datapoint ids and their enum labels come from Hoval's TopTronic E datapoint list.
+
+**Heating circuit (HK) datapoint** — reported in [#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14),
+read as `1.1.0.2051` on three heat-pump plants:
+
+| DatapointId | Meaning | Type |
+|---|---|---|
+| `2051` | **Status Heizkreisregelung** (Modbus register 1501 for HK1, 1502/1503 for HK2/HK3) — 0 off, 1–3 normal/comfort/eco heating, 4 frost, 5 forced heat consumption, 6 forced throttling, 7 holiday, 8 party, 9–11 normal/comfort/eco cooling, 12 fault, 13 manual, 14 cooling protection, 15 party cooling, 16–19 screed drying (heat-up/steady/cool-down/end), 22/23 cooling/heating on external or constant demand, 26 SmartGrid preferred | U8 enum |
+
+Datapoint ids and their enum labels come from Hoval's TopTronic E datapoint list,
+`TTE-GW-Modbus-datapoints.xlsx`. Hoval's published link (`www.hoval.com/misc/TTE/TTE-GW-Modbus-datapoints.xlsx`)
+redirects to a host that does not resolve (checked 2026-09-29); a copy is kept in
+[nliaudat/esp_canbus](https://github.com/nliaudat/esp_canbus/tree/main/hoval_data_processing).
 
 #### GET `/v3/api/statistics/live-values/{plantId}`
 

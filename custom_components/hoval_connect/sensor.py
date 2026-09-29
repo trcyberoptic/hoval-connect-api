@@ -38,6 +38,7 @@ from .const import (
     CIRCUIT_TYPE_WW,
     DATAPOINT_U8_UNAVAILABLE,
     DOMAIN,
+    HK_CONTROL_STATES,
     HV_CONTROL_STATES,
     HV_OPERATING_SELECTIONS,
 )
@@ -289,6 +290,16 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         circuit_types=frozenset({CIRCUIT_TYPE_HK}),
         value_fn=lambda c: c.live_values.get("roomTempTarget"),
+    ),
+    # Raw controller datapoint (HK). See CIRCUIT_DATAPOINT_IDS in const.py.
+    HovalSensorEntityDescription(
+        key="hk_control_state",
+        translation_key="hk_control_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(dict.fromkeys(HK_CONTROL_STATES.values())),
+        icon="mdi:state-machine",
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
+        value_fn=lambda c: HK_CONTROL_STATES.get(c.datapoints.get("2051", "")),
     ),
     # BL (Boiler/Heat Pump) sensors
     HovalSensorEntityDescription(

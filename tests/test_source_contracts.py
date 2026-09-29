@@ -148,9 +148,10 @@ class TestRawDatapoints:
 
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
             sensors = json.loads(_read(f))["entity"]["sensor"]
-            for key in ("hv_control_state", "hv_operating_selection"):
+            for key in ("hv_control_state", "hv_operating_selection", "hk_control_state"):
                 assert "state" in sensors[key], f"{key} has no state labels in {f}"
             assert "coolvent" in sensors["hv_control_state"]["state"], f
+            assert "screed_drying_heat_up" in sensors["hk_control_state"]["state"], f
 
 
 class TestRetryCoversNonStandardStatuses:
