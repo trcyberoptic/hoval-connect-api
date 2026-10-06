@@ -34,7 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 # The Hoval app allows 10–65 °C; we use a safe operational range.
 WW_MIN_TEMP = 10.0
 WW_MAX_TEMP = 65.0
-WW_TEMP_STEP = 0.5
+# Whole degrees: a DHW controller (UltraSource B, issue #15) stored a requested
+# 49.5 as 50 and 50.5 as 51. The app's slider offers 0.5 for hot water, but
+# the device does not keep it. Service calls with fractions are still sent
+# as-is and the device rounds them.
+WW_TEMP_STEP = 1.0
 
 # Operation modes exposed to HA
 _OP_HEAT_PUMP = STATE_HEAT_PUMP  # "heat_pump"  — normal week-program operation
