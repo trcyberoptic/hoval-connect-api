@@ -141,14 +141,14 @@ BOILER_FA_STATES: dict[str, str] = {
 # Temporary change duration options
 #
 # v4 (`POST /v4/.../temporary-change`) takes a richer body:
-#   {type: "endOfPhase" | "duration", value: <float>, duration: <minutes>|null}
-# Note the `duration` field is in MINUTES, not seconds (verified empirically;
-# OpenAPI declares it loosely as a double). We expose three user-facing choices
+#   {type: "endOfPhase" | "duration", value: <float>, duration: <hours>|null}
+# Note the `duration` field is in HOURS (verified live 2026-10-06; OpenAPI
+# declares it loosely as a double). We expose three user-facing choices
 # and translate them into v4 bodies at the call site in api.py. The legacy
 # string values "FOUR" and "MIDNIGHT" remain the canonical stored option
 # values so existing user setups keep working without a config-entry migration.
 DURATION_END_OF_PHASE = "endOfPhase"  # v4-native: ends at next program-phase boundary
-DURATION_FOUR_HOURS = "FOUR"  # legacy stored value → v4 type=duration, duration=240 min
+DURATION_FOUR_HOURS = "FOUR"  # legacy stored value → v4 type=duration, duration=4 (hours)
 DURATION_MIDNIGHT = "MIDNIGHT"  # legacy stored value → v4 type=duration, duration=until midnight
 CONF_OVERRIDE_DURATION = "override_duration"
 DEFAULT_OVERRIDE_DURATION = DURATION_END_OF_PHASE  # safest default — works for HV and HK

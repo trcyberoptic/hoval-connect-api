@@ -122,20 +122,21 @@ def _topology_list(result: Any, endpoint: str) -> list[Any]:
     raise HovalApiError(f"Unexpected {endpoint} response: expected a list or list 'content'")
 
 
-def _minutes_until_local_midnight(now: datetime | None = None) -> int:
-    """Minutes from `now` (default: naive local now) until the next 00:00.
+def _hours_until_local_midnight(now: datetime | None = None) -> float:
+    """Hours from `now` (default: naive local now) until the next 00:00.
 
     Used by build_v4_temporary_change_body for the MIDNIGHT legacy option.
     Naive local datetime is the right choice here: the Hoval controller schedules
     in its local wall clock, which on Home Assistant Operating System is the
-    same as the host's local time. Clamped to the 30-1440 minute window the
-    cloud accepts.
+    same as the host's local time. Clamped to the 0.5..24 h range of the app's
+    duration picker and rounded to two decimals, as the app does
+    (`convertTimeToHours`).
     """
     if now is None:
         now = datetime.now()
     next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     minutes = int((next_midnight - now).total_seconds() // 60)
-    return max(30, min(1440, minutes))
+    return round(max(30, min(1440, minutes)) / 60, 2)
 
 
 def build_v4_temporary_change_body(
@@ -144,12 +145,13 @@ def build_v4_temporary_change_body(
     """Build the v4 temporary-change request body for the given user option.
 
     The v4 endpoint takes `{type: "endOfPhase"|"duration", value: <float>,
-    duration: <minutes>|null}`. Empirically, the `duration` field is in
-    MINUTES (not seconds, despite OpenAPI showing it as a `double`), and the
-    cloud accepts roughly 30..1440 (the same range the Hoval Connect Android
-    app's CustomDuration picker exposes). HK and HV both accept the format;
-    earlier reports of HV-only failure traced back to a duration value out of
-    range, not to a circuit-type limitation.
+    duration: <hours>|null}`. The `duration` field is in HOURS (OpenAPI only
+    says `double`): verified live on 2026-10-06 by reading back the reported
+    `temporaryChange.end` (0.5 → +30 min, 2 → +120 min, 24 accepted), and it
+    is what the app sends. Through v1.0.15 this function sent minutes, so
+    "4 hours" went out as 240 and "until midnight" as e.g. 537 — both answered
+    `424 "Failed to activate temporary change"` (issue #15). The app's
+    CustomDuration picker spans 0.5..24 h; stay inside that range.
 
     Pure function — broken out for unit testing. `now` is only used when
     `duration == DURATION_MIDNIGHT` and exists so tests can pin time.
@@ -165,12 +167,12 @@ def build_v4_temporary_change_body(
     if duration == DURATION_END_OF_PHASE:
         return {"type": "endOfPhase", "value": value}
     if duration == DURATION_FOUR_HOURS:
-        return {"type": "duration", "value": value, "duration": 4 * 60}
+        return {"type": "duration", "value": value, "duration": 4}
     if duration == DURATION_MIDNIGHT:
         return {
             "type": "duration",
             "value": value,
-            "duration": _minutes_until_local_midnight(now),
+            "duration": _hours_until_local_midnight(now),
         }
     # Unknown option — degrade to the safest mode that works for both HV and HK.
     _LOGGER.warning("Unknown override duration %r; falling back to endOfPhase", duration)
@@ -712,7 +714,7 @@ class HovalConnectApi:
 
         v4: POST /v4/plants/{plantId}/circuits/{circuitPath}/temporary-change with
             {"type": "endOfPhase"|"duration", "value": <float>,
-             "duration": <minutes>|null}
+             "duration": <hours>|null}
         For HV the value is the air volume percentage (15..100); for HK it is the
         temperature in degrees Celsius (e.g. 21.5).
 
@@ -720,10 +722,9 @@ class HovalConnectApi:
         - DURATION_END_OF_PHASE ("endOfPhase") — body type=endOfPhase, no
           duration. Safest default — overrides the current schedule until the
           next program phase boundary.
-        - DURATION_FOUR_HOURS ("FOUR") — body type=duration, duration=240
-          (minutes; v4 uses minutes, not seconds, despite the loose OpenAPI).
-        - DURATION_MIDNIGHT ("MIDNIGHT") — body type=duration, duration=minutes
-          until next local midnight, clamped to 30..1440.
+        - DURATION_FOUR_HOURS ("FOUR") — body type=duration, duration=4 (hours).
+        - DURATION_MIDNIGHT ("MIDNIGHT") — body type=duration, duration=hours
+          until next local midnight, clamped to 0.5..24.
 
         v3 (`/v3/.../temporary-change`) still works at the time of writing but
         is marked legacy by the cloud (operationId `activateTemporaryChange_1`).

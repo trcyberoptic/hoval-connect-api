@@ -82,12 +82,13 @@ Suffixes joined at runtime: `/settings`, `/programs`, `/programs/:program`, `/se
 
 ```
 POST /v4/plants/{id}/circuits/{path}/temporary-change
-Body: {"type": "endOfPhase" | "duration", "value": <float>, "duration": <minutes>|null}
+Body: {"type": "endOfPhase" | "duration", "value": <float>, "duration": <hours>|null}
 ```
 
 Key findings from live probing against the user's HV circuit:
 
-- **`duration` is in MINUTES, not seconds.** OpenAPI declares it loosely as a `double`; the app's `CustomDurationContent` picker exposes `{hours:0,minutes:30}..{hours:24,minutes:0}` = 30..1440 minutes. Live test: `duration=30` → HTTP 204 (success), `duration=1800` → HTTP 424 (1800 minutes = 30 hours, out of range).
+- **Correction 2026-10-06: `duration` is in HOURS, not minutes.** The conclusion below was wrong and shipped in v0.15.0 to v1.0.15. The app's `onButtonPress` builds the V2 payload with `convertTimeToHours({hours, minutes})` = `Math.round((hours + minutes/60) * 100) / 100` and the `updateCircuits` reducer posts it unchanged. A live probe that read back `temporaryChange.end` confirmed it: `0.5` → +30 min, `2` → +120 min, `24` accepted, `240` → 424. The two data points below fit hours just as well (30 h accepted, 1800 h rejected). See issue #15.
+- ~~**`duration` is in MINUTES, not seconds.**~~ OpenAPI declares it loosely as a `double`; the app's `CustomDurationContent` picker exposes `{hours:0,minutes:30}..{hours:24,minutes:0}` = 30..1440 minutes. Live test: `duration=30` → HTTP 204 (success), `duration=1800` → HTTP 424 (1800 minutes = 30 hours, out of range).
 - **HV accepts `type=duration`.** My earlier conclusion "HV only supports endOfPhase" was wrong — it was a duration-out-of-range artifact. Both HV and HK accept the same body shape; the cloud's `424 "Failed to activate"` was the API's way of saying "value out of accepted range" rather than "wrong circuit type".
 - **v3 body shape rejected by v4 URL.** `POST /v4/... {"value": 70, "duration": "fourHours"}` → HTTP 400 "Failed to read request". The app actually does send the new shape — earlier disasm confusion was mine, not the app's.
 - **No v4 DELETE.** Reset stays on `/v3/.../temporary-change` DELETE. Works fine in parallel; the integration uses POST `/v4` for set and DELETE `/v3` for reset.
