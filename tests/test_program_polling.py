@@ -31,6 +31,10 @@ class _CoordinatorBase:
     def __init__(self, hass, *args, **kwargs):
         self.hass = hass
         self.data = None
+        self.last_update_success = True
+
+    def _async_refresh_finished(self):
+        """No-op hook, as in HA's DataUpdateCoordinator."""
 
 
 class _Clock:
@@ -185,7 +189,9 @@ def _unsupported(runtime, key):
 
 def _refresh(coordinator, api):
     data = asyncio.run(coordinator._async_update_data())
+    # HA's _async_refresh order: assign the data, then call the hook.
     coordinator.data = data
+    coordinator._async_refresh_finished()
     # Optional program data must never discard a circuit or its fresh counters.
     for (plant, path), count in api.live_calls.items():
         circuit = data.plants[plant].circuits[path]
