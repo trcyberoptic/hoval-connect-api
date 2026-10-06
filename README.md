@@ -54,7 +54,7 @@ Plants and circuits are discovered automatically from your account.
 - HVAC action reflects actual circuit status
 
 **Water heater entity** (per WW hot-water circuit, v1.0.0):
-- Target temperature 10–65 °C in 0.5 °C steps — sets a temporary boost that expires at midnight, then the week program resumes
+- Target temperature 10–65 °C in 1 °C steps (the controller stores whole degrees) — sets a temporary boost that expires at midnight, then the week program resumes
 - Operation modes: heat pump (last observed weekly program) and off (standby). Start a boost by setting the target temperature; its status and expiry are shown by the temporary-change sensors. The former misleading high-demand selector is no longer offered.
 - Current temperature from the top-of-tank sensor
 
