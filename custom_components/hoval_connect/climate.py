@@ -61,6 +61,12 @@ async def async_setup_entry(
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_CIRCUITS, _on_new_circuits))
 
 
+# Fallback setpoint range (°C) until the controller's `temporaryChangeLimits`
+# are known; the cloud answers 424 to values outside those.
+HK_MIN_TEMP = 5.0
+HK_MAX_TEMP = 30.0
+
+
 class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     """Hoval heating circuit climate entity."""
 
@@ -68,8 +74,6 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     _attr_translation_key = "heating"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
-    _attr_min_temp = 5.0
-    _attr_max_temp = 30.0
     _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF, HVACMode.AUTO]
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
     _enable_turn_on_off_backwards_compat = False
@@ -104,6 +108,20 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         return super().available and self._circuit is not None
+
+    @property
+    def min_temp(self) -> float:
+        """Return the lowest setpoint the controller accepts right now."""
+        circuit = self._circuit
+        low = circuit.temporary_change_min if circuit else None
+        return HK_MIN_TEMP if low is None else low
+
+    @property
+    def max_temp(self) -> float:
+        """Return the highest setpoint the controller accepts right now."""
+        circuit = self._circuit
+        high = circuit.temporary_change_max if circuit else None
+        return HK_MAX_TEMP if high is None else high
 
     @property
     def current_temperature(self) -> float | None:
@@ -238,7 +256,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
                 raise ValueError("Non-finite temperature")
         except (ValueError, TypeError, OverflowError) as err:
             raise HomeAssistantError(f"Invalid target temperature: {temperature!r}") from err
-        temperature = max(self._attr_min_temp, min(self._attr_max_temp, temperature))
+        temperature = max(self.min_temp, min(self.max_temp, temperature))
         duration = get_override_duration(self._entry.options)
         # Hold the new setpoint across the API call + refresh so the card
         # does not flicker back to the old value during the ~3-5s window.

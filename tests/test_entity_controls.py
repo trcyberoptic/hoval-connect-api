@@ -88,6 +88,8 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
     sys.modules["homeassistant.core"].callback = lambda fn: fn
     error = type("HomeAssistantError", (Exception,), {})
     sys.modules["homeassistant.exceptions"].HomeAssistantError = error
+    validation_error = type("ServiceValidationError", (error,), {})
+    sys.modules["homeassistant.exceptions"].ServiceValidationError = validation_error
     sys.modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = _CoordinatorEntity
     sys.modules["homeassistant.helpers.dispatcher"].async_dispatcher_connect = lambda *args: None
 
@@ -104,7 +106,9 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
         monkeypatch.setitem(sys.modules, name, module)
         spec.loader.exec_module(module)
         loaded[basename] = module
-    return SimpleNamespace(runtime=runtime, error=error, **loaded)
+    return SimpleNamespace(
+        runtime=runtime, error=error, validation_error=validation_error, **loaded
+    )
 
 
 class _ControlCoordinator:
@@ -435,8 +439,8 @@ def test_invalid_temperature_never_reaches_control(entities, platform, value):
         ("climate", -20, 5),
         ("climate", 60, 30),
         ("climate", 21.5, 21.5),
-        ("water_heater", -20, 10),
-        ("water_heater", 90, 65),
+        ("water_heater", 10, 10),
+        ("water_heater", 65, 65),
         ("water_heater", 55.5, 55.5),
     ],
 )
@@ -451,6 +455,36 @@ def test_temperature_bounds_and_v4_duration_are_preserved(entities, platform, va
         if platform == "climate"
         else entities.runtime.const.DURATION_MIDNIGHT
     )
+
+
+@pytest.mark.parametrize("value", [9.5, 65.5, -20, 90])
+def test_water_heater_rejects_values_outside_fallback_range(entities, value):
+    entity, coordinator = _make_entity(entities, "water_heater")
+    with pytest.raises(entities.validation_error, match="10–65 °C"):
+        asyncio.run(entity.async_set_temperature(temperature=value))
+    assert coordinator.calls == []
+
+
+def test_water_heater_follows_controller_limits(entities):
+    # Issue #15: the controller took 51, later only 49, and answered 424 to 55.
+    entity, coordinator = _make_entity(entities, "water_heater")
+    coordinator.circuit.temporary_change_min = 10.0
+    coordinator.circuit.temporary_change_max = 49.0
+    assert (entity.min_temp, entity.max_temp) == (10.0, 49.0)
+    with pytest.raises(entities.validation_error, match="55 °C is outside .*10–49 °C"):
+        asyncio.run(entity.async_set_temperature(temperature=55))
+    assert coordinator.calls == []
+    asyncio.run(entity.async_set_temperature(temperature=49))
+    assert coordinator.api.set_temporary_change.await_args.kwargs["value"] == 49
+
+
+def test_climate_clamps_to_controller_limits(entities):
+    entity, coordinator = _make_entity(entities, "climate")
+    coordinator.circuit.temporary_change_min = 16.0
+    coordinator.circuit.temporary_change_max = 24.0
+    assert (entity.min_temp, entity.max_temp) == (16.0, 24.0)
+    asyncio.run(entity.async_set_temperature(temperature=28))
+    assert coordinator.api.set_temporary_change.await_args.kwargs["value"] == 24.0
 
 
 @pytest.mark.parametrize("failure", [None, "auth", "api"])

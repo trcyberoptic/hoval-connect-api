@@ -13,7 +13,7 @@ from homeassistant.components.water_heater import (
 )
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -30,8 +30,10 @@ from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordin
 
 _LOGGER = logging.getLogger(__name__)
 
-# Temperature limits for WW circuits (°C).
-# The Hoval app allows 10–65 °C; we use a safe operational range.
+# Fallback limits for WW circuits (°C), used until the controller's own
+# `temporaryChangeLimits` are known. Those are much tighter and move: an
+# UltraSource B (issue #15) accepted at most 51, later 49 °C, and answered
+# 424 to anything above.
 WW_MIN_TEMP = 10.0
 WW_MAX_TEMP = 65.0
 # Whole degrees: a DHW controller (UltraSource B, issue #15) stored a requested
@@ -93,8 +95,6 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
     _attr_has_entity_name = True
     _attr_translation_key = "hot_water"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_min_temp = WW_MIN_TEMP
-    _attr_max_temp = WW_MAX_TEMP
     _attr_target_temperature_step = WW_TEMP_STEP
     # A boost is started by setting a temperature, and reported by the existing
     # temporary-change sensors. There is no separate high_demand command.
@@ -131,6 +131,20 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
     def available(self) -> bool:
         """Return if entity is available."""
         return super().available and self._circuit is not None
+
+    @property
+    def min_temp(self) -> float:
+        """Return the lowest setpoint the controller accepts right now."""
+        circuit = self._circuit
+        low = circuit.temporary_change_min if circuit else None
+        return WW_MIN_TEMP if low is None else low
+
+    @property
+    def max_temp(self) -> float:
+        """Return the highest setpoint the controller accepts right now."""
+        circuit = self._circuit
+        high = circuit.temporary_change_max if circuit else None
+        return WW_MAX_TEMP if high is None else high
 
     @property
     def current_temperature(self) -> float | None:
@@ -192,7 +206,15 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
                 raise ValueError("Non-finite temperature")
         except (ValueError, TypeError, OverflowError) as err:
             raise HomeAssistantError(f"Invalid target temperature: {temperature!r}") from err
-        temperature = max(self._attr_min_temp, min(self._attr_max_temp, temperature))
+        # Reject rather than clamp: a boost to 55 that silently runs at 49 would
+        # mislead whatever automation asked for 55. HA validates climate ranges
+        # itself, but not water_heater ones.
+        low, high = self.min_temp, self.max_temp
+        if not low <= temperature <= high:
+            raise ServiceValidationError(
+                f"{temperature:g} °C is outside the range the Hoval controller "
+                f"accepts right now ({low:g}–{high:g} °C)"
+            )
         _LOGGER.debug(
             "WW set_temperature: circuit=%s temp=%s (override until midnight)",
             self._circuit_path,

@@ -613,6 +613,20 @@ class HovalConnectApi:
             quiet_statuses=(417,),
         )
 
+    async def get_circuit_details(self, plant_id: str, circuit_path: str) -> Any:
+        """Get circuit details, incl. `temporaryChangeLimits` ({min, max, step}).
+
+        The limits are what the controller accepts for a temporary change right
+        now; the cloud answers 424 outside them. They are not constant: a DHW
+        circuit's max moved between 51 and 49 °C within one day (issue #15).
+        """
+        return await self._request(
+            "GET",
+            f"/v3/plants/{plant_id}/circuits/{circuit_path}",
+            plant_id=plant_id,
+            quiet_statuses=(417,),
+        )
+
     async def get_datapoints(self, plant_id: str, addresses: list[str]) -> dict[str, str]:
         """Read raw controller datapoints straight off the device.
 
@@ -740,12 +754,25 @@ class HovalConnectApi:
             duration,
             body,
         )
-        result = await self._request(
-            "POST",
-            f"/v4/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
-            plant_id=plant_id,
-            json_data=body,
-        )
+        try:
+            result = await self._request(
+                "POST",
+                f"/v4/plants/{plant_id}/circuits/{circuit_path}/temporary-change",
+                plant_id=plant_id,
+                json_data=body,
+            )
+        except HovalApiError as err:
+            if err.status != 424:
+                raise
+            # 424 "Failed to activate temporary change" is all the cloud says.
+            # Measured on HV (limits 15..100): 14 and 101 → 424, 50 → 204. A
+            # duration outside 0.5..24 h gives the same 424, but we never send one.
+            raise HovalApiError(
+                f"{err} — the controller refused value {body['value']:g}; it is most likely "
+                "outside the range the controller accepts right now",
+                status=err.status,
+                request_path=err.request_path,
+            ) from err
         _LOGGER.debug("set_temporary_change: completed successfully")
         return result
 

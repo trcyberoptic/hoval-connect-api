@@ -399,3 +399,76 @@ def test_mode_override_survives_a_poll_served_from_previous_data(runtime):
     runtime.clock.advance(1)
     _refresh(coordinator, api)
     assert coordinator.get_mode_override("P1", _PATH) is None
+
+
+def _limits(low, high):
+    return {"temporaryChangeLimits": {"min": low, "max": high, "step": 0.5}}
+
+
+def test_temporary_change_limits_are_fetched_for_setpoint_circuits_only(runtime):
+    ww, hk, hv = ("P1", "1.2.0"), ("P1", "1.1.0"), ("P1", "520.50.0")
+    coordinator, api = _coordinator(
+        runtime, {ww: [None], hk: [None], hv: [None]}, {ww: "WW", hk: "HK", hv: "HV"}
+    )
+    api.details = {ww: _limits(10, 51), hk: _limits(5, 30), hv: _limits(15, 100)}
+    circuits = _refresh(coordinator, api).plants["P1"].circuits
+    assert (circuits["1.2.0"].temporary_change_min, circuits["1.2.0"].temporary_change_max) == (
+        10,
+        51,
+    )
+    # HK also fetches datapoints: the details result must not be read as those.
+    assert (circuits["1.1.0"].temporary_change_min, circuits["1.1.0"].temporary_change_max) == (
+        5,
+        30,
+    )
+    assert circuits["1.2.0"].datapoints == {}
+    assert circuits["520.50.0"].temporary_change_max is None
+    assert api.details_calls == {ww: 1, hk: 1}
+
+
+def test_temporary_change_limits_follow_cache_and_survive_failures(runtime):
+    key = ("P1", _PATH)
+    coordinator, api = _coordinator(runtime, {key: [None]}, {key: "WW"})
+    ttl = runtime.const.PROGRAM_CACHE_TTL.total_seconds()
+    api.details = {key: _limits(10, 51)}
+
+    def limits():
+        circuit = _refresh(coordinator, api).plants["P1"].circuits[_PATH]
+        return circuit.temporary_change_min, circuit.temporary_change_max
+
+    assert limits() == (10, 51)
+    assert limits() == (10, 51)
+    assert api.details_calls[key] == 1
+
+    # A failed fetch keeps the last known limits instead of widening the range.
+    runtime.clock.advance(ttl)
+    api.details = {key: runtime.api.HovalApiError("boom", status=503)}
+    assert limits() == (10, 51)
+    assert api.details_calls[key] == 2
+
+    runtime.clock.advance(ttl)
+    api.details = {key: _limits(10, 49)}
+    assert limits() == (10, 49)
+
+    # A successful answer without usable limits clears them.
+    runtime.clock.advance(ttl)
+    api.details = {key: {}}
+    assert limits() == (None, None)
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        None,
+        [],
+        {},
+        {"temporaryChangeLimits": None},
+        {"temporaryChangeLimits": {"min": 10}},
+        {"temporaryChangeLimits": {"min": "x", "max": 50}},
+        {"temporaryChangeLimits": {"min": True, "max": 50}},
+        {"temporaryChangeLimits": {"min": float("nan"), "max": 50}},
+        {"temporaryChangeLimits": {"min": 60, "max": 50}},
+    ],
+)
+def test_unusable_temporary_change_limits_are_ignored(runtime, details):
+    assert runtime.coordinator._parse_temporary_change_limits(details) == (None, None)
