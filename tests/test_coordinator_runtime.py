@@ -298,6 +298,7 @@ def _set_online(api, online):
 def _offline_poll(coordinator):
     data = asyncio.run(coordinator._async_update_data())
     coordinator.data = data
+    coordinator._async_refresh_finished()
     return data.plants["P1"]
 
 
@@ -353,6 +354,33 @@ def test_plant_offline_at_startup_is_logged_on_second_poll(runtime, caplog):
     assert _online_records(caplog) == []
     assert _offline_poll(coordinator).circuits == {}
     assert [level for level, _ in _online_records(caplog)] == [logging.WARNING]
+
+
+def test_circuits_appearing_after_offline_start_reach_the_platforms(runtime, monkeypatch):
+    """A plant offline at HA start must get its circuit entities once it is back.
+
+    HA runs dispatcher @callback receivers synchronously, and every platform's
+    _add_new() reads coordinator.data. Sent from inside _async_update_data, the
+    signal arrived before HA had assigned the new data: _add_new() saw the empty
+    offline snapshot, and _known_circuits kept the signal from ever being sent
+    again. Seen live on 2026-10-06, every HV entity stayed unavailable until
+    the next restart.
+    """
+    coordinator, api = _coordinator(runtime, {("P1", _PATH): [None] * 3})
+    api.invalidate_plant_token = MagicMock()
+    seen = []
+    monkeypatch.setattr(
+        runtime.coordinator,
+        "async_dispatcher_send",
+        lambda hass, signal: seen.append(list(coordinator.data.plants["P1"].circuits)),
+    )
+
+    _set_online(api, False)
+    _offline_poll(coordinator)
+    _set_online(api, True)
+    _refresh(coordinator, api)
+    _refresh(coordinator, api)
+    assert seen == [[_PATH]]
 
 
 def test_mode_override_survives_a_poll_served_from_previous_data(runtime):

@@ -881,23 +881,6 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         except HovalApiError as err:
             raise UpdateFailed(f"Error fetching Hoval data: {err}") from err
 
-        # Detect new circuits for dynamic entity discovery.
-        # Fire on any newly seen circuit, including the first one. Skipping the
-        # initial set (when `_known_circuits` was still empty) used to leave
-        # circuits stranded if the very first refresh came back without them
-        # — async_setup_entry's _add_new() ran against an empty circuits dict
-        # and the dispatcher then suppressed the catch-up signal. Each platform
-        # already deduplicates via its `known` set, so firing on the first
-        # discovery is a no-op when entities are already present.
-        current_circuits = {
-            f"{pid}_{path}" for pid, plant in data.plants.items() for path in plant.circuits
-        }
-        new_circuits = current_circuits - self._known_circuits
-        if new_circuits:
-            _LOGGER.info("New circuits discovered: %s", new_circuits)
-            async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)
-        self._known_circuits = current_circuits
-
         # Clear optimistic overrides only after a SUCCESSFUL fetch — fresh data
         # replaces them. Clearing at the start meant a failed refresh snapped
         # entities back to stale pre-override data. Prune ONLY overrides set
@@ -913,3 +896,27 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             if entry[1] >= poll_start or key[0] in stale_plants
         }
         return data
+
+    def _async_refresh_finished(self) -> None:
+        """Announce circuits that are new in the data HA has just published.
+
+        Dynamic entity discovery runs here, not at the end of
+        _async_update_data: HA calls this hook only after it has assigned
+        `self.data`, and it runs dispatcher @callback receivers synchronously.
+        Sent from _async_update_data, the signal reached every platform's
+        _add_new() while `coordinator.data` still held the previous snapshot.
+        After an HA start with the plant offline, that snapshot had no
+        circuits, and _known_circuits then suppressed the signal for good.
+        Fire on any newly seen circuit, the first one included; each platform
+        deduplicates via its `known` set.
+        """
+        if not self.last_update_success or self.data is None:
+            return
+        current_circuits = {
+            f"{pid}_{path}" for pid, plant in self.data.plants.items() for path in plant.circuits
+        }
+        new_circuits = current_circuits - self._known_circuits
+        self._known_circuits = current_circuits
+        if new_circuits:
+            _LOGGER.info("New circuits discovered: %s", new_circuits)
+            async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)
