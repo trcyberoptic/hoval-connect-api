@@ -82,6 +82,9 @@ class _Api:
         self.circuit_types = circuit_types or {}
         self.program_calls = Counter()
         self.live_calls = Counter()
+        self.details_calls = Counter()
+        # (plant, path) → circuit details DTO or exception; default: no limits.
+        self.details = {}
 
     async def get_plants(self):
         return [
@@ -120,6 +123,14 @@ class _Api:
 
     async def get_datapoints(self, plant, addresses):
         return {}
+
+    async def get_circuit_details(self, plant, path):
+        key = (plant, path)
+        self.details_calls[key] += 1
+        outcome = self.details.get(key, {})
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return deepcopy(outcome)
 
     async def get_latest_event(self, plant):
         return None

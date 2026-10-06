@@ -678,6 +678,26 @@ class TestHovalConnectApiEndpoints:
         # v4 duration is in HOURS — 240 (the old minutes value) is a 424
         assert body == {"type": "duration", "value": 21.5, "duration": 4}
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [424, 400])
+    async def test_set_temporary_change_explains_only_a_424(self, status):
+        """424 is the cloud's whole answer to an out-of-range value (issue #15)."""
+        session = _make_session()
+        session.post = MagicMock(return_value=_make_response(200, {"id_token": "tok"}))
+        session.get = MagicMock(return_value=_make_response(200, {"token": "pat"}))
+        session.request = MagicMock(
+            return_value=_make_response(status, {"detail": "Failed to activate temporary change"})
+        )
+
+        api = HovalConnectApi(session, "u", "p")
+        with pytest.raises(HovalApiError) as exc:
+            await api.set_temporary_change("plant-1", "1.2.0", 55, DURATION_END_OF_PHASE)
+
+        assert exc.value.status == status
+        assert ("refused value 55" in str(exc.value)) is (status == 424)
+        assert f"HTTP {status}" in str(exc.value)
+        session.request.assert_called_once()
+
 
 class TestBuildV4TemporaryChangeBody:
     """Tests for build_v4_temporary_change_body — pure function, no I/O.

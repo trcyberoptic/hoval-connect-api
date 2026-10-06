@@ -22,6 +22,7 @@ from .api import HovalApiError, HovalAuthError, HovalConnectApi, _require_identi
 from .const import (
     CIRCUIT_DATAPOINT_IDS,
     CIRCUIT_TYPE_BL,
+    CIRCUIT_TYPE_HK,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DEFAULT_SCAN_INTERVAL,
@@ -78,6 +79,24 @@ def _coerce_finite_number(value: Any) -> float | None:
     except (ValueError, OverflowError):
         return None
     return number if isfinite(number) else None
+
+
+# Circuit types whose entities set a temperature and therefore need the
+# controller's temporary-change limits. HV keeps its fixed 15..100 % band,
+# which matches the limits the cloud reports for it.
+_LIMITS_CIRCUIT_TYPES = frozenset({CIRCUIT_TYPE_WW, CIRCUIT_TYPE_HK})
+
+
+def _parse_temporary_change_limits(details: Any) -> tuple[float | None, float | None]:
+    """Return (min, max) from a circuit details DTO, or (None, None) if unusable."""
+    limits = details.get("temporaryChangeLimits") if isinstance(details, dict) else None
+    if not isinstance(limits, dict):
+        return None, None
+    low = _coerce_finite_number(limits.get("min"))
+    high = _coerce_finite_number(limits.get("max"))
+    if low is None or high is None or low > high:
+        return None, None
+    return low, high
 
 
 def _is_circuit_selectable(circuit: dict[str, Any]) -> bool:
@@ -211,6 +230,11 @@ class HovalCircuitData:
     temporary_change_end: str | None = None
     temporary_change_value: float | None = None
     temporary_change_type: str | None = None
+    # `temporaryChangeLimits` from the circuit details endpoint: the range the
+    # controller accepts for a temporary change right now. Fetched for WW/HK
+    # only (_LIMITS_CIRCUIT_TYPES); None until known or when the cloud omits it.
+    temporary_change_min: float | None = None
+    temporary_change_max: float | None = None
     # HV: air-volume percentage; HK: target temperature in °C. Coming from the
     # circuit list endpoint's `targetValue` (renamed from v1 `targetAirVolume`).
     target_value: float | None = None
@@ -343,6 +367,11 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # results per plant, with a monotonic deadline for the next probe.
         self._program_cache: dict[tuple[str, str], tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
+        # (min, max) temporary-change limits per circuit, refreshed on the
+        # program cadence: they move during the day, but not by the minute.
+        self._limits_cache: dict[
+            tuple[str, str], tuple[tuple[float | None, float | None], float]
+        ] = {}
         # Plant-level caches: (parsed value(s), monotonic timestamp)
         self._weather_cache: dict[str, tuple[HovalWeatherData | None, float]] = {}
         self._weather_cache_ttl = WEATHER_CACHE_TTL.total_seconds()
@@ -600,18 +629,26 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         if dp_ids
                         else []
                     )
+                    # + circuit details for the temporary-change limits, last.
+                    cached_limits = self._limits_cache.get(program_key)
+                    need_limits = ctype in _LIMITS_CIRCUIT_TYPES and (
+                        cached_limits is None or time.monotonic() >= cached_limits[1]
+                    )
+                    details = [self.api.get_circuit_details(_plant_id, path)] if need_limits else []
                     if need_programs:
                         prog_task = self.api.get_programs(_plant_id, path)
                         results = await asyncio.gather(
                             live_task,
                             prog_task,
                             *extra,
+                            *details,
                             return_exceptions=True,
                         )
                     else:
                         gathered = await asyncio.gather(
                             live_task,
                             *extra,
+                            *details,
                             return_exceptions=True,
                         )
                         # Keep index 0 = live values and 1 = programs in both
@@ -643,7 +680,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     # Raw datapoints. Keyed by the bare DatapointId so sensors
                     # need not know the circuit path. A failure here degrades
                     # only the datapoint sensors.
-                    dp_result = results[2] if len(results) > 2 else None
+                    dp_result = results[2] if extra else None
                     if isinstance(dp_result, dict):
                         circuit_data.datapoints = {
                             addr.rsplit(".", 1)[-1]: value for addr, value in dp_result.items()
@@ -651,6 +688,23 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         _LOGGER.debug("Circuit %s datapoints: %s", path, circuit_data.datapoints)
                     elif dp_result is not None:
                         _LOGGER.debug("Datapoints not available for %s", path)
+
+                    limits = cached_limits[0] if cached_limits else (None, None)
+                    if need_limits:
+                        details_result = results[2 + len(extra)]
+                        if isinstance(details_result, dict):
+                            limits = _parse_temporary_change_limits(details_result)
+                        else:
+                            # Keep the last known limits: falling back to the
+                            # entity's static range would widen it again.
+                            _LOGGER.debug(
+                                "Circuit details not available for %s: %s", path, details_result
+                            )
+                        self._limits_cache[program_key] = (
+                            limits,
+                            time.monotonic() + self._program_cache_ttl,
+                        )
+                    circuit_data.temporary_change_min, circuit_data.temporary_change_max = limits
 
                     programs = results[1]
                     if need_programs:
