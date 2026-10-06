@@ -35,9 +35,9 @@ from custom_components.hoval_connect.api import (  # noqa: E402
     HovalApiError,
     HovalAuthError,
     HovalConnectApi,
+    _hours_until_local_midnight,
     _is_gateway_block,
     _is_retryable_status,
-    _minutes_until_local_midnight,
     build_v4_temporary_change_body,
 )
 from custom_components.hoval_connect.const import (  # noqa: E402
@@ -675,67 +675,83 @@ class TestHovalConnectApiEndpoints:
         await api.set_temporary_change("plant-1", "1.2.3", 21.5, DURATION_FOUR_HOURS)
 
         body = session.request.call_args.kwargs.get("json")
-        # v4 duration is in MINUTES — 4 hours = 240 minutes
-        assert body == {"type": "duration", "value": 21.5, "duration": 240}
+        # v4 duration is in HOURS — 240 (the old minutes value) is a 424
+        assert body == {"type": "duration", "value": 21.5, "duration": 4}
 
 
 class TestBuildV4TemporaryChangeBody:
     """Tests for build_v4_temporary_change_body — pure function, no I/O.
 
-    The cloud's v4 temporary-change endpoint takes `duration` in MINUTES
-    (verified empirically against a live HV circuit on 2026-05-23: duration=30
-    accepted as 30 minutes, duration=1800 rejected as out-of-range = 30 hours).
+    The cloud's v4 temporary-change endpoint takes `duration` in HOURS,
+    verified live on 2026-10-06 against an HV circuit by reading back the
+    reported `temporaryChange.end`: 0.5 → +30 min, 2 → +120 min, 8.25 →
+    +495 min, 24 and 25 accepted; 240 and 498 → HTTP 424 "Failed to activate
+    temporary change" (issue #15). The app sends the same unit
+    (`convertTimeToHours`, rounded to two decimals, picker range 0.5..24).
     """
 
     def test_end_of_phase(self):
         body = build_v4_temporary_change_body(70, DURATION_END_OF_PHASE)
         assert body == {"type": "endOfPhase", "value": 70}
 
-    def test_four_hours_is_240_minutes(self):
+    def test_four_hours_is_4(self):
         body = build_v4_temporary_change_body(21.5, DURATION_FOUR_HOURS)
-        assert body == {"type": "duration", "value": 21.5, "duration": 240}
+        assert body == {"type": "duration", "value": 21.5, "duration": 4}
 
-    def test_midnight_minutes_pinned_to_now(self):
-        # Pin "now" to 22:30 → 90 minutes until 00:00
+    def test_midnight_hours_pinned_to_now(self):
+        # Pin "now" to 22:30 → 1.5 hours until 00:00
         from datetime import datetime as _dt
 
         now = _dt(2026, 5, 23, 22, 30, 0)
         body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
-        assert body == {"type": "duration", "value": 22, "duration": 90}
+        assert body == {"type": "duration", "value": 22, "duration": 1.5}
 
-    def test_midnight_clamps_to_30_when_too_close(self):
-        """API rejects < 30 minutes; helper clamps to the lower bound."""
+    def test_midnight_clamps_to_half_hour_when_too_close(self):
+        """The app's picker starts at 30 minutes; the helper clamps to it."""
         from datetime import datetime as _dt
 
         now = _dt(2026, 5, 23, 23, 59, 0)  # 1 minute to midnight
         body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
-        assert body["duration"] == 30  # clamped
+        assert body["duration"] == 0.5  # clamped
 
-    def test_midnight_clamps_to_1440_when_far(self):
-        """Sanity: 24h is the upper bound the cloud accepts."""
+    def test_midnight_at_midnight_is_24(self):
         from datetime import datetime as _dt
 
-        # 00:00 → 24h to next midnight → 1440 minutes (already at limit)
         now = _dt(2026, 5, 23, 0, 0, 0)
         body = build_v4_temporary_change_body(22, DURATION_MIDNIGHT, now=now)
-        assert body["duration"] == 1440
+        assert body["duration"] == 24
+
+    def test_duration_never_leaves_accepted_range(self):
+        """Regression for #15: every option must stay within 0.5..24 hours."""
+        from datetime import datetime as _dt
+
+        bodies = [build_v4_temporary_change_body(50, DURATION_FOUR_HOURS)]
+        bodies += [
+            build_v4_temporary_change_body(50, DURATION_MIDNIGHT, now=_dt(2026, 10, 6, h, m, 0))
+            for h in range(24)
+            for m in (0, 1, 29, 30, 59)
+        ]
+        for body in bodies:
+            assert 0.5 <= body["duration"] <= 24, body
 
     def test_unknown_duration_falls_back_to_end_of_phase(self):
         body = build_v4_temporary_change_body(50, "weirdOption")
         assert body == {"type": "endOfPhase", "value": 50}
 
-    def test_minutes_until_local_midnight_basic(self):
+    def test_hours_until_local_midnight_basic(self):
         from datetime import datetime as _dt
 
-        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 0, 0, 0)) == 1440
-        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 12, 0, 0)) == 720
-        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 23, 0, 0)) == 60
+        assert _hours_until_local_midnight(_dt(2026, 5, 23, 0, 0, 0)) == 24
+        assert _hours_until_local_midnight(_dt(2026, 5, 23, 12, 0, 0)) == 12
+        assert _hours_until_local_midnight(_dt(2026, 5, 23, 23, 0, 0)) == 1
+        # 15:05 → 535 min → rounded to two decimals, like the app
+        assert _hours_until_local_midnight(_dt(2026, 10, 6, 15, 5, 0)) == 8.92
 
-    def test_minutes_until_local_midnight_clamped(self):
+    def test_hours_until_local_midnight_clamped(self):
         from datetime import datetime as _dt
 
-        # too close to midnight → clamped to lower bound 30
-        assert _minutes_until_local_midnight(_dt(2026, 5, 23, 23, 59, 30)) == 30
+        # too close to midnight → clamped to lower bound 0.5
+        assert _hours_until_local_midnight(_dt(2026, 5, 23, 23, 59, 30)) == 0.5
 
     @pytest.mark.asyncio
     async def test_invalidate_plant_token(self):
