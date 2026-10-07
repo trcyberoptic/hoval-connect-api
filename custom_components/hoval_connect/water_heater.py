@@ -30,10 +30,10 @@ from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordin
 
 _LOGGER = logging.getLogger(__name__)
 
-# Fallback limits for WW circuits (°C), used until the controller's own
-# `temporaryChangeLimits` are known. Those are much tighter and move: an
-# UltraSource B (issue #15) accepted at most 51, later 49 °C, and answered
-# 424 to anything above.
+# Fallback limits for WW circuits (°C), used until the cloud's
+# `temporaryChangeLimits` are known. Those are not what the controller accepts:
+# an UltraSource B (issue #15) reported 10–70 °C. It took 51 °C at 17:03, but
+# at 22:00 the same day it took 50 and refused 51, 52 and 55 with 424.
 WW_MIN_TEMP = 10.0
 WW_MAX_TEMP = 65.0
 # Whole degrees: a DHW controller (UltraSource B, issue #15) stored a requested
@@ -134,14 +134,14 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
 
     @property
     def min_temp(self) -> float:
-        """Return the lowest setpoint the controller accepts right now."""
+        """Return the lowest setpoint Hoval reports for a temporary change."""
         circuit = self._circuit
         low = circuit.temporary_change_min if circuit else None
         return WW_MIN_TEMP if low is None else low
 
     @property
     def max_temp(self) -> float:
-        """Return the highest setpoint the controller accepts right now."""
+        """Return the highest setpoint Hoval reports for a temporary change."""
         circuit = self._circuit
         high = circuit.temporary_change_max if circuit else None
         return WW_MAX_TEMP if high is None else high
@@ -212,8 +212,8 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         low, high = self.min_temp, self.max_temp
         if not low <= temperature <= high:
             raise ServiceValidationError(
-                f"{temperature:g} °C is outside the range the Hoval controller "
-                f"accepts right now ({low:g}–{high:g} °C)"
+                f"{temperature:g} °C is outside the range Hoval reports for this "
+                f"circuit ({low:g}–{high:g} °C)"
             )
         _LOGGER.debug(
             "WW set_temperature: circuit=%s temp=%s (override until midnight)",

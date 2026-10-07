@@ -48,13 +48,13 @@ Plants and circuits are discovered automatically from your account.
 - Turning on/off cancels any slider command still waiting for its debounce timer; commands already being sent finish in order
 
 **Climate entity** (per HK heating circuit):
-- Target temperature control, limited to the range your controller reports for temporary changes (5–30 °C until it is known)
+- Target temperature control, limited to the range Hoval reports for the circuit (5–30 °C until it is known)
 - Current room temperature (v1.0.0 — reads the correct `roomTempActual` live value)
 - HVAC modes: Heat (constant program) / Auto (last observed weekly program) / Off (standby)
 - HVAC action reflects actual circuit status
 
 **Water heater entity** (per WW hot-water circuit, v1.0.0):
-- Target temperature in 1 °C steps (the controller stores whole degrees) — sets a temporary boost that expires at midnight, then the week program resumes. The allowed range is the one your controller reports for temporary changes (re-read every 5 minutes; it can move during the day, e.g. 10–49 °C), and 10–65 °C until it is known. A value outside it is rejected with the current range instead of being sent.
+- Target temperature in 1 °C steps (the controller stores whole degrees) — sets a temporary boost that expires at midnight, then the week program resumes. The allowed range is the one Hoval reports for the circuit (for hot water usually 10–70 °C), and 10–65 °C until it is known. A value outside it is rejected instead of being sent. The controller can still refuse a value inside that range: an UltraSource B heat pump took 51 °C in the afternoon and only 50 °C in the evening. Hoval then answers `HTTP 424 "Failed to activate temporary change"`, and the error message says that the value was most likely too high or too low.
 - Operation modes: heat pump (last observed weekly program) and off (standby). Start a boost by setting the target temperature; its status and expiry are shown by the temporary-change sensors. The former misleading high-demand selector is no longer offered.
 - Current temperature from the top-of-tank sensor
 

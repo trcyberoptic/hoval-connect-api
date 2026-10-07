@@ -230,8 +230,9 @@ class HovalCircuitData:
     temporary_change_end: str | None = None
     temporary_change_value: float | None = None
     temporary_change_type: str | None = None
-    # `temporaryChangeLimits` from the circuit details endpoint: the range the
-    # controller accepts for a temporary change right now. Fetched for WW/HK
+    # `temporaryChangeLimits` from the circuit details endpoint: the static range
+    # of the setpoint datapoint. The cloud refuses values outside it with 424;
+    # the controller may refuse values inside it too (issue #15). Fetched for WW/HK
     # only (_LIMITS_CIRCUIT_TYPES); None until known or when the cloud omits it.
     temporary_change_min: float | None = None
     temporary_change_max: float | None = None
@@ -368,7 +369,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._program_cache: dict[tuple[str, str], tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
         # (min, max) temporary-change limits per circuit, refreshed on the
-        # program cadence: they move during the day, but not by the minute.
+        # program cadence so a changed installer setting shows up eventually.
         self._limits_cache: dict[
             tuple[str, str], tuple[tuple[float | None, float | None], float]
         ] = {}

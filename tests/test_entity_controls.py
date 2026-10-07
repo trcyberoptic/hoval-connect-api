@@ -466,7 +466,7 @@ def test_water_heater_rejects_values_outside_fallback_range(entities, value):
 
 
 def test_water_heater_follows_controller_limits(entities):
-    # Issue #15: the controller took 51, later only 49, and answered 424 to 55.
+    # The range comes from the cloud's temporaryChangeLimits (see coordinator).
     entity, coordinator = _make_entity(entities, "water_heater")
     coordinator.circuit.temporary_change_min = 10.0
     coordinator.circuit.temporary_change_max = 49.0
