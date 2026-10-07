@@ -111,14 +111,14 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
 
     @property
     def min_temp(self) -> float:
-        """Return the lowest setpoint the controller accepts right now."""
+        """Return the lowest setpoint Hoval reports for a temporary change."""
         circuit = self._circuit
         low = circuit.temporary_change_min if circuit else None
         return HK_MIN_TEMP if low is None else low
 
     @property
     def max_temp(self) -> float:
-        """Return the highest setpoint the controller accepts right now."""
+        """Return the highest setpoint Hoval reports for a temporary change."""
         circuit = self._circuit
         high = circuit.temporary_change_max if circuit else None
         return HK_MAX_TEMP if high is None else high

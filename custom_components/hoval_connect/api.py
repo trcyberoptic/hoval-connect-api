@@ -616,9 +616,11 @@ class HovalConnectApi:
     async def get_circuit_details(self, plant_id: str, circuit_path: str) -> Any:
         """Get circuit details, incl. `temporaryChangeLimits` ({min, max, step}).
 
-        The limits are what the controller accepts for a temporary change right
-        now; the cloud answers 424 outside them. They are not constant: a DHW
-        circuit's max moved between 51 and 49 °C within one day (issue #15).
+        The cloud answers 424 to a temporary-change value outside them. They are
+        the static range of the setpoint datapoint (WW: 10..70 °C, the range of
+        "Normal-Warmwassertemperatur" 5051), not what the controller accepts at
+        the moment: an UltraSource B DHW circuit reported 10..70 and still
+        refused 51 with 424 while it took 50 (issue #15).
         """
         return await self._request(
             "GET",
@@ -769,7 +771,8 @@ class HovalConnectApi:
             # duration outside 0.5..24 h gives the same 424, but we never send one.
             raise HovalApiError(
                 f"{err} — the controller refused value {body['value']:g}; it is most likely "
-                "outside the range the controller accepts right now",
+                "outside what the controller accepts at the moment, which can be "
+                "narrower than the range Hoval reports",
                 status=err.status,
                 request_path=err.request_path,
             ) from err
