@@ -14,10 +14,15 @@ select = [
     "UP",   # pyupgrade
     "B",    # flake8-bugbear
     "SIM",  # flake8-simplify
+    "S",    # flake8-bandit
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is the test mechanism; the S105 hits are fixture token strings.
+"tests/**" = ["S101", "S105"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["custom_components.hoval_connect"]

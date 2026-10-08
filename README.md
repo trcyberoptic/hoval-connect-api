@@ -515,7 +515,7 @@ The Modbus *register* number is a gateway-side artefact and is not accepted — 
 returns `200 {}` rather than an error, so an empty result means "unknown address", not "no data".
 
 ```
-GET /api/telemetry-data/snapshots/live/604961716240055?dataPoints=520.50.0.39652,520.50.0.38606
+GET /api/telemetry-data/snapshots/live/{plantId}?dataPoints=520.50.0.39652,520.50.0.38606
 → 200 { "520.50.0.39652": "1", "520.50.0.38606": "100" }
 ```
 

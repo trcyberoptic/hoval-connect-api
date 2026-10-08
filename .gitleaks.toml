@@ -1,0 +1,20 @@
+# Config for the gitleaks pre-commit hook (and for `gitleaks git .`).
+# Everything gitleaks has ever flagged in this repo's history is one of the
+# three false-positive shapes below, so each gets a narrow allowlist rather
+# than a disabled rule.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Entity description keys and translation keys are identifiers, not secrets"
+regexTarget = "line"
+regexes = ['''\b(?:translation_)?key="[a-z0-9_]+"''']
+
+[[allowlists]]
+description = "Hand-built test fixtures: a JWT whose payload is {\"sub\":\"test\"}, and numbered token strings"
+regexTarget = "line"
+regexes = [
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ0ZXN0In0\.c2lnbmF0dXJl''',
+  '''"(?:unscoped-)?token-\d+"''',
+]
