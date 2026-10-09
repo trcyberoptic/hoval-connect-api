@@ -395,3 +395,20 @@ class TestProgramSelect:
 
     def test_disambiguation_survived(self):
         assert 'f"{default} ({api_key})"' in _read("select.py")
+
+
+class TestOssScannerImage:
+    """The OSS Scanner audits the image .oss-scanner/Dockerfile builds, with no network."""
+
+    def test_installs_every_ci_test_dependency(self):
+        # A package CI installs but the image lacks cannot be fetched during the
+        # scan, so the scanner could not run the tests the threat model points it to.
+        import re
+
+        wf = (pathlib.Path(".github") / "workflows" / "lint.yml").read_text(encoding="utf-8")
+        dockerfile = (pathlib.Path(".oss-scanner") / "Dockerfile").read_text(encoding="utf-8")
+        ci = re.search(r"pip install ([^\n]+)", wf)
+        image = re.search(r"^RUN pip install ([^\n]+)", dockerfile, re.MULTILINE)
+        assert ci and image
+        missing = set(ci.group(1).split()) - set(image.group(1).split())
+        assert not missing, f".oss-scanner/Dockerfile lacks CI's test packages: {sorted(missing)}"
