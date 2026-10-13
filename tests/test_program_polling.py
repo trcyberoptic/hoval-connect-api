@@ -273,25 +273,63 @@ def test_417_reprobes_after_one_hour_and_recovers(runtime):
     assert api.program_calls[key] == 3
 
 
-def test_persistent_417_warns_once_per_hourly_probe(runtime, caplog):
+def _program_417_logs(caplog, logger, level):
+    return [
+        r
+        for r in caplog.records
+        if r.name == logger and r.levelno == level and "Programs unavailable" in r.getMessage()
+    ]
+
+
+def test_persistent_417_warns_once_then_logs_debug(runtime, caplog):
     key = ("P1", _PATH)
     coordinator, api = _coordinator(runtime, {key: [_unsupported(runtime, key)]})
     logger = runtime.coordinator.__name__
-    caplog.set_level(logging.WARNING, logger=logger)
+    caplog.set_level(logging.DEBUG, logger=logger)
     retry = runtime.const.PROGRAM_UNAVAILABLE_RETRY_INTERVAL.total_seconds()
     _refresh(coordinator, api)
     runtime.clock.advance(60)
     _refresh(coordinator, api)
-    warnings = [r for r in caplog.records if r.name == logger and r.levelno == logging.WARNING]
+    warnings = _program_417_logs(caplog, logger, logging.WARNING)
     assert len(warnings) == 1
     assert "P1" in warnings[0].getMessage()
     assert _PATH in warnings[0].getMessage()
 
-    runtime.clock.advance(retry - 60)
+    # Issue #16: the hourly re-probe of a circuit that keeps answering 417 is
+    # not news, so it must not add a WARNING every hour.
+    for _ in range(3):
+        runtime.clock.advance(retry)
+        _refresh(coordinator, api)
+    assert api.program_calls[key] == 4
+    assert len(_program_417_logs(caplog, logger, logging.WARNING)) == 1
+    assert len(_program_417_logs(caplog, logger, logging.DEBUG)) == 3
+
+
+def test_417_after_recovery_warns_again(runtime, caplog):
+    key = ("P1", _PATH)
+    unsupported = _unsupported(runtime, key)
+    coordinator, api = _coordinator(runtime, {key: [unsupported, _programs("Back"), unsupported]})
+    logger = runtime.coordinator.__name__
+    caplog.set_level(logging.WARNING, logger=logger)
+    retry = runtime.const.PROGRAM_UNAVAILABLE_RETRY_INTERVAL.total_seconds()
+    ttl = runtime.const.PROGRAM_CACHE_TTL.total_seconds()
     _refresh(coordinator, api)
-    warnings = [r for r in caplog.records if r.name == logger and r.levelno == logging.WARNING]
-    assert len(warnings) == 2
-    assert api.program_calls[key] == 2
+    runtime.clock.advance(retry)
+    _refresh(coordinator, api)
+    runtime.clock.advance(ttl)
+    _refresh(coordinator, api)
+    assert api.program_calls[key] == 3
+    assert len(_program_417_logs(caplog, logger, logging.WARNING)) == 2
+
+
+def test_417_warning_is_per_circuit(runtime, caplog):
+    keys = [("P1", _PATH), ("P2", _PATH)]
+    coordinator, api = _coordinator(runtime, {k: [_unsupported(runtime, k)] for k in keys})
+    logger = runtime.coordinator.__name__
+    caplog.set_level(logging.WARNING, logger=logger)
+    _refresh(coordinator, api)
+    warnings = _program_417_logs(caplog, logger, logging.WARNING)
+    assert sorted(w.getMessage().split()[4] for w in warnings) == ["P1", "P2"]
 
 
 @pytest.mark.parametrize(
