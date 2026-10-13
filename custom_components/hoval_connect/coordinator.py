@@ -368,6 +368,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # results per plant, with a monotonic deadline for the next probe.
         self._program_cache: dict[tuple[str, str], tuple[Any, float]] = {}
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
+        # Circuits whose 417 on /programs was already logged at WARNING.
+        self._programs_417_logged: set[tuple[str, str]] = set()
         # (min, max) temporary-change limits per circuit, refreshed on the
         # program cadence so a changed installer setting shows up eventually.
         self._limits_cache: dict[
@@ -721,9 +723,15 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                                 None,
                                 time.monotonic() + retry_interval,
                             )
-                            _LOGGER.warning(
+                            # BL/PS circuits answer 417 on every re-probe
+                            # (issue #16): warn once, not once an hour.
+                            first_417 = program_key not in self._programs_417_logged
+                            self._programs_417_logged.add(program_key)
+                            _LOGGER.log(
+                                logging.WARNING if first_417 else logging.DEBUG,
                                 "Programs unavailable for plant %s circuit %s (HTTP 417); "
-                                "checking again in %d minutes. Live values continue to update.",
+                                "checking again every %d minutes, repeats are logged at "
+                                "debug level. Live values continue to update.",
                                 _plant_id,
                                 path,
                                 retry_interval / 60,
@@ -736,6 +744,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         ):
                             # Empty successful responses also need a cache;
                             # otherwise circuits without schedules poll forever.
+                            # A later 417 after a success is news again.
+                            self._programs_417_logged.discard(program_key)
                             self._program_cache[program_key] = (
                                 programs,
                                 time.monotonic() + self._program_cache_ttl,
