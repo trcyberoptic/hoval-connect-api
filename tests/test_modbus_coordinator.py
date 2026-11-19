@@ -391,6 +391,89 @@ def test_auth_failure_starts_reauth_and_keeps_modbus(runtime):
     assert _HK in data.plants["P1"].circuits
 
 
+def test_unexpected_cloud_error_counts_as_cloud_failure(runtime, caplog):
+    coordinator, api, poller, _ = _hybrid(runtime)
+    _tick(coordinator)
+    api.plants_error = ValueError("unexpected response shape")
+    with caplog.at_level(logging.DEBUG):
+        runtime.clock.advance(900)
+        data = _tick(coordinator)  # no exception
+        assert data.cloud_ok is False
+        _assert_modbus_values(data.plants["P1"].circuits[_HV], poller)
+        # The frozen snapshot is never served as fresh cloud data.
+        runtime.clock.advance(30)
+        assert _tick(coordinator).cloud_ok is False
+        runtime.clock.advance(870)
+        _tick(coordinator)
+        assert api.plants_calls == 3
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1 and errors[0].exc_info is not None
+        api.plants_error = None
+        runtime.clock.advance(900)
+        assert _tick(coordinator).cloud_ok is True
+    assert len(_records(caplog, logging.INFO, "hoval cloud")) == 1
+
+
+def test_rejected_login_suspends_cloud_until_reload(runtime, monkeypatch):
+    coordinator, api, poller, _ = _hybrid(runtime)
+    _tick(coordinator)
+    api.plants_error = runtime.api.HovalAuthError("rejected")
+    runtime.clock.advance(900)
+    _tick(coordinator)
+    assert api.plants_calls == 2
+    for _ in range(3):
+        runtime.clock.advance(900)
+        data = _tick(coordinator)
+        assert data.cloud_ok is False
+        _assert_modbus_values(data.plants["P1"].circuits[_HV], poller)
+    # Not even a cloud control action retries the rejected login.
+
+    async def no_sleep(delay, result=None):
+        return result
+
+    async def refresh():
+        coordinator.data = await coordinator._async_update_data()
+
+    async def action():
+        pass
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    coordinator.async_request_refresh = refresh
+    asyncio.run(
+        coordinator.async_control_and_refresh(
+            action, plant_id="P1", circuit_path=_HV, mode_override="manual"
+        )
+    )
+    assert api.plants_calls == 2
+    assert coordinator.config_entry.reauth_calls == 1
+
+
+def test_overlapping_updates_fetch_the_cloud_once(runtime):
+    coordinator, api, poller, _ = _hybrid(runtime, topology=_TOPOLOGY)
+    discover = poller.discover
+    gate = {}
+
+    async def slow_discover(candidates=None):
+        await gate["event"].wait()
+        return await discover(candidates)
+
+    poller.discover = slow_discover
+
+    async def main():
+        gate["event"] = asyncio.Event()
+        first = asyncio.create_task(coordinator._async_update_data())
+        await asyncio.sleep(0)  # first now waits in the discovery before its cloud fetch
+        second = asyncio.create_task(coordinator._async_update_data())
+        await asyncio.sleep(0)
+        gate["event"].set()
+        return await asyncio.gather(first, second)
+
+    first, second = asyncio.run(main())
+    assert api.plants_calls == 1
+    assert first.cloud_ok is True
+    _assert_modbus_values(second.plants["P1"].circuits[_HV], poller)
+
+
 def test_auth_failure_at_startup_uses_topology_and_starts_reauth(runtime):
     coordinator, api, poller, _ = _hybrid(runtime, topology=_TOPOLOGY)
     api.plants_error = runtime.api.HovalAuthError("rejected")

@@ -521,6 +521,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         # Outcome of the latest cloud attempt, and whether a failure streak runs.
         self._cloud_ok = False
         self._cloud_failing = False
+        # Set by a rejected login: no cloud request until the entry is reloaded.
+        self._cloud_suspended = False
         # (plant_id, path) of HV circuits Modbus serves: the cloud fetch skips
         # their live values and circuit details (G6). Empty in cloud-only mode.
         self._modbus_paths: set[tuple[str, str]] = set()
@@ -692,13 +694,20 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """
         modbus_down = False
         if time.monotonic() >= self._cloud_deadline:
-            # Rediscover once per cloud fetch, and before it while the HV paths
-            # are known (previous fetch or stored topology): the fetch then
-            # already skips what Modbus serves (G6), right after an HA restart too.
+            # Claim the slot before the first await, so an overlapping update
+            # (e.g. a requested refresh) cannot fetch the cloud a second time.
+            # Hoval may block again without notice, so whatever the outcome,
+            # the next attempt waits a full cloud interval: a failing cloud is
+            # never retried at the Modbus interval.
+            self._cloud_deadline = time.monotonic() + self.cloud_interval
+            # Rediscover once per cloud interval, before the fetch while the HV
+            # paths are known (previous fetch or stored topology): the fetch
+            # then already skips what Modbus serves (G6), after an HA restart too.
             modbus_down = not await self._async_discover(
                 self._hv_paths(self._bound_plant(self._base_snapshot()))
             )
-            await self._async_refresh_cloud()
+            if not self._cloud_suspended:
+                await self._async_refresh_cloud()
         data = self._base_snapshot()
         if data is None:
             raise UpdateFailed("Hoval cloud unavailable and no stored plant topology to start from")
@@ -710,21 +719,34 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         return data
 
     async def _async_refresh_cloud(self) -> None:
-        """Fetch the cloud once; a failure is recorded, never raised."""
-        # Hoval may block again without notice, so whatever the outcome, the
-        # next attempt waits a full cloud interval: a failing cloud must never
-        # be retried at the Modbus interval.
-        self._cloud_deadline = time.monotonic() + self.cloud_interval
+        """Fetch the cloud once; a failure is recorded, never raised.
+
+        Raising would fail the whole update and take the Modbus values with it.
+        """
         try:
             data = await self._async_fetch_cloud()
         except ConfigEntryAuthFailed as err:
-            self._cloud_failed(err)
-            # Raising would fail the update and take the Modbus values with it,
-            # so start the reauth flow HA would otherwise have started.
+            self._cloud_ok = False
+            self._cloud_failing = True
+            # Cloud-only polling stops on a rejected login too, and retrying it
+            # every interval walks the account towards a lockout. A successful
+            # reauth reloads the entry, which builds a new coordinator.
+            self._cloud_suspended = True
+            _LOGGER.warning(
+                "Hoval rejected the login (%s); no further cloud requests until the "
+                "integration is re-authenticated",
+                err,
+            )
             self.config_entry.async_start_reauth(self.hass)
             return
         except (UpdateFailed, HovalApiError) as err:
             self._cloud_failed(err)
+            return
+        except Exception as err:  # noqa: BLE001 — must not freeze the cloud data as fresh
+            # Anything else (e.g. a response shape the parser does not expect)
+            # would otherwise escape this update with _cloud_ok still True, and
+            # every later update would serve the frozen snapshot as fresh.
+            self._cloud_failed(err, unexpected=True)
             return
         if self._cloud_failing:
             _LOGGER.info("Hoval cloud is reachable again")
@@ -734,19 +756,31 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._resolve_binding(data)
         self._persist_topology(data)
 
-    def _cloud_failed(self, err: Exception) -> None:
+    def _cloud_failed(self, err: Exception, *, unexpected: bool = False) -> None:
         """Mark the cloud failed; log once per failure streak."""
         self._cloud_ok = False
         if self._cloud_failing:
-            _LOGGER.debug("Hoval cloud still failing: %s", err)
+            _LOGGER.debug(
+                "Hoval cloud still failing: %s", err, exc_info=err if unexpected else None
+            )
             return
         self._cloud_failing = True
-        _LOGGER.warning(
-            "Hoval cloud request failed (%s); Modbus values keep updating, cloud "
-            "values are unavailable. Next cloud attempt in %d minutes",
-            err,
-            self.cloud_interval / 60,
-        )
+        minutes = self.cloud_interval / 60
+        if unexpected:
+            # Not an error the API client knows: keep the traceback for a report.
+            _LOGGER.error(
+                "Unexpected error fetching Hoval cloud data; cloud values are "
+                "unavailable until the next attempt in %d minutes",
+                minutes,
+                exc_info=err,
+            )
+        else:
+            _LOGGER.warning(
+                "Hoval cloud request failed (%s); cloud values are unavailable until "
+                "the next attempt in %d minutes",
+                err,
+                minutes,
+            )
 
     def _resolve_binding(self, data: HovalData) -> None:
         """Bind the gateway to one plant of a fresh cloud snapshot."""
