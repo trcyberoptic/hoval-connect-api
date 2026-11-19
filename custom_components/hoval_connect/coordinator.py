@@ -950,9 +950,22 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         for path, unit in served.items():
             # None blanks the Modbus-owned fields: no fallback to cloud values.
             reading = readings.get(unit)
-            apply_modbus_reading(plant.circuits[path], reading)
+            self._apply_reading(plant.plant_id, plant.circuits[path], reading)
             fresh = fresh or reading is not None
         return fresh
+
+    def _apply_reading(
+        self, plant_id: str, circuit: HovalCircuitData, reading: HvModbusReading | None
+    ) -> None:
+        """Overlay a reading and remember the weekly program for the resume option.
+
+        Both the local fetch and the hybrid merge go through here, so
+        resolve_resume_program has a current week program even when no cloud
+        fetch ever runs (local) or the cloud is down (hybrid).
+        """
+        apply_modbus_reading(circuit, reading)
+        if reading is not None and reading.program in {"week1", "week2"}:
+            self._last_week_program[(plant_id, circuit.path)] = reading.program
 
     def _modbus_failed(self, err: Exception) -> None:
         """Log a Modbus failure once per outage, like the offline handling."""
@@ -995,7 +1008,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             circuit = HovalCircuitData(
                 CIRCUIT_TYPE_HV, path, f"{name} {unit}" if multiple else name
             )
-            apply_modbus_reading(circuit, reading)
+            self._apply_reading(plant_id, circuit, reading)
             plant.circuits[path] = circuit
             if reading.active_errors:
                 plant.has_error = True
