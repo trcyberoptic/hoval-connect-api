@@ -20,9 +20,9 @@ from homeassistant.util import dt as dt_util
 
 from .api import HovalApiError, HovalAuthError, HovalConnectApi, _require_identifier
 from .const import (
-    CIRCUIT_DATAPOINT_IDS,
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_HK,
+    CIRCUIT_TYPE_HV,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DEFAULT_SCAN_INTERVAL,
@@ -85,6 +85,10 @@ def _coerce_finite_number(value: Any) -> float | None:
 # controller's temporary-change limits. HV keeps its fixed 15..100 % band,
 # which matches the limits the cloud reports for it.
 _LIMITS_CIRCUIT_TYPES = frozenset({CIRCUIT_TYPE_WW, CIRCUIT_TYPE_HK})
+# Circuit types whose details are fetched at all: the limits above, plus HV for
+# the constant and eco program setpoints. Those replaced the raw datapoints
+# 40651/40686 when Hoval asked for snapshots/live to be dropped (#24).
+_DETAILS_CIRCUIT_TYPES = _LIMITS_CIRCUIT_TYPES | {CIRCUIT_TYPE_HV}
 
 
 def _parse_temporary_change_limits(details: Any) -> tuple[float | None, float | None]:
@@ -97,6 +101,16 @@ def _parse_temporary_change_limits(details: Any) -> tuple[float | None, float | 
     if low is None or high is None or low > high:
         return None, None
     return low, high
+
+
+def _parse_program_setpoints(details: Any) -> tuple[float | None, float | None]:
+    """Return (constantValue, ecoModeValue) from a circuit details DTO."""
+    if not isinstance(details, dict):
+        return None, None
+    return (
+        _coerce_finite_number(details.get("constantValue")),
+        _coerce_finite_number(details.get("ecoModeValue")),
+    )
 
 
 def _is_circuit_selectable(circuit: dict[str, Any]) -> bool:
@@ -241,10 +255,11 @@ class HovalCircuitData:
     target_value: float | None = None
     is_air_quality_guided: bool = False
     has_error: bool = False
+    # HV: setpoints of the constant and eco programs (`constantValue` and
+    # `ecoModeValue` from the circuit details endpoint). None until known.
+    constant_value: float | None = None
+    eco_mode_value: float | None = None
     live_values: dict[str, str] = field(default_factory=dict)
-    # Raw controller datapoints, keyed by bare DatapointId (see
-    # CIRCUIT_DATAPOINT_IDS). Empty for circuit types that define none.
-    datapoints: dict[str, str] = field(default_factory=dict)
     active_week_name: str | None = None
     active_day_program_name: str | None = None
     program_air_volume: float | None = None
@@ -370,10 +385,16 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._program_cache_ttl = PROGRAM_CACHE_TTL.total_seconds()
         # Circuits whose 417 on /programs was already logged at WARNING.
         self._programs_417_logged: set[tuple[str, str]] = set()
-        # (min, max) temporary-change limits per circuit, refreshed on the
-        # program cadence so a changed installer setting shows up eventually.
-        self._limits_cache: dict[
-            tuple[str, str], tuple[tuple[float | None, float | None], float]
+        # Parsed circuit details per circuit: (min, max) temporary-change limits,
+        # (constant, eco) program setpoints and the deadline of the next fetch.
+        # Refreshed on the program cadence so a changed setting shows up.
+        self._details_cache: dict[
+            tuple[str, str],
+            tuple[
+                tuple[float | None, float | None],
+                tuple[float | None, float | None],
+                float,
+            ],
         ] = {}
         # Plant-level caches: (parsed value(s), monotonic timestamp)
         self._weather_cache: dict[str, tuple[HovalWeatherData | None, float]] = {}
@@ -624,33 +645,26 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     need_programs = cached_prog is None or time.monotonic() >= cached_prog[1]
 
                     # Fetch live values (always) + programs (only if cache expired)
-                    # + raw controller datapoints (only for types that define any).
+                    # + circuit details (limits, HV setpoints) on the same cadence.
                     live_task = self.api.get_live_values(_plant_id, path, ctype)
-                    dp_ids = CIRCUIT_DATAPOINT_IDS.get(ctype, ())
-                    extra = (
-                        [self.api.get_datapoints(_plant_id, [f"{path}.{i}" for i in dp_ids])]
-                        if dp_ids
-                        else []
+                    cached_details = self._details_cache.get(program_key)
+                    need_details = ctype in _DETAILS_CIRCUIT_TYPES and (
+                        cached_details is None or time.monotonic() >= cached_details[2]
                     )
-                    # + circuit details for the temporary-change limits, last.
-                    cached_limits = self._limits_cache.get(program_key)
-                    need_limits = ctype in _LIMITS_CIRCUIT_TYPES and (
-                        cached_limits is None or time.monotonic() >= cached_limits[1]
+                    details = (
+                        [self.api.get_circuit_details(_plant_id, path)] if need_details else []
                     )
-                    details = [self.api.get_circuit_details(_plant_id, path)] if need_limits else []
                     if need_programs:
                         prog_task = self.api.get_programs(_plant_id, path)
                         results = await asyncio.gather(
                             live_task,
                             prog_task,
-                            *extra,
                             *details,
                             return_exceptions=True,
                         )
                     else:
                         gathered = await asyncio.gather(
                             live_task,
-                            *extra,
                             *details,
                             return_exceptions=True,
                         )
@@ -680,34 +694,31 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                     else:
                         _LOGGER.debug("Live values not available for %s", path)
 
-                    # Raw datapoints. Keyed by the bare DatapointId so sensors
-                    # need not know the circuit path. A failure here degrades
-                    # only the datapoint sensors.
-                    dp_result = results[2] if extra else None
-                    if isinstance(dp_result, dict):
-                        circuit_data.datapoints = {
-                            addr.rsplit(".", 1)[-1]: value for addr, value in dp_result.items()
-                        }
-                        _LOGGER.debug("Circuit %s datapoints: %s", path, circuit_data.datapoints)
-                    elif dp_result is not None:
-                        _LOGGER.debug("Datapoints not available for %s", path)
-
-                    limits = cached_limits[0] if cached_limits else (None, None)
-                    if need_limits:
-                        details_result = results[2 + len(extra)]
+                    limits, setpoints = (
+                        cached_details[:2] if cached_details else ((None, None), (None, None))
+                    )
+                    if need_details:
+                        details_result = results[2]
                         if isinstance(details_result, dict):
                             limits = _parse_temporary_change_limits(details_result)
+                            setpoints = _parse_program_setpoints(details_result)
                         else:
-                            # Keep the last known limits: falling back to the
+                            # Keep the last known values: falling back to the
                             # entity's static range would widen it again.
                             _LOGGER.debug(
                                 "Circuit details not available for %s: %s", path, details_result
                             )
-                        self._limits_cache[program_key] = (
+                        self._details_cache[program_key] = (
                             limits,
+                            setpoints,
                             time.monotonic() + self._program_cache_ttl,
                         )
-                    circuit_data.temporary_change_min, circuit_data.temporary_change_max = limits
+                    if ctype in _LIMITS_CIRCUIT_TYPES:
+                        circuit_data.temporary_change_min, circuit_data.temporary_change_max = (
+                            limits
+                        )
+                    if ctype == CIRCUIT_TYPE_HV:
+                        circuit_data.constant_value, circuit_data.eco_mode_value = setpoints
 
                     programs = results[1]
                     if need_programs:

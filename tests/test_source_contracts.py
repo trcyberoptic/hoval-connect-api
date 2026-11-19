@@ -124,34 +124,40 @@ class TestTemporaryChangeExposed:
             assert "temporary_change_end" in data["entity"]["sensor"], f
 
 
-class TestRawDatapoints:
-    """The ventilation operating state is only readable as a raw datapoint.
+class TestNoRawDatapoints:
+    """Hoval asked on 2026-11-19 for `snapshots/live` to be dropped completely
+    (#24). Its reappearance anywhere in the component would break that deal."""
 
-    Addresses are `<circuitPath>.<DatapointId>`; the Modbus register number is
-    NOT accepted and returns an empty object instead of an error, which is what
-    made this endpoint look dead for a whole session.
-    """
+    def test_snapshot_endpoint_is_never_called(self):
+        import re
 
-    def test_address_is_built_from_circuit_path_not_register(self):
-        src = _read("coordinator.py")
-        assert 'f"{path}.{i}" for i in dp_ids' in src
+        # A string literal starting with the path is a request; comments that
+        # explain why the endpoint is gone use backticks and stay allowed.
+        literal = re.compile(r"""(?:f|r|b)?["']/api/telemetry-data""")
+        for path in sorted(_BASE.glob("*.py")):
+            src = path.read_text(encoding="utf-8")
+            assert not literal.search(src), path.name
+            assert "get_datapoints" not in src, path.name
 
-    def test_not_fitted_marker_is_dropped(self):
+    def test_retired_sensors_are_removed_from_the_registry(self):
         src = _read("sensor.py")
-        assert "def _u8_percent" in src
-        # The CO2/VOC sensors must route through it, or they report 255 %.
-        for dp in ("37606", "37608", "37611"):
-            assert f'_u8_percent(c.datapoints.get("{dp}"))' in src
+        assert "_remove_retired_sensors(ent_reg, entry.entry_id)" in src
+        assert "is_retired_circuit_sensor(entity.unique_id)" in src
+        assert 'entity.domain == "sensor"' in src
 
-    def test_enum_states_translated_everywhere(self):
+    def test_retired_sensors_have_no_description_or_translation(self):
         import json
+        import re
 
+        keys = set(re.findall(r'"(h[kv]_[a-z0-9_]+)",', _read("const.py")))
+        assert "hk_control_state" in keys
+        sensor_src = _read("sensor.py")
+        for key in keys:
+            assert f'key="{key}"' not in sensor_src, key
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
-            sensors = json.loads(_read(f))["entity"]["sensor"]
-            for key in ("hv_control_state", "hv_operating_selection", "hk_control_state"):
-                assert "state" in sensors[key], f"{key} has no state labels in {f}"
-            assert "coolvent" in sensors["hv_control_state"]["state"], f
-            assert "screed_drying_heat_up" in sensors["hk_control_state"]["state"], f
+            entity = json.loads(_read(f))["entity"]
+            assert not keys & set(entity["sensor"]), f
+            assert "air_quality_guided" in entity["binary_sensor"], f
 
 
 class TestRetryCoversNonStandardStatuses:

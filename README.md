@@ -65,12 +65,8 @@ Plants and circuits are discovered automatically from your account.
 - Current program pre-selected
 
 **Sensor entities** (per circuit, filtered by type):
-- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume, and — read straight off the controller as raw datapoints (v1.0.4) — **control status** (normal / VOC / humidity / frost protection / **CoolVent** / fault / summer humidity / switch-off stop), operating selection, air-quality control code, constant- and eco-mode air volume, CO₂ and VOC (extract + outside air; these report `unknown` unless an air-quality sensor is fitted)
-
-> The control status is the only place any Hoval interface reveals *why* the unit deviates from its
-> schedule. `operationMode` on the circuit stayed `ventilation` through a full day in which CoolVent and
-> summer humidity both ran — it is not a substitute.
-- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint), and — as the raw datapoint `2051` (v1.0.15) — **control status** (off / normal, comfort, eco heating / frost protection / holiday / party / normal, comfort, eco cooling / fault / manual / screed drying phases / external or constant demand / SmartGrid preferred; 23 states in total)
+- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume, constant- and eco-mode air volume (from the circuit details, refreshed hourly)
+- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint)
 - **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
 - **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
 - **PS:** Buffer target temperature, buffer temperature top (PF1) / bottom (PF2)
@@ -86,6 +82,7 @@ Plants and circuits are discovered automatically from your account.
 **Binary sensors:**
 - Online/offline (per plant, connectivity class)
 - Error status (per plant, problem class — on for an active `blocking`, `locking` or `warning` event, or when any circuit reports `hasError`)
+- Air quality guided (per HV circuit, v1.1.0) — on while air quality guides the ventilation (`airQuality.isAirQualityGuided` on the circuit)
 - Temporary change (per circuit, running class, v1.0.2) — on while a boost/override is active, with the target `value`, the cloud's `type` label and the `end` time as attributes. The cloud tracks this itself, so an automation that starts a boost no longer has to remember that it did.
 
 **Diagnostics:**
@@ -104,7 +101,7 @@ Plants and circuits are discovered automatically from your account.
 - Skips API calls when plant is offline, invalidates token cache on reconnect. The gateway reconnects to the cloud about every 48 minutes, and a poll sometimes sees this as "offline" for one poll. A single offline poll keeps the previous values, and only the plant's online sensor shows it. If the plant stays offline for two consecutive polls (about 30 minutes), the circuit entities become unavailable, the integration logs one warning, and it logs one info message when the plant is back online
 - Parallel API fetches for circuits, live values, programs, events, and weather, with at most eight circuit fetches in flight
 - Control commands are serialized per plant and circuit. Ambiguous write failures (timeouts, connection errors, 429/5xx) are reported without automatically repeating the command; reads retain their transient-error retries.
-- Tiered caching reduces API calls: programs 5 min (including empty responses), events 3 min, weather forecast 15 min. Program caches are separate for each plant and circuit.
+- Tiered caching reduces API calls: programs and circuit details hourly (including empty responses), weather forecast hourly, events with every poll. Program caches are separate for each plant and circuit.
 - A circuit's program endpoint returning HTTP 417 is checked again every 6 hours. Only the first 417 per circuit is logged as a warning, repeats at debug level; a 417 after the programs were available again warns again. So far, heat generator (`BL`) and buffer tank (`PS`) circuits have always answered 417 (#13, #15). Live values continue updating normally; authentication errors, gateway blocks and transient failures do not trigger this pause.
 - Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on the circuits, live-values and both plant-event endpoints (not on the weather forecast — a wrapped response there yields no forecast), the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
@@ -175,6 +172,7 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
+- **No controller status or CO₂/VOC sensors (since v1.1.0).** Up to v1.0.18 the HV control status (normal / VOC / humidity / frost protection / CoolVent / fault / summer humidity / switch-off stop), the HV operating selection, the air-quality control code, CO₂ and VOC, and the HK control status (#14) came from raw controller datapoints via `GET /api/telemetry-data/snapshots/live/{plantId}`. Hoval asked for that endpoint to be dropped (#24), and no other endpoint reports these values, so v1.1.0 removes the sensors and their leftover entities. The operating selection is the same as the program select. We have asked Hoval for a replacement in its planned official API.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Requirements
@@ -501,9 +499,13 @@ Mode-specific `/v1/.../{constant\|cooling\|standby\|manual\|reset\|time-programs
 | GET | `/v2/api/statistics/total-energy/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Energy consumption |
 | GET | `/v2/api/statistics/heat-consumption/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Heat consumption |
 | GET | `/v2/api/statistics/solar-yield/{plantId}` | 🔑🏭 | `circuitPath`, `interval` (7d\|1M\|1y\|7y), `granularity` (1d\|1w\|1M\|1y) | Solar yield |
-| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (comma-separated) | **Raw device datapoints.** Address as `UnitId.FunctionGroup.FunctionNumber.DatapointId`, i.e. the `circuitPath` plus the CAN DatapointId — e.g. `520.50.0.39652` → `{"520.50.0.39652":"1"}`. Modbus **register** numbers (`23631`) are not accepted and return `200 {}`, exactly like garbage input. |
+| GET | `/api/telemetry-data/snapshots/live/{plantId}` | 🔑🏭 | `dataPoints` (comma-separated) | **Deprecated by Hoval; not used by the integration since v1.1.0 at Hoval's request (#24).** Raw device datapoints. Address as `UnitId.FunctionGroup.FunctionNumber.DatapointId`, i.e. the `circuitPath` plus the CAN DatapointId — e.g. `520.50.0.39652` → `{"520.50.0.39652":"1"}`. Modbus **register** numbers (`23631`) are not accepted and return `200 {}`, exactly like garbage input. |
 
 #### GET `/api/telemetry-data/snapshots/live/{plantId}`
+
+> **Deprecated.** Hoval announced on 2026-11-19 that this endpoint will be retired and asked
+> third-party integrations to stop calling it ([#24](https://github.com/trcyberoptic/hoval-connect-api/issues/24)).
+> The integration has not called it since v1.1.0. The notes below are kept as documentation only.
 
 Reads raw controller datapoints — considerably more than `live-values` exposes, including the ventilation
 control status that no other endpoint reports.

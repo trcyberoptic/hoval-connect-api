@@ -121,9 +121,6 @@ class _Api:
             raise outcome
         return deepcopy(outcome)
 
-    async def get_datapoints(self, plant, addresses):
-        return {}
-
     async def get_circuit_details(self, plant, path):
         key = (plant, path)
         self.details_calls[key] += 1
