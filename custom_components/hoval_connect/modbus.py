@@ -1,6 +1,6 @@
 """Minimal asyncio Modbus TCP client for the Hoval TTE-GW gateway.
 
-Why not ``pymodbus``: Home Assistant ships its own pinned pymodbus for its
+Why no Modbus library: Home Assistant ships its own pinned one for its
 Modbus integration, and a custom component that depends on it either fights that
 pin or breaks when core bumps it. The gateway only needs two function codes
 (03 read holding, 06 write single), so ~150 lines of stdlib are cheaper than a

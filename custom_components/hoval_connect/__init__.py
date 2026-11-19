@@ -21,11 +21,20 @@ from .api import HovalApiError, HovalConnectApi
 from .compat import DEVICE_INFO_HAS_VIA_DEVICE_ID, OPTIONS_FLOW_RELOADS
 from .const import (
     CIRCUIT_TYPE_NAMES,
+    DATA_TOPOLOGY,
     DOMAIN,
     OPERATION_MODE_REGULAR,
 )
 from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
-from .options import get_scan_interval
+from .modbus import HovalModbusClient
+from .modbus_hv import HovalModbusPoller
+from .options import (
+    get_modbus_plant_id,
+    get_modbus_scan_interval,
+    get_modbus_settings,
+    get_scan_interval,
+    is_local_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +61,7 @@ class HovalRuntimeData:
     """Runtime data for the Hoval Connect integration."""
 
     coordinator: HovalDataCoordinator
-    api: HovalConnectApi
+    api: HovalConnectApi | None
 
 
 def plant_device_info(plant_data: HovalPlantData) -> DeviceInfo:
@@ -85,9 +94,18 @@ def circuit_device_info(
     return info
 
 
-def _get_scan_interval(entry: HovalConnectConfigEntry) -> timedelta:
-    """Get the scan interval from options or use default."""
-    return timedelta(seconds=get_scan_interval(entry.options))
+def _apply_intervals(coordinator: HovalDataCoordinator, entry: HovalConnectConfigEntry) -> None:
+    """Set the polling cadence: Modbus interval with a gateway, else the cloud interval.
+
+    Shared by setup and the legacy-HA update listener, which also fires when the
+    coordinator writes the topology into entry.data and must not reset the cadence.
+    """
+    cloud_seconds = get_scan_interval(entry.options)
+    coordinator.cloud_interval = cloud_seconds
+    if get_modbus_settings(entry.data, entry.options) is not None:
+        coordinator.update_interval = timedelta(seconds=get_modbus_scan_interval(entry.options))
+    else:
+        coordinator.update_interval = timedelta(seconds=cloud_seconds)
 
 
 def _resolve_circuit_from_unique_id(
@@ -130,6 +148,11 @@ async def _async_handle_reset_temporary_change(
                 f"Hoval Connect config entry for {entity_id} is not loaded"
             )
         runtime: HovalRuntimeData = config_entry.runtime_data
+        if runtime.api is None:
+            raise ServiceValidationError(
+                f"Entity {entity_id} belongs to a local-only entry; resetting a temporary "
+                "change needs the Hoval account (cloud)"
+            )
         resolved = _resolve_circuit_from_unique_id(runtime.coordinator, registry_entry.unique_id)
         if resolved is None:
             raise ServiceValidationError(
@@ -177,11 +200,29 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry) -> bool:
     """Set up Hoval Connect from a config entry."""
-    session = async_get_clientsession(hass)
-    api = HovalConnectApi(session, entry.data["email"], entry.data["password"])
+    local = is_local_entry(entry.data)
+    api: HovalConnectApi | None = None
+    if not local:
+        api = HovalConnectApi(
+            async_get_clientsession(hass), entry.data["email"], entry.data["password"]
+        )
 
-    coordinator = HovalDataCoordinator(hass, api)
-    coordinator.update_interval = _get_scan_interval(entry)
+    settings = get_modbus_settings(entry.data, entry.options)
+    poller = (
+        HovalModbusPoller(HovalModbusClient(settings.host, settings.port, settings.unit_id))
+        if settings is not None
+        else None
+    )
+
+    coordinator = HovalDataCoordinator(
+        hass,
+        api,
+        modbus=poller,
+        modbus_plant_id=None if local else get_modbus_plant_id(entry.options),
+        local_plant=(f"local_{entry.entry_id}", entry.title) if local else None,
+        topology=entry.data.get(DATA_TOPOLOGY),
+    )
+    _apply_intervals(coordinator, entry)
 
     await coordinator.async_config_entry_first_refresh()
 
@@ -220,7 +261,7 @@ async def _async_options_updated(
 ) -> None:
     """Handle options update — adjust polling interval without reload."""
     coordinator = entry.runtime_data.coordinator
-    coordinator.update_interval = _get_scan_interval(entry)
+    _apply_intervals(coordinator, entry)
     _LOGGER.debug("Polling interval updated to %s", coordinator.update_interval)
 
 
@@ -229,6 +270,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
+    await entry.runtime_data.coordinator.async_close()
     # Remove the integration-level service once the last config entry goes away
     remaining = [
         e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id

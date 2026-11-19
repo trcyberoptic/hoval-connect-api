@@ -25,6 +25,7 @@ class _ConfigEntry:
         self.data = {"email": "test@example.invalid", "password": "test-password"}
         self.options = {}
         self.unique_id = self.data["email"]
+        self.title = "Synthetic title"
         self.update_listeners = []
 
     def add_update_listener(self, listener):
@@ -131,9 +132,12 @@ def runtime(monkeypatch):
         coordinator_module = ModuleType(f"{name}.coordinator")
         coordinator_module.HovalCircuitData = object
         coordinator_module.HovalPlantData = object
-        coordinator_module.HovalDataCoordinator = lambda *args: SimpleNamespace(
+        coordinator_module.HovalDataCoordinator = lambda *args, **kwargs: SimpleNamespace(
             data=SimpleNamespace(plants={}),
             async_config_entry_first_refresh=AsyncMock(),
+            async_close=AsyncMock(),
+            args=args,
+            kwargs=kwargs,
         )
         monkeypatch.setitem(sys.modules, coordinator_module.__name__, coordinator_module)
         spec = importlib.util.spec_from_file_location(
@@ -235,6 +239,7 @@ async def test_reset_service_removed_only_after_successful_last_unload(
 ):
     ctx = runtime()
     entry = _ConfigEntry()
+    entry.runtime_data = SimpleNamespace(coordinator=SimpleNamespace(async_close=AsyncMock()))
     ctx.hass.config_entries.async_unload_platforms.return_value = unloaded
     if other_entry:
         ctx.hass.config_entries.async_entries.return_value = [SimpleNamespace(entry_id="other")]
@@ -291,7 +296,7 @@ async def test_circuit_devices_link_to_their_plant_device(runtime, modern):
     """HA 2026.8 added via_device_id; the via_device tuple breaks in 2027.8."""
     ctx = runtime(modern)
     plant = SimpleNamespace(name="Plant")
-    ctx.component.HovalDataCoordinator = lambda *args: SimpleNamespace(
+    ctx.component.HovalDataCoordinator = lambda *args, **kwargs: SimpleNamespace(
         data=SimpleNamespace(plants={"P1": plant}),
         async_config_entry_first_refresh=AsyncMock(),
     )
@@ -316,3 +321,97 @@ async def test_circuit_devices_link_to_their_plant_device(runtime, modern):
     # A plant without a registered device gets no parent link rather than a bad one.
     orphan = ctx.component.circuit_device_info(coordinator, "P2", circuit)
     assert "via_device_id" not in orphan
+
+
+_MODBUS_OPTIONS = {"modbus_host": "192.0.2.10", "modbus_scan_interval": 30}
+
+
+@pytest.mark.asyncio
+async def test_setup_cloud_without_modbus_unchanged(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.kwargs["modbus"] is None
+    assert coordinator.kwargs["local_plant"] is None
+    assert coordinator.update_interval.total_seconds() == 900
+    assert coordinator.cloud_interval == 900
+
+
+@pytest.mark.asyncio
+async def test_setup_hybrid_uses_modbus_interval(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = {**_MODBUS_OPTIONS, "modbus_plant_id": "plant-x"}
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.kwargs["modbus"] is not None
+    assert coordinator.kwargs["modbus_plant_id"] == "plant-x"
+    assert entry.runtime_data.api is not None
+    assert coordinator.update_interval.total_seconds() == 30
+    assert coordinator.cloud_interval == 900
+
+
+@pytest.mark.asyncio
+async def test_setup_local_has_no_api(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.data = {"mode": "local", "host": "192.0.2.10"}
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    coordinator = entry.runtime_data.coordinator
+    assert entry.runtime_data.api is None
+    assert coordinator.args[1] is None
+    assert coordinator.kwargs["local_plant"] == ("local_synthetic-entry", "Synthetic title")
+    assert coordinator.kwargs["modbus"] is not None
+    assert coordinator.update_interval.total_seconds() == 30
+
+
+@pytest.mark.asyncio
+async def test_topology_write_keeps_modbus_cadence_on_legacy_ha(runtime):
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()
+    entry.options = {**_MODBUS_OPTIONS, "modbus_scan_interval": 60}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+    coordinator = entry.runtime_data.coordinator
+
+    # The coordinator writing the topology into entry.data fires the same listener.
+    entry.data = {**entry.data, "topology": {"plant_id": "p"}}
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    assert coordinator.update_interval.total_seconds() == 60
+    assert coordinator.cloud_interval == 900
+
+
+@pytest.mark.asyncio
+async def test_unload_closes_modbus_client(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    assert await ctx.component.async_unload_entry(ctx.hass, entry)
+
+    entry.runtime_data.coordinator.async_close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reset_temporary_change_rejected_for_local_entry(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.data = {"mode": "local", "host": "192.0.2.10"}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+    ctx.hass.registry = SimpleNamespace(
+        async_get=lambda entity_id: SimpleNamespace(
+            platform="hoval_connect", config_entry_id="e", unique_id="x_1_fan"
+        )
+    )
+    ctx.hass.config_entries.async_get_entry = lambda entry_id: entry
+    call = SimpleNamespace(data={"entity_id": ["fan.x"]})
+
+    with pytest.raises(Exception, match="Hoval account"):
+        await ctx.component._async_handle_reset_temporary_change(ctx.hass, call)
