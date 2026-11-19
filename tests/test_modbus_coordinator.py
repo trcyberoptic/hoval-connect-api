@@ -803,3 +803,48 @@ def test_unserved_and_local_circuits_marking(runtime):
     assert _tick(coordinator).plants["P1"].circuits[_HV].modbus_served is False
     local = _update(_local(runtime, _FakePoller(runtime)))
     assert local.plants["local_E1"].circuits["520.50.0"].modbus_served is True
+
+
+def _auth_failed():
+    return sys.modules["homeassistant.exceptions"].ConfigEntryAuthFailed
+
+
+@pytest.mark.parametrize("topology", [_TOPOLOGY, None])
+def test_rejected_login_without_modbus_data_at_setup_raises_auth_failed(runtime, topology):
+    """I1: UpdateFailed at the first refresh is ConfigEntryNotReady, and HA would
+    retry the setup forever, each retry a new coordinator and a new login."""
+    coordinator, api, poller, _ = _hybrid(runtime, topology=topology)
+    api.plants_error = runtime.api.HovalAuthError("rejected")
+    poller.discover_errors = [runtime.modbus.HovalModbusError("down")]
+    poller.poll_error = runtime.modbus.HovalModbusError("down")
+    with pytest.raises(_auth_failed()):
+        asyncio.run(coordinator._async_update_data())
+    assert api.plants_calls == 1
+    assert coordinator.config_entry.reauth_calls == 1
+
+
+def test_rejected_login_at_setup_with_modbus_data_still_starts(runtime):
+    coordinator, api, poller, _ = _hybrid(runtime, topology=_TOPOLOGY)
+    api.plants_error = runtime.api.HovalAuthError("rejected")
+    data = _tick(coordinator)
+    _assert_modbus_values(data.plants["P1"].circuits[_HV], poller)
+
+
+def test_gateway_failure_after_rejected_login_keeps_polling(runtime):
+    """Once an update succeeded, a failing gateway raises UpdateFailed, never
+    ConfigEntryAuthFailed: that would stop HA's scheduled updates for good, and
+    the Modbus values could not come back when the gateway answers again."""
+    coordinator, api, poller, _ = _hybrid(runtime)
+    _tick(coordinator)
+    api.plants_error = runtime.api.HovalAuthError("rejected")
+    runtime.clock.advance(900)
+    _tick(coordinator)
+    poller.poll_error = runtime.modbus.HovalModbusError("down")
+    runtime.clock.advance(30)
+    with pytest.raises(sys_update_failed(runtime)) as err:
+        asyncio.run(coordinator._async_update_data())
+    assert not isinstance(err.value, _auth_failed())
+    poller.poll_error = None
+    runtime.clock.advance(30)
+    _assert_modbus_values(_tick(coordinator).plants["P1"].circuits[_HV], poller)
+    assert api.plants_calls == 2
