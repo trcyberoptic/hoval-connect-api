@@ -5,7 +5,11 @@ Pure module: stdlib only, no Home Assistant imports, so tests can load it by pat
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass
+
+from .modbus import HovalModbusClient, HovalModbusError
 
 HV_UNIT_IDS = range(513, 529)
 HV_BLOCK_LEN = 13
@@ -175,3 +179,68 @@ def hv_write_address(unit_id: int, name: str, value: int) -> int:
         raise ValueError(f"value {value} not allowed for {name!r}")
     base = hv_block_base(unit_id) if area == "block" else hv_maintenance_base(unit_id)
     return base + offset
+
+
+class HovalModbusPoller:
+    """Discovery, polling and validated writes for HV units on one gateway."""
+
+    def __init__(self, client: HovalModbusClient, *, slow_ttl: float = 300.0) -> None:
+        self.client = client
+        self._slow_ttl = slow_ttl
+        # unit -> (monotonic time of last slow read, maintenance words, error entries)
+        self._slow: dict[int, tuple[float, list[int] | None, list[list[int] | None]]] = {}
+
+    async def discover(self, candidates: Iterable[int] = HV_UNIT_IDS) -> list[int]:
+        """Return the units whose block answers.
+
+        Any HovalModbusError (busy, transport) aborts the scan: a busy or
+        unreachable gateway must not be reported as "no units".
+        """
+        found = []
+        for unit_id in candidates:
+            if await self.client.read_holding(hv_block_base(unit_id), HV_BLOCK_LEN) is not None:
+                found.append(unit_id)
+        return found
+
+    async def poll(self, unit_ids: Iterable[int]) -> dict[int, HvModbusReading | None]:
+        """Read every unit; the slow blocks only when their TTL has passed."""
+        result: dict[int, HvModbusReading | None] = {}
+        for unit_id in unit_ids:
+            block = await self.client.read_holding(hv_block_base(unit_id), HV_BLOCK_LEN)
+            if block is None:
+                self._slow.pop(unit_id, None)
+                result[unit_id] = None
+                continue
+            now = time.monotonic()
+            cached = self._slow.get(unit_id)
+            if cached is None or now - cached[0] >= self._slow_ttl:
+                maintenance = await self.client.read_holding(
+                    hv_maintenance_base(unit_id), HV_MAINTENANCE_LEN
+                )
+                base = hv_error_base(unit_id)
+                errors = [
+                    await self.client.read_holding(
+                        base + HV_ERROR_ENTRY_LEN * i, HV_ERROR_ENTRY_LEN
+                    )
+                    for i in range(HV_ERROR_ENTRIES)
+                ]
+                cached = (now, maintenance, errors)
+                self._slow[unit_id] = cached
+            result[unit_id] = decode_hv(block, cached[1], cached[2])
+        return result
+
+    async def write(self, unit_id: int, name: str, value: int) -> None:
+        """Validate, write, and (except acknowledge) verify by reading back."""
+        # bool and float pass the membership checks in hv_write_address; never send them.
+        if type(value) is not int:
+            raise ValueError(f"value {value!r} must be an int")
+        address = hv_write_address(unit_id, name, value)
+        await self.client.write_register(address, value)
+        if name == "acknowledge":
+            return
+        back = await self.client.read_holding(address, 1)
+        if back is None or back[0] != value:
+            raise HovalModbusError(
+                f"write to {name!r} (register {address}) not confirmed: "
+                f"wrote {value}, read back {None if back is None else back[0]}"
+            )
