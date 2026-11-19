@@ -12,7 +12,8 @@ from homeassistant.core import HomeAssistant
 
 from . import HovalConnectConfigEntry
 
-REDACT_CONFIG = {"password", "email", "host", "modbus_host"}
+# topology holds the plant id/name and circuit names; modbus_plant_id the plant id.
+REDACT_CONFIG = {"password", "email", "host", "modbus_host", "topology", "modbus_plant_id"}
 REDACT_COORDINATOR = {
     "token",
     "id_token",

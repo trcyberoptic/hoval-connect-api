@@ -169,3 +169,26 @@ async def test_export_redacts_gateway_host_and_includes_modbus_reading(monkeypat
     assert "192.0.2" not in repr(result)
     modbus = result["coordinator_data"]["plants"]["plant_1"]["circuits"]["1.2.3"]["modbus"]
     assert modbus["program"] is None and "air_volume" in modbus
+
+
+@pytest.mark.asyncio
+async def test_export_redacts_stored_topology_and_modbus_plant_id(monkeypatch):
+    monkeypatch.setattr(diagnostics, "async_redact_data", _redact_fields)
+    entry = SimpleNamespace(
+        data={
+            "email": "a@example.invalid",
+            "topology": {
+                "plant_id": "P1",
+                "plant_name": "HRT",
+                "circuits": {"520.50.0": "Lüftung"},
+            },
+        },
+        options={"modbus_plant_id": "P1"},
+        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data=_Data())),
+    )
+
+    result = await diagnostics.async_get_config_entry_diagnostics(None, entry)
+
+    text = repr(result)
+    for sensitive in ("P1", "HRT", "Lüftung"):
+        assert sensitive not in text
