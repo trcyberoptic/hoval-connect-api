@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from math import isfinite
-from typing import Any
+from typing import Any, NoReturn
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -767,13 +767,27 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 await self._async_refresh_cloud()
         data = self._base_snapshot()
         if data is None:
-            raise UpdateFailed("Hoval cloud unavailable and no stored plant topology to start from")
+            self._fail_update("Hoval cloud unavailable and no stored plant topology to start from")
         modbus_fresh = await self._async_merge_modbus(data, modbus_down=modbus_down)
         if not data.cloud_ok and not modbus_fresh:
             # Nothing in this snapshot is current; fail like a cloud-only
             # entry does, so HA keeps the old data and marks entities unavailable.
-            raise UpdateFailed("Neither the Hoval cloud nor the Modbus gateway delivered data")
+            self._fail_update("Neither the Hoval cloud nor the Modbus gateway delivered data")
         return data
+
+    def _fail_update(self, message: str) -> NoReturn:
+        """Fail a hybrid update; at setup, as a rejected login if that is the cause.
+
+        UpdateFailed at the first refresh becomes ConfigEntryNotReady, and HA
+        retries the setup forever (5 s up to 80 s apart), each retry with a new
+        coordinator and so a new login with rejected credentials (I1). After a
+        successful update stay with UpdateFailed: ConfigEntryAuthFailed would
+        stop HA's scheduled updates, and the Modbus values could not return when
+        the gateway answers again. The cloud stays suspended either way.
+        """
+        if self._cloud_suspended and self.data is None:
+            raise ConfigEntryAuthFailed(f"Hoval rejected the login. {message}")
+        raise UpdateFailed(message)
 
     async def _async_refresh_cloud(self) -> None:
         """Fetch the cloud once; a failure is recorded, never raised.
