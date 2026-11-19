@@ -405,7 +405,7 @@ def _limits(low, high):
     return {"temporaryChangeLimits": {"min": low, "max": high, "step": 0.5}}
 
 
-def test_temporary_change_limits_are_fetched_for_setpoint_circuits_only(runtime):
+def test_details_are_fetched_for_setpoint_and_ventilation_circuits(runtime):
     ww, hk, hv = ("P1", "1.2.0"), ("P1", "1.1.0"), ("P1", "520.50.0")
     coordinator, api = _coordinator(
         runtime, {ww: [None], hk: [None], hv: [None]}, {ww: "WW", hk: "HK", hv: "HV"}
@@ -416,14 +416,47 @@ def test_temporary_change_limits_are_fetched_for_setpoint_circuits_only(runtime)
         10,
         51,
     )
-    # HK also fetches datapoints: the details result must not be read as those.
     assert (circuits["1.1.0"].temporary_change_min, circuits["1.1.0"].temporary_change_max) == (
         5,
         30,
     )
-    assert circuits["1.2.0"].datapoints == {}
+    # HV fetches details for its program setpoints, but keeps its fixed band.
     assert circuits["520.50.0"].temporary_change_max is None
-    assert api.details_calls == {ww: 1, hk: 1}
+    assert api.details_calls == {ww: 1, hk: 1, hv: 1}
+
+
+def test_hv_program_setpoints_come_from_details(runtime):
+    """constantValue/ecoModeValue replaced the raw datapoints 40651/40686 (#24)."""
+    hv, hk = ("P1", "520.50.0"), ("P1", "1.1.0")
+    coordinator, api = _coordinator(runtime, {hv: [None], hk: [None]}, {hv: "HV", hk: "HK"})
+    ttl = runtime.const.PROGRAM_CACHE_TTL.total_seconds()
+    api.details = {
+        hv: {"constantValue": 55.0, "ecoModeValue": 30.0},
+        hk: {"constantValue": 21.0, "ecoModeValue": 18.0},
+    }
+
+    def setpoints(path):
+        circuit = coordinator.data.plants["P1"].circuits[path]
+        return circuit.constant_value, circuit.eco_mode_value
+
+    _refresh(coordinator, api)
+    assert setpoints("520.50.0") == (55.0, 30.0)
+    # Only HV surfaces them; HK reads its details for the limits alone.
+    assert setpoints("1.1.0") == (None, None)
+
+    # Cached between fetches, and kept when a fetch fails.
+    _refresh(coordinator, api)
+    assert api.details_calls[hv] == 1
+    runtime.clock.advance(ttl)
+    api.details[hv] = runtime.api.HovalApiError("boom", status=503)
+    _refresh(coordinator, api)
+    assert api.details_calls[hv] == 2
+    assert setpoints("520.50.0") == (55.0, 30.0)
+
+    runtime.clock.advance(ttl)
+    api.details[hv] = {"constantValue": "x", "ecoModeValue": float("nan")}
+    _refresh(coordinator, api)
+    assert setpoints("520.50.0") == (None, None)
 
 
 def test_temporary_change_limits_follow_cache_and_survive_failures(runtime):

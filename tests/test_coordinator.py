@@ -10,6 +10,8 @@ import sys
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
+
 # Mock homeassistant modules so we can import the coordinator's pure functions
 ha_mock = MagicMock()
 sys.modules["homeassistant"] = ha_mock
@@ -587,72 +589,61 @@ class TestPollingFloor:
         assert int(DEFAULT_SCAN_INTERVAL.total_seconds()) in SCAN_INTERVAL_OPTIONS
 
 
-class TestRawDatapointConstants:
-    """The HV operating state (CoolVent, Sommerfeuchte, …) is only readable as a
-    raw controller datapoint, addressed `<circuitPath>.<DatapointId>`."""
+class TestRetiredDatapointSensors:
+    """Hoval asked for snapshots/live to be dropped completely (#24)."""
 
-    def test_status_datapoint_requested_for_hv(self):
-        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+    def test_datapoint_constants_are_gone(self):
+        import custom_components.hoval_connect.const as const
 
-        assert "39652" in CIRCUIT_DATAPOINT_IDS["HV"]
+        for name in (
+            "CIRCUIT_DATAPOINT_IDS",
+            "HV_CONTROL_STATES",
+            "HV_OPERATING_SELECTIONS",
+            "HK_CONTROL_STATES",
+            "DATAPOINT_U8_UNAVAILABLE",
+        ):
+            assert not hasattr(const, name), name
 
-    def test_modbus_register_is_never_used_as_an_identifier(self):
-        """23631 is the register for CAN unit 520 only — it shifts per unit and
-        the cloud silently answers {} for it."""
-        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+    def test_retired_keys_are_exactly_the_lost_sensors(self):
+        from custom_components.hoval_connect.const import RETIRED_CIRCUIT_SENSOR_KEYS
 
-        every_id = {i for ids in CIRCUIT_DATAPOINT_IDS.values() for i in ids}
-        assert not every_id & {"23631", "23540", "23553", "23566"}
+        assert {
+            "hv_control_state",
+            "hv_operating_selection",
+            "hv_air_quality_control",
+            "hv_co2_extract",
+            "hv_voc_extract",
+            "hv_voc_outside",
+            "hk_control_state",
+        } == RETIRED_CIRCUIT_SENSOR_KEYS
 
-    def test_control_state_enum_covers_0_to_8(self):
-        from custom_components.hoval_connect.const import HV_CONTROL_STATES
+    def test_modulation_sensors_are_not_retired(self):
+        """They kept their unique ids and now read the circuit details."""
+        from custom_components.hoval_connect.const import RETIRED_CIRCUIT_SENSOR_KEYS
 
-        assert [*HV_CONTROL_STATES] == [str(i) for i in range(9)]
-        assert HV_CONTROL_STATES["5"] == "coolvent"
-        assert HV_CONTROL_STATES["7"] == "summer_humidity"
+        assert not {"hv_constant_modulation", "hv_eco_modulation"} & RETIRED_CIRCUIT_SENSOR_KEYS
 
-    def test_hk_status_datapoint_requested(self):
-        """2051 answered on three reporters' plants (issue #14) as 1.1.0.2051."""
-        from custom_components.hoval_connect.const import CIRCUIT_DATAPOINT_IDS
+    @pytest.mark.parametrize(
+        ("unique_id", "retired"),
+        [
+            ("P1_520.50.0_hv_control_state", True),
+            ("P1_1.1.0_hk_control_state", True),
+            ("my_plant_520.50.0_hv_voc_outside", True),
+            ("P1_520.50.0_hv_constant_modulation", False),
+            ("P1_520.50.0_hv_eco_modulation", False),
+            ("P1_520.50.0_air_volume", False),
+            ("P1_520.50.0_air_quality_guided", False),
+            # A key must follow an underscore, not just end the id.
+            ("P1_520.50.0_xhv_control_state", False),
+        ],
+    )
+    def test_only_retired_sensor_ids_are_matched(self, unique_id, retired):
+        from custom_components.hoval_connect.const import is_retired_circuit_sensor
 
-        assert CIRCUIT_DATAPOINT_IDS["HK"] == ("2051",)
+        assert is_retired_circuit_sensor(unique_id) is retired
 
-    def test_hk_control_state_enum_matches_hoval_list(self):
-        """The gaps at 20, 21, 24, 25 are Hoval's, so the keys are listed, not ranged."""
-        from custom_components.hoval_connect.const import HK_CONTROL_STATES
-
-        assert [*HK_CONTROL_STATES] == [*map(str, range(20)), "22", "23", "26"]
-        assert HK_CONTROL_STATES["5"] == "forced_heat_consumption"
-        assert HK_CONTROL_STATES["16"] == "screed_drying_heat_up"
-        assert HK_CONTROL_STATES["26"] == "smart_grid_preferred"
-
-    def test_every_datapoint_enum_value_is_translated(self):
-        """An untranslated ENUM option shows the raw key in the UI; check all three files."""
-        import json
-        from pathlib import Path
-
-        from custom_components.hoval_connect.const import (
-            HK_CONTROL_STATES,
-            HV_CONTROL_STATES,
-            HV_OPERATING_SELECTIONS,
-        )
-
-        base = Path("custom_components/hoval_connect")
-        for f in ("strings.json", "translations/en.json", "translations/de.json"):
-            sensors = json.loads((base / f).read_text(encoding="utf-8"))["entity"]["sensor"]
-            for key, enum in (
-                ("hv_control_state", HV_CONTROL_STATES),
-                ("hv_operating_selection", HV_OPERATING_SELECTIONS),
-                ("hk_control_state", HK_CONTROL_STATES),
-            ):
-                assert set(sensors[key]["state"]) == set(enum.values()), f"{key} in {f}"
-
-    def test_operating_selection_matches_active_program_names(self):
-        """40650 = 2 was observed together with activeProgram "week2"."""
-        from custom_components.hoval_connect.const import HV_OPERATING_SELECTIONS
-
-        assert HV_OPERATING_SELECTIONS["2"] == "week2"
-
-    def test_circuit_data_defaults_to_no_datapoints(self):
-        circuit = HovalCircuitData(circuit_type="HK", path="1.2.3", name="Test")
-        assert circuit.datapoints == {}
+    def test_circuit_data_has_no_datapoints_and_no_setpoints_by_default(self):
+        circuit = HovalCircuitData(circuit_type="HV", path="520.50.0", name="Test")
+        assert not hasattr(circuit, "datapoints")
+        assert circuit.constant_value is None
+        assert circuit.eco_mode_value is None

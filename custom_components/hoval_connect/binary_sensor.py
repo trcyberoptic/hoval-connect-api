@@ -6,12 +6,14 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
+from .const import CIRCUIT_TYPE_HV
 from .coordinator import (
     SIGNAL_NEW_CIRCUITS,
     HovalCircuitData,
@@ -45,6 +47,10 @@ async def async_setup_entry(
                 if uid_tc not in known:
                     known.add(uid_tc)
                     entities.append(HovalTemporaryChange(coordinator, plant_id, path, circuit))
+                uid_aq = f"{plant_id}_{path}_air_quality_guided"
+                if circuit.circuit_type == CIRCUIT_TYPE_HV and uid_aq not in known:
+                    known.add(uid_aq)
+                    entities.append(HovalAirQualityGuided(coordinator, plant_id, path, circuit))
         if entities:
             async_add_entities(entities)
 
@@ -170,3 +176,48 @@ class HovalTemporaryChange(CoordinatorEntity[HovalDataCoordinator], BinarySensor
             "type": circuit.temporary_change_type,
             "end": circuit.temporary_change_end,
         }
+
+
+class HovalAirQualityGuided(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntity):
+    """Whether the ventilation is guided by air quality (HV only).
+
+    Read from `airQuality.isAirQualityGuided` on the circuit list. It replaced
+    the raw datapoint 39600 when Hoval asked for snapshots/live to go (#24).
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "air_quality_guided"
+    _attr_icon = "mdi:air-filter"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: HovalDataCoordinator,
+        plant_id: str,
+        circuit_path: str,
+        circuit_data: HovalCircuitData,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        self._plant_id = plant_id
+        self._circuit_path = circuit_path
+        self._attr_unique_id = f"{plant_id}_{circuit_path}_air_quality_guided"
+        self._attr_device_info = circuit_device_info(coordinator, plant_id, circuit_data)
+
+    @property
+    def _circuit(self) -> HovalCircuitData | None:
+        plant = self.coordinator.data.plants.get(self._plant_id)
+        if plant is None:
+            return None
+        return plant.circuits.get(self._circuit_path)
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return super().available and self._circuit is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true while air quality guides the ventilation."""
+        circuit = self._circuit
+        return None if circuit is None else circuit.is_air_quality_guided
