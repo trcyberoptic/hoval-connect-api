@@ -392,6 +392,34 @@ async def test_setup_hybrid_uses_modbus_interval(runtime):
 
 
 @pytest.mark.asyncio
+async def test_entry_from_the_hybrid_setup_flow_sets_up_like_a_cloud_entry(runtime):
+    """The options below are what async_step_hybrid_gateway writes (config flow test)."""
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = {
+        "turn_on_mode": "resume",
+        "override_duration": "endOfPhase",
+        "scan_interval": 900,
+        "modbus_host": "gw.local",
+        "modbus_port": 502,
+        "modbus_unit_id": 1,
+        "modbus_scan_interval": 60,
+        "modbus_plant_id": "P2",
+    }
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    coordinator = entry.runtime_data.coordinator
+    assert entry.runtime_data.api is not None
+    assert "mode" not in entry.data
+    assert coordinator.kwargs["modbus"] is not None
+    assert coordinator.kwargs["modbus_plant_id"] == "P2"
+    assert coordinator.kwargs["local_plant"] is None
+    assert coordinator.update_interval.total_seconds() == 60
+    assert coordinator.cloud_interval == 900
+
+
+@pytest.mark.asyncio
 async def test_setup_local_has_no_api(runtime):
     ctx = runtime()
     entry = _ConfigEntry()

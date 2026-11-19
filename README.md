@@ -179,22 +179,39 @@ integration outright ([#24][issue-24]). The Hoval gateway (TTE-GW, "Gateway v2")
 directly in your own network over **Modbus TCP**. That is fast (default every 30 seconds), needs no
 Hoval account and keeps working when the cloud is down or blocked. The integration can use it in two ways:
 
-- **Hybrid:** you keep your cloud entry and add the gateway in its options. Live values, program and
+- **Hybrid:** you keep your cloud entry and add the gateway in its options, or you set up a new
+  entry with **Cloud account + local Modbus (hybrid)**. Live values, program and
   setpoints of the ventilation unit then come from the gateway; the cloud still supplies what only it
   has, at the configured cloud interval (at least 15 minutes).
 - **Local only:** no account at all. You add the gateway as its own entry.
+
+When you add the integration, the menu offers three options: **Hoval Connect cloud account** (cloud only,
+as before), **Cloud account + local Modbus (hybrid)** and **Local gateway (Modbus TCP, no account)**. The last
+two need Modbus switched on at the gateway, see step 1.
 
 Scope: **HomeVent (HV) units only.** Heating, hot-water, solar and other circuits stay cloud-only.
 
 #### 1. Switch Modbus on at the TopTronic E panel
 
-On the controller panel open **Service > TTE-GW > Modbus > Einstellungen** (the panel's menu is in German)
-and set **Mode = TCP**. The gateway must be reachable from Home Assistant on port 502. The panel may
-show unit id 0, but the gateway has been seen to answer on **unit id 1**, so enter 1 first. If setup reports that no unit answered, try the unit id shown on the panel.
+**Modbus is off by default.** On the controller panel open **Service > TTE-GW > Modbus > Einstellungen**
+(the panel's menu is in German), switch **Aktiv** on and set **Mode = TCP** (not RTU, which is RS485).
+Parity and baud rate only matter for RS485. Hoval recommends a fixed IP address for Modbus TCP (DHCP set to
+"No" in Service > TTE-GW > General), and so do we: the integration finds the gateway by that address.
+The gateway must be reachable from Home Assistant on port 502. The panel may show UnitID 0, but the gateway
+has been seen to answer on **unit id 1**, so enter 1 first. If setup reports that no unit answered, try the
+unit id shown on the panel.
+
+If setup says the gateway is reachable but does not answer Modbus requests, Modbus is most likely still
+switched off: the gateway accepts the connection on port 502 either way and only stays silent when Modbus is
+off. "Could not reach the gateway" means the address or the network is wrong instead.
 
 #### 2. Add the gateway
 
-- **Hybrid:** **Settings > Devices & services > Hoval Connect > Configure**, then fill in *Modbus gateway
+- **Hybrid, new entry:** **Add Integration > Hoval Connect > Cloud account + local Modbus (hybrid)**.
+  Step 1 asks for your Hoval account, step 2 for the gateway (host, port 502, unit id 1, Modbus polling
+  interval, and the plant if your account has several). The result is the same as the next point: a cloud
+  entry whose options hold the gateway.
+- **Hybrid, existing entry:** **Settings > Devices & services > Hoval Connect > Configure**, then fill in *Modbus gateway
   host* (IP address or name of the gateway), port (502), unit id (1) and the *Modbus polling interval*
   (10, 30, 60 or 120 seconds, default 30). If your account has several plants, pick the one the
   gateway belongs to. An empty host means cloud only, exactly as before. Existing entities keep their

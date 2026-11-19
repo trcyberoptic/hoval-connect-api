@@ -144,8 +144,14 @@ class _FakeConfigFlow:
     def async_show_menu(self, *, step_id, menu_options, **kw):
         return {"type": "menu", "step_id": step_id, "menu_options": menu_options}
 
-    def async_create_entry(self, *, title, data, **kw):
-        return {"type": "create_entry", "title": title, "data": data, "unique_id": self.unique_id}
+    def async_create_entry(self, *, title, data, options=None, **kw):
+        return {
+            "type": "create_entry",
+            "title": title,
+            "data": data,
+            "options": options,
+            "unique_id": self.unique_id,
+        }
 
     async def async_set_unique_id(self, unique_id):
         self.unique_id = unique_id
@@ -245,10 +251,10 @@ def _flow(mod):
     return mod.HovalConnectConfigFlow()
 
 
-def test_user_step_offers_cloud_and_local_menu(flow_mod):
+def test_user_step_offers_cloud_hybrid_and_local_menu(flow_mod):
     result = _run(_flow(flow_mod).async_step_user())
     assert result["type"] == "menu"
-    assert result["menu_options"] == ["cloud", "local"]
+    assert result["menu_options"] == ["cloud", "hybrid", "local"]
 
 
 def test_cloud_step_keeps_existing_behaviour(flow_mod, monkeypatch):
@@ -297,6 +303,13 @@ def test_local_step_cannot_connect(flow_mod, kind):
     }[kind]
     result = _run(_flow(flow_mod).async_step_local({"host": "gw", "port": 502, "unit_id": 1}))
     assert result["errors"] == {"base": "modbus_cannot_connect"}
+    assert flow_mod.state.closed == 1
+
+
+def test_local_step_no_answer_when_connected_but_timing_out(flow_mod):
+    flow_mod.state.discover = flow_mod.modbus_error("timed out", no_answer=True)
+    result = _run(_flow(flow_mod).async_step_local({"host": "gw", "port": 502, "unit_id": 1}))
+    assert result["errors"] == {"base": "modbus_no_answer"}
     assert flow_mod.state.closed == 1
 
 
@@ -461,13 +474,26 @@ def test_options_flow_error_keys_are_translated_in_options_error():
     src = Path("custom_components/hoval_connect/config_flow.py").read_text(encoding="utf-8")
     flow_src = src[src.index("class HovalConnectOptionsFlow") :]
     keys = set(re.findall(r'errors\["base"\] = "([a-z_]+)"', flow_src))
-    keys |= {"modbus_cannot_connect", "modbus_no_units"}  # returned via _modbus_error_key
+    keys |= {
+        "modbus_cannot_connect",
+        "modbus_no_answer",
+        "modbus_no_units",
+    }  # returned via _modbus_error_key
     for name in ("strings.json", "translations/en.json", "translations/de.json"):
         data = json.loads(Path("custom_components/hoval_connect", name).read_text(encoding="utf-8"))
         missing = keys - set(data["options"].get("error", {}))
         assert not missing, (name, missing)
 
 
+HYBRID_OPTIONS = {
+    "turn_on_mode": "resume",
+    "override_duration": "endOfPhase",
+    "scan_interval": 900,
+    "modbus_host": "gw.local",
+    "modbus_port": 502,
+    "modbus_unit_id": 1,
+    "modbus_scan_interval": 60,
+}
 _STORED_GATEWAY = {
     "turn_on_mode": "resume",
     "override_duration": "endOfPhase",
@@ -506,3 +532,217 @@ def test_cloud_options_changed_gateway_is_probed(flow_mod, change, probed):
     result = _run(flow.async_step_init({**_STORED_GATEWAY, **change}))
     assert result["errors"] == {"base": "modbus_no_units"}
     assert flow_mod.state.created == [probed]
+
+
+# --- Hybrid setup: cloud login, then the Modbus gateway --------------------------
+
+_HYBRID_LOGIN = {"email": "A@B.c", "password": "pw"}
+_HYBRID_GATEWAY = {"host": " gw.local ", "port": 502, "unit_id": 1, "modbus_scan_interval": 60}
+_TWO_PLANTS = [
+    {"plantExternalId": "P1", "description": "House"},
+    {"plantExternalId": "P2", "description": "Cabin"},
+]
+
+
+def _hybrid_api(monkeypatch, flow_mod, plants=None, error=None):
+    class Api:
+        def __init__(self, session, email, password):
+            pass
+
+        async def get_plants(self):
+            if error is not None:
+                raise error
+            return plants if plants is not None else [{"plantExternalId": "P1"}]
+
+    monkeypatch.setattr(flow_mod, "HovalConnectApi", Api)
+
+
+def _hybrid_to_gateway(flow_mod, flow=None):
+    flow = flow or _flow(flow_mod)
+    assert _run(flow.async_step_hybrid())["step_id"] == "hybrid"
+    return flow, _run(flow.async_step_hybrid(_HYBRID_LOGIN))
+
+
+def test_hybrid_creates_a_cloud_entry_with_modbus_options(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow, form = _hybrid_to_gateway(flow_mod)
+    assert form["type"] == "form" and form["step_id"] == "hybrid_gateway"
+    assert "modbus_plant_id" not in _schema_keys(form)
+
+    result = _run(flow.async_step_hybrid_gateway(_HYBRID_GATEWAY))
+
+    assert result["type"] == "create_entry"
+    assert result["title"] == "A@B.c"
+    assert result["unique_id"] == "a@b.c"
+    # Exactly what a cloud entry gets, no extra keys and no new mode.
+    assert result["data"] == {"email": "A@B.c", "password": "pw"}
+    assert result["options"] == HYBRID_OPTIONS
+    assert flow_mod.state.created == [("gw.local", 502, 1)]
+    assert flow_mod.state.closed == 1
+
+
+def test_hybrid_options_are_keys_the_options_flow_writes(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    options = _run(flow.async_step_hybrid_gateway(_HYBRID_GATEWAY))["options"]
+    form = _run(_options_flow(flow_mod, _CLOUD).async_step_init())
+    assert set(options) <= _schema_keys(form)
+
+
+@pytest.mark.parametrize(
+    ("error", "key"),
+    [
+        ("auth", "invalid_auth"),
+        ("api", "cannot_connect"),
+        ("blocked", "gateway_blocked"),
+        ("403", "no_plant_access"),
+        ("timeout", "cannot_connect"),
+    ],
+)
+def test_hybrid_login_errors_match_the_cloud_step(flow_mod, monkeypatch, error, key):
+    errors = flow_mod
+    api_error = errors.HovalApiError
+    err = {
+        "auth": errors.HovalAuthError("bad"),
+        "api": api_error("down"),
+        "blocked": api_error("blocked", gateway_blocked=True),
+        "403": api_error("forbidden", status=403),
+        "timeout": TimeoutError(),
+    }[error]
+    _hybrid_api(monkeypatch, flow_mod, error=err)
+    hybrid = _run(_flow(flow_mod).async_step_hybrid(_HYBRID_LOGIN))
+    cloud = _run(_flow(flow_mod).async_step_cloud(_HYBRID_LOGIN))
+    assert hybrid["step_id"] == "hybrid"
+    assert hybrid["errors"] == cloud["errors"] == {"base": key}
+
+
+def test_hybrid_duplicate_account_aborts(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow = _flow(flow_mod)
+    flow.entries = [SimpleNamespace(unique_id="a@b.c")]
+    with pytest.raises(_Abort) as exc:
+        _run(flow.async_step_hybrid(_HYBRID_LOGIN))
+    assert exc.value.reason == "already_configured"
+
+
+def test_hybrid_gateway_without_units(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow_mod.state.discover = []
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    result = _run(flow.async_step_hybrid_gateway(_HYBRID_GATEWAY))
+    assert result["type"] == "form" and result["step_id"] == "hybrid_gateway"
+    assert result["errors"] == {"base": "modbus_no_units"}
+    assert flow_mod.state.closed == 1
+
+
+@pytest.mark.parametrize(
+    ("kind", "key"),
+    [
+        ("no_answer", "modbus_no_answer"),
+        ("refused", "modbus_cannot_connect"),
+        ("os", "modbus_cannot_connect"),
+        ("timeout", "modbus_cannot_connect"),
+    ],
+)
+def test_hybrid_gateway_error_split(flow_mod, monkeypatch, kind, key):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow_mod.state.discover = {
+        "no_answer": flow_mod.modbus_error("timed out", no_answer=True),
+        "refused": flow_mod.modbus_error("refused"),
+        "os": OSError("unreachable"),
+        "timeout": TimeoutError(),
+    }[kind]
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    result = _run(flow.async_step_hybrid_gateway(_HYBRID_GATEWAY))
+    assert result["errors"] == {"base": key}
+
+
+def test_hybrid_gateway_error_keeps_the_entered_values(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow_mod.state.discover = []
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    result = _run(flow.async_step_hybrid_gateway({**_HYBRID_GATEWAY, "port": 1502}))
+    assert result["data_schema"]({"host": "x"})["port"] == 1502
+
+
+def test_hybrid_two_plants_show_and_store_the_selector(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod, plants=_TWO_PLANTS)
+    flow, form = _hybrid_to_gateway(flow_mod)
+    assert "modbus_plant_id" in _schema_keys(form)
+    result = _run(flow.async_step_hybrid_gateway({**_HYBRID_GATEWAY, "modbus_plant_id": "P2"}))
+    assert result["options"] == {**HYBRID_OPTIONS, "modbus_plant_id": "P2"}
+
+
+def test_hybrid_one_plant_stores_no_plant(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod, plants=[{"plantExternalId": "P1"}])
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    result = _run(flow.async_step_hybrid_gateway({**_HYBRID_GATEWAY, "modbus_plant_id": "P1"}))
+    assert "modbus_plant_id" not in result["options"]
+
+
+def test_hybrid_gateway_ignores_unknown_plant(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod, plants=_TWO_PLANTS)
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    result = _run(flow.async_step_hybrid_gateway({**_HYBRID_GATEWAY, "modbus_plant_id": "nope"}))
+    assert "modbus_plant_id" not in result["options"]
+
+
+# --- Translations of the hybrid setup and the activation hints ---------------
+
+_FILES = ("strings.json", "translations/en.json", "translations/de.json")
+
+
+def _translation(name):
+    import json
+
+    return json.loads(Path("custom_components/hoval_connect", name).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", _FILES)
+def test_hybrid_steps_and_error_keys_are_translated(name):
+    data = _translation(name)
+    steps = data["config"]["step"]
+    assert set(steps["user"]["menu_options"]) == {"cloud", "hybrid", "local"}
+    assert set(steps["hybrid"]["data"]) == {"email", "password"}
+    gateway = steps["hybrid_gateway"]
+    expected = {"host", "port", "unit_id", "modbus_scan_interval", "modbus_plant_id"}
+    assert set(gateway["data"]) == expected
+    assert set(gateway["data_description"]) == expected
+    for scope in (data["config"]["error"], data["options"]["error"]):
+        assert {"modbus_cannot_connect", "modbus_no_answer", "modbus_no_units"} <= set(scope)
+
+
+def test_en_mirrors_strings():
+    assert _translation("strings.json") == _translation("translations/en.json")
+
+
+@pytest.mark.parametrize("name", _FILES)
+def test_activation_hint_is_in_every_modbus_setup_text(name):
+    data = _translation(name)
+    on, mode = ("«Aktiv»", "«Mode»") if name.endswith("de.json") else ('"Aktiv"', '"Mode"')
+    texts = [
+        data["config"]["step"]["local"]["description"],
+        data["config"]["step"]["reconfigure"]["description"],
+        data["config"]["step"]["hybrid_gateway"]["description"],
+        data["options"]["step"]["init"]["data_description"]["modbus_host"],
+        data["config"]["error"]["modbus_no_answer"],
+        data["options"]["error"]["modbus_no_answer"],
+    ]
+    for text in texts:
+        assert "Service > TTE-GW > Modbus > Einstellungen" in text
+        assert on in text and mode in text and "TCP" in text and "RS485" in text
+    assert "Modbus" in data["config"]["step"]["user"]["description"]
+    assert "Aktiv" not in data["config"]["error"]["modbus_cannot_connect"]
+
+
+def test_german_hybrid_texts_use_swiss_orthography():
+    data = _translation("translations/de.json")
+    new = [
+        data["config"]["step"]["user"]["description"],
+        data["config"]["step"]["user"]["menu_options"]["hybrid"],
+        *data["config"]["step"]["hybrid"].values(),
+        data["config"]["step"]["hybrid_gateway"]["description"],
+        data["config"]["error"]["modbus_no_answer"],
+        data["config"]["error"]["modbus_cannot_connect"],
+    ]
+    assert not any("ß" in text for text in new if isinstance(text, str))
