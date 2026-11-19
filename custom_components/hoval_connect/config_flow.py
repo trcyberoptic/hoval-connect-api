@@ -292,9 +292,11 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     _LOGGER.error("Hoval API error during reauth: %s", err)
                     errors["base"] = _api_error_key(err)
                 else:
+                    # data_updates, not data: data= would replace the whole
+                    # entry data and drop a hybrid entry's stored topology.
                     return self.async_update_reload_and_abort(
                         reauth_entry,
-                        data={
+                        data_updates={
                             "email": user_input["email"],
                             "password": user_input["password"],
                         },
