@@ -183,89 +183,31 @@ def clamp_hv_air_volume(percentage: float) -> int:
     return int(max(HV_AIR_VOLUME_MIN, min(HV_AIR_VOLUME_MAX, percentage)))
 
 
-# --- Raw controller datapoints -------------------------------------------------
+# --- Sensors retired with the raw datapoints (#24) ----------------------------
 #
-# `GET /api/telemetry-data/snapshots/live/{plant}?dataPoints=…` reads values
-# straight off the controller. Addresses are
-# `<UnitId>.<FunctionGroup>.<FunctionNumber>.<DatapointId>` — the first three
-# groups are exactly the circuit path, so a fixed id per module type works for
-# any unit. The Modbus *register* number is NOT the identifier: it shifts with
-# the CAN unit id (HV 513 → 23540, 520 → 23631) while the DatapointId stays
-# 39652. An unknown address is answered with a missing key, never an error.
-#
-# Only ids carrying something the circuit DTO and live-values do not already
-# report are listed. Deliberately omitted because they are byte-identical to
-# existing sensors: 0 (outside temp), 37602 (exhaust temp), 37600 (humidity
-# actual), 40687 (humidity target), 38606 (modulation = airVolume).
-CIRCUIT_DATAPOINT_IDS: dict[str, tuple[str, ...]] = {
-    CIRCUIT_TYPE_HV: (
-        "39652",  # Status Lüftungsregelung — the operating state, reported nowhere else
-        "40650",  # Betriebswahl Lüftung
-        "39600",  # Luftqualität Regulierung (LIST, but Hoval ships no labels for it)
-        "40651",  # Normal-Lüftungsmodulation (setpoint for constant mode)
-        "40686",  # Spar-Lüftungsmodulation (setpoint for eco mode)
-        "37606",  # CO2 Abluft
-        "37608",  # VOC Abluft
-        "37611",  # VOC Aussenluft
-    ),
-    CIRCUIT_TYPE_HK: (
-        "2051",  # Status Heizkreisregelung (Modbus register 1501 for HK1)
-    ),
-}
+# Until v1.0.18 these sensors read raw controller datapoints through
+# `GET /api/telemetry-data/snapshots/live/{plant}`. Hoval asked on 2026-11-19
+# for that endpoint to be dropped completely. No other endpoint reports their
+# values, so the sensors are gone, and setup removes their leftover entities
+# from the entity registry. The constant/eco modulation sensors survived: they
+# now read the circuit details. The enum labels live on in git history (v1.0.18).
+RETIRED_CIRCUIT_SENSOR_KEYS = frozenset(
+    {
+        "hv_control_state",  # 39652 Status Lüftungsregelung
+        "hv_operating_selection",  # 40650 Betriebswahl, = activeProgram on the circuit
+        "hv_air_quality_control",  # 39600, see the air_quality_guided binary sensor
+        "hv_co2_extract",  # 37606
+        "hv_voc_extract",  # 37608
+        "hv_voc_outside",  # 37611
+        "hk_control_state",  # 2051 Status Heizkreisregelung (#14)
+    }
+)
 
-# Datapoint 2051, verbatim from Hoval's TTE-GW-Modbus-datapoints.xlsx (sheet
-# "Deutsch"; the English sheet carries no labels). 20, 21, 24 and 25 are gaps
-# in Hoval's own list, not omissions here. 16-19 are the screed-drying program.
-HK_CONTROL_STATES: dict[str, str] = {
-    "0": "off",
-    "1": "normal_heating",
-    "2": "comfort_heating",
-    "3": "eco_heating",
-    "4": "frost_protection",
-    "5": "forced_heat_consumption",  # Zwangsabnahme, at a demand > +50 %
-    "6": "forced_throttling",  # Zwangsdrosselung, at a demand < -50 %
-    "7": "holiday",
-    "8": "party",
-    "9": "normal_cooling",
-    "10": "comfort_cooling",
-    "11": "eco_cooling",
-    "12": "fault",
-    "13": "manual",
-    "14": "cooling_protection",
-    "15": "party_cooling",
-    "16": "screed_drying_heat_up",
-    "17": "screed_drying_steady",
-    "18": "screed_drying_cool_down",
-    "19": "screed_drying_end",
-    "22": "external_constant_cooling",
-    "23": "external_constant_heating",
-    "26": "smart_grid_preferred",
-}
 
-# Datapoint 39652. Hoval's own datapoint list spells entry 5 "CoolVet" — a typo
-# for CoolVent, corrected here.
-HV_CONTROL_STATES: dict[str, str] = {
-    "0": "off",
-    "1": "normal",
-    "2": "voc",
-    "3": "humidity",
-    "4": "frost_protection",
-    "5": "coolvent",
-    "6": "fault",
-    "7": "summer_humidity",
-    "8": "switch_off_stop",
-}
+def is_retired_circuit_sensor(unique_id: str) -> bool:
+    """Return True for the unique id of a circuit sensor retired in #24.
 
-# Datapoint 40650.
-HV_OPERATING_SELECTIONS: dict[str, str] = {
-    "0": "standby",
-    "1": "week1",
-    "2": "week2",
-    "3": "constant",
-    "4": "eco",
-}
-
-# U8 percentage datapoints are defined over 0..100; the controller reports 255
-# when the sensor is not fitted at all (observed on all three CO2/VOC inputs of
-# a HomeVent without an air-quality sensor).
-DATAPOINT_U8_UNAVAILABLE = "255"
+    Circuit sensor ids are `{plant_id}_{circuit_path}_{key}`. Both ids may
+    contain underscores, so match the key as a suffix after an underscore.
+    """
+    return any(unique_id.endswith(f"_{key}") for key in RETIRED_CIRCUIT_SENSOR_KEYS)
