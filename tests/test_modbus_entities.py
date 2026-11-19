@@ -379,3 +379,58 @@ def test_circuit_binary_sensor_availability(ent):
         ent.binary_sensor.HovalTemporaryChange(coordinator, "P1", "1.50.0", circuit).available
         is True
     )
+
+
+def _run_binary_setup(ent, coordinator):
+    import asyncio
+
+    added = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator), async_on_unload=lambda fn: None
+    )
+    asyncio.run(ent.binary_sensor.async_setup_entry(object(), entry, added.extend))
+    return {e._attr_unique_id for e in added}
+
+
+def test_local_entry_creates_only_modbus_backed_circuit_entities(ent):
+    MODBUS_BACKED_KEYS = ent.runtime.const.MODBUS_BACKED_KEYS
+    coordinator, _ = _setup(
+        ent.runtime,
+        cloud_ok=False,
+        local=True,
+        reading=_reading(ent.runtime, co2_extract=600, voc_extract=3, voc_outside=2),
+    )
+    sensor_keys = {k.removeprefix("P1_1.50.0_") for k in _created_keys(ent, coordinator)}
+    assert sensor_keys
+    assert sensor_keys <= MODBUS_BACKED_KEYS
+    binary_ids = _run_binary_setup(ent, coordinator)
+    assert binary_ids == {"P1_online", "P1_error", "P1_1.50.0_air_quality_guided"}
+
+
+def test_cloud_entry_still_creates_cloud_circuit_entities(ent):
+    coordinator, _ = _setup(ent.runtime)
+    assert "P1_1.50.0_temporary_change" in _run_binary_setup(ent, coordinator)
+    assert "P1_1.50.0_active_week_program" in _created_keys(ent, coordinator)
+
+
+def test_modbus_only_sensors_appear_when_reading_arrives_later(ent, monkeypatch):
+    import asyncio
+
+    callbacks = []
+    monkeypatch.setattr(
+        ent.sensor, "async_dispatcher_connect", lambda hass, sig, cb: callbacks.append(cb)
+    )
+    coordinator, circuit = _setup(ent.runtime, cloud_ok=False, modbus=True)
+    added = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        entry_id="entry",
+        async_on_unload=lambda fn: None,
+    )
+    reg = _Registry([])
+    ent.sensor.er.async_get = lambda hass: reg
+    asyncio.run(ent.sensor.async_setup_entry(object(), entry, added.extend))
+    assert not [e for e in added if e._attr_unique_id.endswith("_hv_control_state")]
+    ent.runtime.coordinator.apply_modbus_reading(circuit, _reading(ent.runtime))
+    callbacks[0]()
+    assert [e for e in added if e._attr_unique_id.endswith("_hv_control_state")]

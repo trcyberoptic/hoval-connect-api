@@ -689,6 +689,9 @@ async def async_setup_entry(
             # Circuit-level sensors
             for path, circuit in plant_data.circuits.items():
                 for description in CIRCUIT_SENSOR_DESCRIPTIONS:
+                    # A local entry has no cloud: only Modbus-backed keys can ever hold a value.
+                    if coordinator.is_local and description.key not in MODBUS_BACKED_KEYS:
+                        continue
                     uid = f"{plant_id}_{path}_{description.key}"
                     # Grandfather entities that already exist in the registry: when a
                     # circuit_types filter is newly added/tightened (e.g.

@@ -734,3 +734,19 @@ def test_cloud_action_forces_cloud_refresh_modbus_action_does_not(runtime, monke
     runtime.clock.advance(30)
     _tick(coordinator)
     assert api.plants_calls == 2
+
+
+def test_first_modbus_reading_after_start_signals_platforms(runtime, monkeypatch):
+    sent = []
+    monkeypatch.setattr(runtime.coordinator, "async_dispatcher_send", lambda *a: sent.append(a))
+    coordinator, _, poller, _ = _hybrid(runtime)
+    coordinator.last_update_success = True
+    poller.discover_errors = [runtime.modbus.HovalModbusError("gateway down")]
+    data = _tick(coordinator)
+    assert data.plants["P1"].circuits[_HV].modbus is None
+    assert len(sent) == 1  # the circuits themselves are new
+    data = _tick(coordinator)  # discovery retried, the gateway answers now
+    assert data.plants["P1"].circuits[_HV].modbus is not None
+    assert len(sent) == 2  # first reading of a known circuit
+    _tick(coordinator)
+    assert len(sent) == 2  # not again for a known reading
