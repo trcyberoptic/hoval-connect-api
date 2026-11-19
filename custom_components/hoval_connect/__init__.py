@@ -29,6 +29,7 @@ from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
 from .modbus import HovalModbusClient
 from .modbus_hv import HovalModbusPoller
 from .options import (
+    ModbusSettings,
     get_modbus_plant_id,
     get_modbus_scan_interval,
     get_modbus_settings,
@@ -64,6 +65,10 @@ class HovalRuntimeData:
 
     coordinator: HovalDataCoordinator
     api: HovalConnectApi | None
+    # Gateway address and plant binding the coordinator was built with. The
+    # legacy-HA options listener reloads the entry when either changes.
+    modbus_settings: ModbusSettings | None = None
+    modbus_plant_id: str | None = None
 
 
 def plant_device_info(plant_data: HovalPlantData) -> DeviceInfo:
@@ -101,10 +106,13 @@ def _apply_intervals(coordinator: HovalDataCoordinator, entry: HovalConnectConfi
 
     Shared by setup and the legacy-HA update listener, which also fires when the
     coordinator writes the topology into entry.data and must not reset the cadence.
+    The choice follows the coordinator, never the options alone: a gateway added
+    in the options on legacy HA reaches a coordinator built without a poller,
+    whose every update is a full cloud poll (C1, Hoval allows one per 15 min).
     """
     cloud_seconds = get_scan_interval(entry.options)
     coordinator.cloud_interval = cloud_seconds
-    if get_modbus_settings(entry.data, entry.options) is not None:
+    if coordinator.has_modbus:
         coordinator.update_interval = timedelta(seconds=get_modbus_scan_interval(entry.options))
     else:
         coordinator.update_interval = timedelta(seconds=cloud_seconds)
@@ -215,12 +223,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
         if settings is not None
         else None
     )
+    modbus_plant_id = None if local else get_modbus_plant_id(entry.options)
 
     coordinator = HovalDataCoordinator(
         hass,
         api,
         modbus=poller,
-        modbus_plant_id=None if local else get_modbus_plant_id(entry.options),
+        modbus_plant_id=modbus_plant_id,
         local_plant=(f"local_{entry.entry_id}", entry.title) if local else None,
         topology=entry.data.get(DATA_TOPOLOGY),
     )
@@ -231,7 +240,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
     try:
         await coordinator.async_config_entry_first_refresh()
 
-        entry.runtime_data = HovalRuntimeData(coordinator=coordinator, api=api)
+        entry.runtime_data = HovalRuntimeData(
+            coordinator=coordinator,
+            api=api,
+            modbus_settings=settings,
+            modbus_plant_id=modbus_plant_id,
+        )
 
         # Register a parent device for each plant before the platforms set up, so
         # circuit devices can link to it by registry id (see circuit_device_info).
@@ -267,9 +281,28 @@ async def _async_options_updated(
     hass: HomeAssistant,
     entry: HovalConnectConfigEntry,
 ) -> None:
-    """Handle options update — adjust polling interval without reload."""
-    coordinator = entry.runtime_data.coordinator
+    """Apply an options change on HA without OptionsFlowWithReload.
+
+    Intervals change in place. The Modbus poller and the plant binding are
+    fixed when the coordinator is built, so a changed gateway address or
+    binding reloads the entry; until then the cadence still follows the
+    coordinator. Also fires when the coordinator stores its topology in
+    entry.data, which changes neither and so never reloads. Local entries
+    change their gateway through reconfigure, which reloads on its own.
+    """
+    runtime = entry.runtime_data
+    coordinator = runtime.coordinator
     _apply_intervals(coordinator, entry)
+    if not is_local_entry(entry.data):
+        settings = get_modbus_settings(entry.data, entry.options)
+        # Without a gateway before and after, the binding is unused: an entry
+        # without Modbus keeps the old behaviour and is never reloaded here.
+        if settings != runtime.modbus_settings or (
+            settings is not None and get_modbus_plant_id(entry.options) != runtime.modbus_plant_id
+        ):
+            _LOGGER.debug("Modbus gateway or plant binding changed; reloading the entry")
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+            return
     _LOGGER.debug("Polling interval updated to %s", coordinator.update_interval)
 
 
