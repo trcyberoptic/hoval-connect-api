@@ -119,6 +119,7 @@ def runtime(monkeypatch):
         device_registry.async_get = lambda hass: SimpleNamespace(
             async_get_or_create=MagicMock(), async_get_device=lambda identifiers: None
         )
+        device_registry.async_entries_for_config_entry = lambda registry, entry_id: []
         entity_registry = sys.modules["homeassistant.helpers.entity_registry"]
         entity_registry.async_get = lambda hass: hass.registry
         entity_registry.async_entries_for_config_entry = lambda registry, entry_id: [
@@ -590,6 +591,11 @@ def _registries(ctx, entities, devices):
         async_get_or_create=MagicMock(return_value=SimpleNamespace(id="device")),
         async_get_device=get_device,
     )
+    # This entry's device registry entries: one per known identifier.
+    ctx.component.dr.async_entries_for_config_entry = lambda registry, entry_id: [
+        SimpleNamespace(identifiers={("hoval_connect", identifier)}, name=name)
+        for identifier, name in devices.items()
+    ]
 
 
 @pytest.mark.asyncio
@@ -648,6 +654,24 @@ async def test_seed_needs_one_plant_or_the_chosen_one(runtime, fans, plant_optio
             "plant_name": expected,
             "circuits": dict.fromkeys(paths, "HV"),
         }
+
+
+@pytest.mark.asyncio
+async def test_seed_without_chosen_plant_needs_an_account_with_one_plant(runtime):
+    """Only one of two plants has an HV unit: seeding it would bind the gateway to it
+    implicitly, and the stored topology would make that permanent."""
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = dict(_MODBUS_OPTIONS)
+    _registries(
+        ctx,
+        [_registry_entity("P1_520.50.0_fan")],
+        {"P1": "Hoval A", "P1_520.50.0": "Hoval Lüftung", "P2": "Hoval B"},
+    )
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    assert entry.runtime_data.coordinator.kwargs["topology"] is None
 
 
 @pytest.mark.asyncio
