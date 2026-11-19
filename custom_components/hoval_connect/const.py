@@ -52,22 +52,28 @@ USER_AGENT = (
 ID_TOKEN_TTL = timedelta(minutes=25)
 PLANT_TOKEN_TTL = timedelta(minutes=12)
 
-# Polling interval
-DEFAULT_SCAN_INTERVAL = timedelta(seconds=60)
+# Polling interval. Hoval blocked this integration on 2026-11-19 for polling
+# too often and asked for 15 minutes on /circuits and /live-values (issue #24).
+# get_scan_interval() maps any stored value not listed here, such as a legacy
+# 30 or 60, to the default, so existing installs move to it without migration.
+DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 CONF_SCAN_INTERVAL = "scan_interval"
-SCAN_INTERVAL_OPTIONS = {30: "30 seconds", 60: "60 seconds", 120: "2 minutes", 300: "5 minutes"}
+SCAN_INTERVAL_OPTIONS = {900: "15 minutes", 1800: "30 minutes", 3600: "60 minutes"}
 
-# Program cache TTL — programs change rarely, no need to fetch every poll
-PROGRAM_CACHE_TTL = timedelta(minutes=5)
+# Program cache TTL. Time programs change rarely, and the circuit details
+# (temporary-change limits) refresh on the same cadence.
+PROGRAM_CACHE_TTL = timedelta(hours=1)
 
 # A 417 may mean this circuit has no programs. Recheck later rather than
-# permanently excluding it or querying it on every sensor update.
-PROGRAM_UNAVAILABLE_RETRY_INTERVAL = timedelta(hours=1)
+# permanently excluding it or querying it on every sensor update. Must stay
+# longer than PROGRAM_CACHE_TTL, or the pause saves nothing.
+PROGRAM_UNAVAILABLE_RETRY_INTERVAL = timedelta(hours=6)
 
-# Plant-level cache TTLs — weather and events are slow-changing, so fetching
-# them on every (default 60 s) poll wastes round-trips and risks rate limits.
-# They refresh on their own cadence; the last good value is reused in between.
-WEATHER_CACHE_TTL = timedelta(minutes=15)
+# Plant-level cache TTLs. Weather changes slowly and refreshes hourly. The
+# events TTL is below the 15-minute polling floor, so events refresh with every
+# regular poll; it only spares the extra refresh that follows a control action.
+# The last good value is reused when a fetch fails.
+WEATHER_CACHE_TTL = timedelta(hours=1)
 EVENTS_CACHE_TTL = timedelta(minutes=3)
 
 # HTTP request timeout (seconds)

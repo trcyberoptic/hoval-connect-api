@@ -171,18 +171,18 @@ def runtime(monkeypatch):
 async def test_setup_registers_listener_only_for_legacy_ha(runtime, modern):
     ctx = runtime(modern)
     entry = _ConfigEntry()
-    entry.options = {"scan_interval": "120"}
+    entry.options = {"scan_interval": "1800"}
 
     assert await ctx.component.async_setup_entry(ctx.hass, entry)
 
-    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 120
+    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 1800
     assert len(entry.update_listeners) == (0 if modern else 1)
     flow = ctx.config_flow.HovalConnectOptionsFlow()
     assert bool(getattr(flow, "automatic_reload", False)) is modern
     if not modern:
-        entry.options = {"scan_interval": 300}
+        entry.options = {"scan_interval": 3600}
         await entry.update_listeners[0](ctx.hass, entry)
-        assert entry.runtime_data.coordinator.update_interval.total_seconds() == 300
+        assert entry.runtime_data.coordinator.update_interval.total_seconds() == 3600
 
 
 @pytest.mark.asyncio
@@ -192,12 +192,12 @@ async def test_corrupt_options_do_not_block_setup_or_form(runtime):
     entry.options = {"scan_interval": [], "override_duration": {}, "turn_on_mode": None}
 
     assert await ctx.component.async_setup_entry(ctx.hass, entry)
-    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 60
+    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 900
     flow = ctx.config_flow.HovalConnectOptionsFlow()
     flow.config_entry = entry
     result = await flow.async_step_init()
     assert result["data_schema"]({}) == {
-        "scan_interval": 60,
+        "scan_interval": 900,
         "override_duration": "endOfPhase",
         "turn_on_mode": "resume",
     }

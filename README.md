@@ -94,18 +94,18 @@ Plants and circuits are discovered automatically from your account.
 **Options** (configurable per integration entry):
 - Turn-on mode: resume / week1 / week2
 - Temporary override duration: until end of current phase (default, v0.15.0+) / 4 hours / until midnight
-- Polling interval (default: 60s)
+- Polling interval (default and minimum: 15 minutes, as agreed with Hoval in #24; 30 and 60 minutes selectable)
 
 **Services:**
 - `hoval_connect.reset_temporary_change` — cancel an active temporary override on a HomeVent fan, heating-circuit climate, or hot-water water_heater entity, returning control to the underlying time program. Target = the fan/climate/water_heater entity. Useful in automations that need to end a manual boost cleanly (instead of waiting for the override to expire).
 
 **Under the hood:**
 - 2-step token management (ID token + Plant Access Token) with TTL caching, auto-refresh, and single-flight locking (concurrent requests trigger at most one token refresh)
-- Skips API calls when plant is offline, invalidates token cache on reconnect. The gateway reconnects to the cloud about every 48 minutes, and a poll sometimes sees this as "offline" for one poll. A single offline poll keeps the previous values, and only the plant's online sensor shows it. If the plant stays offline for two consecutive polls (about 2 minutes), the circuit entities become unavailable, the integration logs one warning, and it logs one info message when the plant is back online
+- Skips API calls when plant is offline, invalidates token cache on reconnect. The gateway reconnects to the cloud about every 48 minutes, and a poll sometimes sees this as "offline" for one poll. A single offline poll keeps the previous values, and only the plant's online sensor shows it. If the plant stays offline for two consecutive polls (about 30 minutes), the circuit entities become unavailable, the integration logs one warning, and it logs one info message when the plant is back online
 - Parallel API fetches for circuits, live values, programs, events, and weather, with at most eight circuit fetches in flight
 - Control commands are serialized per plant and circuit. Ambiguous write failures (timeouts, connection errors, 429/5xx) are reported without automatically repeating the command; reads retain their transient-error retries.
 - Tiered caching reduces API calls: programs 5 min (including empty responses), events 3 min, weather forecast 15 min. Program caches are separate for each plant and circuit.
-- A circuit's program endpoint returning HTTP 417 is checked again every hour. Only the first 417 per circuit is logged as a warning, repeats at debug level; a 417 after the programs were available again warns again. So far, heat generator (`BL`) and buffer tank (`PS`) circuits have always answered 417 (#13, #15). Live values continue updating normally; authentication errors, gateway blocks and transient failures do not trigger this pause.
+- A circuit's program endpoint returning HTTP 417 is checked again every 6 hours. Only the first 417 per circuit is logged as a warning, repeats at debug level; a 417 after the programs were available again warns again. So far, heat generator (`BL`) and buffer tank (`PS`) circuits have always answered 417 (#13, #15). Live values continue updating normally; authentication errors, gateway blocks and transient failures do not trigger this pause.
 - Hardened against upstream API changes (v1.0.0): paginated `{"content": [...]}` responses are normalized on the circuits, live-values and both plant-event endpoints (not on the weather forecast — a wrapped response there yields no forecast), the plant list follows pagination, and a malformed program or live-value field degrades only its own sensors instead of dropping the whole circuit
 - Dynamic entity discovery — new circuits added without restart
 - All circuit reads use the `/v3` API (Hoval removed `/v1` circuit endpoints in April 2026); legacy v1 enum values still get normalized to v3 keys as a fallback
