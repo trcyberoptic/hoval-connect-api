@@ -362,6 +362,25 @@
         "name": "Heating"
       }
     },
+    "button": {
+      "acknowledge_maintenance": {
+        "name": "Acknowledge maintenance"
+      },
+      "acknowledge_filter_cleaning": {
+        "name": "Acknowledge filter cleaning"
+      }
+    },
+    "number": {
+      "constant_modulation_setpoint": {
+        "name": "Constant program setpoint"
+      },
+      "eco_modulation_setpoint": {
+        "name": "Eco program setpoint"
+      },
+      "humidity_setpoint": {
+        "name": "Target humidity setpoint"
+      }
+    },
     "fan": {
       "ventilation": {
         "name": "Ventilation"

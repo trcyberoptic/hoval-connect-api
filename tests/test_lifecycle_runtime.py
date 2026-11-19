@@ -100,6 +100,7 @@ def runtime(monkeypatch):
                     "climate",
                     "fan",
                     "select",
+                    "button",
                     "sensor",
                     "water_heater",
                     "number",

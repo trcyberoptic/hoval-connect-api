@@ -362,6 +362,25 @@
         "name": "Heizen"
       }
     },
+    "button": {
+      "acknowledge_maintenance": {
+        "name": "Wartung quittieren"
+      },
+      "acknowledge_filter_cleaning": {
+        "name": "Filterreinigung quittieren"
+      }
+    },
+    "number": {
+      "constant_modulation_setpoint": {
+        "name": "Sollwert Programm Konstant"
+      },
+      "eco_modulation_setpoint": {
+        "name": "Sollwert Programm Eco"
+      },
+      "humidity_setpoint": {
+        "name": "Sollwert Luftfeuchte"
+      }
+    },
     "fan": {
       "ventilation": {
         "name": "Belüftung"
