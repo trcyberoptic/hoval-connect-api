@@ -179,8 +179,31 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **No controller status or CO₂/VOC sensors (since v1.1.0).** Up to v1.0.18 the HV control status (normal / VOC / humidity / frost protection / CoolVent / fault / summer humidity / switch-off stop), the HV operating selection, the air-quality control code, CO₂ and VOC, and the HK control status (#14) came from raw controller datapoints via `GET /api/telemetry-data/snapshots/live/{plantId}`. Hoval asked for that endpoint to be dropped (#24), and no other endpoint reports these values, so v1.1.0 removes the sensors and their leftover entities. The operating selection is the same as the program select. We have asked Hoval for a replacement in its planned official API.
+- **No controller status or CO₂/VOC sensors (since v1.1.0).** Hoval asked for the endpoint they came from to be dropped (#24). See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for which ones have no replacement.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
+
+### Sensors removed in v1.1.0
+
+Up to v1.0.18 these sensors read raw controller datapoints through
+`GET /api/telemetry-data/snapshots/live/{plantId}`. Hoval asked third-party integrations to
+stop calling that endpoint ([#24][issue-24]), so v1.1.0 no longer does.
+
+| Sensor (English / German) | Circuit | Datapoint | Status since v1.1.0 |
+|---|---|---|---|
+| Control status / Regelungsstatus | HV | `39652` | **No replacement.** No other endpoint reports why the unit deviates from its schedule (normal, VOC, humidity, frost protection, CoolVent, fault, summer humidity, switch-off stop). `operationMode` stays `ventilation` during CoolVent and summer humidity. |
+| Control status / Regelungsstatus | HK | `2051` | **No replacement** ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)). |
+| CO₂ extract air / CO₂ Abluft | HV | `37606` | **No replacement.** Only showed values on units with an air-quality sensor. |
+| VOC extract air / VOC Abluft | HV | `37608` | **No replacement.** As above. |
+| VOC outside air / VOC Aussenluft | HV | `37611` | **No replacement.** As above. |
+| Air quality control (code) / Luftqualitätsregelung (Code) | HV | `39600` | **Partly replaced** by the new binary sensor *Air quality guided* / *Luftqualitätsgeführt*: on/off instead of the raw code. |
+| Operating selection / Betriebswahl | HV | `40650` | **Covered** by the program select, which shows the same value. |
+| Constant mode air volume / Luftmenge Konstantbetrieb | HV | `40651` | **Kept.** Same entity, now read from the circuit details once per hour. |
+| Eco mode air volume / Luftmenge Sparbetrieb | HV | `40686` | **Kept.** As above. |
+
+The update deletes the entities of the removed sensors, so they do not linger as
+`unavailable`. Automations, scripts and dashboards that use them need to be adjusted. We
+have asked Hoval to provide the missing values through another endpoint or in its planned
+official API; if that happens, the sensors will come back.
 
 ### Requirements
 
