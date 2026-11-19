@@ -216,11 +216,12 @@ show unit id 0, but the gateway has been seen to answer on **unit id 1**, so ent
 | Buttons: acknowledge maintenance, acknowledge filter cleaning | Modbus | Modbus |
 | Week/day names, program air volume, temporary change with end time, holiday, room air quality | cloud | not available |
 | Weather, forecast, plant events | cloud | not available |
-| *Online* and *Error* of the plant | cloud (unavailable while the cloud is down) | Modbus reachable / an active error entry |
+| *Online* and *Error* of the plant | cloud (unavailable while the cloud is down) | *Online* on while the gateway answers / *Error* on while an error entry is active |
 | `hoval_connect.reset_temporary_change` | works | raises an error (there is no cloud temporary change) |
 
-If the gateway stops answering, the Modbus-backed entities become unavailable. They do not fall back
-to the cloud's live values.
+If the gateway stops answering, the Modbus-backed entities become unavailable, and so do the fan and
+the program select of that unit. They do not fall back to the cloud's live values. In a local-only
+entry this means every entity: *Online* does not turn *off*, it becomes unavailable like the rest.
 
 #### Fan percentage: hybrid and local differ
 
@@ -247,8 +248,12 @@ down, the entry starts from that stored list and keeps running on Modbus alone. 
 gateway while the cloud already refuses the account, nothing has been stored yet; the entry then
 takes the plant and its ventilation units from the entities it already has, provided they belong to
 one plant (or to the plant chosen in the options). The cloud is retried
-only at its own slow interval, never at the Modbus interval. After a rejected login the cloud stays
-suspended until you re-authenticate, and Modbus keeps working.
+only at its own slow interval, never at the Modbus interval. Meanwhile everything only the cloud
+supplies is unavailable: heating and hot-water circuits, week and day names, temporary change,
+weather, events and the plant's *Online* and *Error*. After a rejected login the cloud stays
+suspended until you re-authenticate, and Modbus keeps working. If the login is rejected at start-up
+and the gateway does not answer either, the entry stops and asks you to re-authenticate instead of
+retrying, because every retry would log in again.
 
 ### Known Limitations
 
