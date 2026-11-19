@@ -116,8 +116,14 @@ def runtime(monkeypatch):
         sys.modules["homeassistant.helpers.config_validation"].entity_ids = list
         device_registry = sys.modules["homeassistant.helpers.device_registry"]
         device_registry.DeviceInfo = _ModernDeviceInfo if modern else dict
-        device_registry.async_get = lambda hass: SimpleNamespace(async_get_or_create=MagicMock())
-        sys.modules["homeassistant.helpers.entity_registry"].async_get = lambda hass: hass.registry
+        device_registry.async_get = lambda hass: SimpleNamespace(
+            async_get_or_create=MagicMock(), async_get_device=lambda identifiers: None
+        )
+        entity_registry = sys.modules["homeassistant.helpers.entity_registry"]
+        entity_registry.async_get = lambda hass: hass.registry
+        entity_registry.async_entries_for_config_entry = lambda registry, entry_id: [
+            entity for entity in registry.entities if entity.config_entry_id == entry_id
+        ]
         aiohttp_client = sys.modules["homeassistant.helpers.aiohttp_client"]
         aiohttp_client.async_get_clientsession = lambda hass: object()
 
@@ -153,6 +159,7 @@ def runtime(monkeypatch):
         spec.loader.exec_module(component)
         config_flow = importlib.import_module(f"{name}.config_flow")
         hass = SimpleNamespace(
+            registry=SimpleNamespace(entities=[], async_get=lambda entity_id: None),
             config_entries=SimpleNamespace(
                 async_forward_entry_setups=AsyncMock(),
                 async_unload_platforms=AsyncMock(return_value=True),
@@ -529,3 +536,112 @@ async def test_failed_first_refresh_closes_modbus_client(runtime):
         await ctx.component.async_setup_entry(ctx.hass, entry)
 
     closed.assert_awaited_once()
+
+
+# --- Seeding the topology of a hybrid entry from its registries (R-SEED, I6) ----
+
+# Same literal as _SEEDED in test_modbus_coordinator.py, which starts a hybrid
+# coordinator from it with the cloud down.
+_SEEDED = {"plant_id": "P_1", "plant_name": "HRT", "circuits": {"520.50.0": "Lüftung"}}
+
+
+def _registry_entity(unique_id, *, domain="fan", entry_id="synthetic-entry", platform=None):
+    return SimpleNamespace(
+        domain=domain,
+        platform=platform or "hoval_connect",
+        unique_id=unique_id,
+        config_entry_id=entry_id,
+    )
+
+
+def _registries(ctx, entities, devices):
+    """Entity registry entries and device names (identifier -> registry name)."""
+    ctx.hass.registry = SimpleNamespace(entities=entities, async_get=lambda entity_id: None)
+
+    def get_device(identifiers):
+        ((_domain, identifier),) = identifiers
+        name = devices.get(identifier)
+        return None if name is None else SimpleNamespace(name=name)
+
+    ctx.component.dr.async_get = lambda hass: SimpleNamespace(
+        async_get_or_create=MagicMock(return_value=SimpleNamespace(id="device")),
+        async_get_device=get_device,
+    )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_setup_without_topology_seeds_it_from_the_registry(runtime):
+    """I6: a first hybrid start while Hoval blocks the account had no topology."""
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = dict(_MODBUS_OPTIONS)
+    _registries(
+        ctx,
+        [
+            _registry_entity("P_1_520.50.0_fan"),
+            _registry_entity("P_1_520.50.0_air_volume", domain="sensor"),
+            _registry_entity("P_1_1.1.0_climate", domain="climate"),
+            _registry_entity("P_9_521.50.0_fan", entry_id="other-entry"),
+            _registry_entity("P_8_522.50.0_fan", platform="other_integration"),
+        ],
+        {"P_1": "Hoval HRT", "P_1_520.50.0": "Hoval Lüftung"},
+    )
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    assert entry.runtime_data.coordinator.kwargs["topology"] == _SEEDED
+    # Stored only by the next successful cloud poll, as usual.
+    assert "topology" not in entry.data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fans", "plant_option", "expected"),
+    [
+        (["P1_520.50.0_fan", "P2_520.50.0_fan"], None, None),
+        (["P1_520.50.0_fan", "P2_520.50.0_fan", "P2_521.50.0_fan"], "P2", "P2"),
+        (["P1_520.50.0_fan"], "P2", None),
+        (["P1_520.50.0_fan"], "P1", "P1"),
+    ],
+)
+async def test_seed_needs_one_plant_or_the_chosen_one(runtime, fans, plant_option, expected):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = dict(_MODBUS_OPTIONS)
+    if plant_option:
+        entry.options["modbus_plant_id"] = plant_option
+    _registries(ctx, [_registry_entity(uid) for uid in fans], {})
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    topology = entry.runtime_data.coordinator.kwargs["topology"]
+    if expected is None:
+        assert topology is None
+    else:
+        paths = sorted(uid.split("_")[1] for uid in fans if uid.startswith(f"{expected}_"))
+        # Without device names: the plant id and the cloud's fallback circuit name.
+        assert topology == {
+            "plant_id": expected,
+            "plant_name": expected,
+            "circuits": dict.fromkeys(paths, "HV"),
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["stored", "cloud_only", "local"])
+async def test_seed_only_for_hybrid_entries_without_stored_topology(runtime, kind):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    stored = {"plant_id": "P_1", "plant_name": "Stored", "circuits": {"520.50.0": "Stored"}}
+    if kind == "stored":
+        entry.options = dict(_MODBUS_OPTIONS)
+        entry.data = {**entry.data, "topology": stored}
+    elif kind == "local":
+        entry.data = {"mode": "local", "host": "192.0.2.10"}
+    _registries(ctx, [_registry_entity("P_1_520.50.0_fan")], {"P_1": "Hoval HRT"})
+
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    assert entry.runtime_data.coordinator.kwargs["topology"] == (
+        stored if kind == "stored" else None
+    )

@@ -243,7 +243,10 @@ panel shows the matching message; afterwards the *Weeks until maintenance* senso
 
 In hybrid mode every successful cloud poll stores the plant's name and its HV circuits in the config
 entry. If the cloud fails (blocked, offline, wrong login) or Home Assistant restarts while it is
-down, the entry starts from that stored list and keeps running on Modbus alone. The cloud is retried
+down, the entry starts from that stored list and keeps running on Modbus alone. If you add the
+gateway while the cloud already refuses the account, nothing has been stored yet; the entry then
+takes the plant and its ventilation units from the entities it already has, provided they belong to
+one plant (or to the plant chosen in the options). The cloud is retried
 only at its own slow interval, never at the Modbus interval. After a rejected login the cloud stays
 suspended until you re-authenticate, and Modbus keeps working.
 
