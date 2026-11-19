@@ -466,3 +466,43 @@ def test_options_flow_error_keys_are_translated_in_options_error():
         data = json.loads(Path("custom_components/hoval_connect", name).read_text(encoding="utf-8"))
         missing = keys - set(data["options"].get("error", {}))
         assert not missing, (name, missing)
+
+
+_STORED_GATEWAY = {
+    "turn_on_mode": "resume",
+    "override_duration": "endOfPhase",
+    "scan_interval": 900,
+    "modbus_host": "gw.local",
+    "modbus_port": 502,
+    "modbus_unit_id": 1,
+    "modbus_scan_interval": 30,
+}
+
+
+def test_cloud_options_unchanged_gateway_is_not_probed(flow_mod):
+    """I5: saving unrelated options must not open a second connection to the gateway;
+    with the gateway briefly offline (or allowing one client) saving would fail."""
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow_mod.state.discover = flow_mod.modbus_error("gateway offline")
+    user_input = {**_STORED_GATEWAY, "scan_interval": 1800, "modbus_host": " gw.local "}
+    result = _run(flow.async_step_init(user_input))
+    assert result["type"] == "create_entry"
+    assert result["data"]["scan_interval"] == 1800
+    assert result["data"]["modbus_host"] == "gw.local"
+    assert flow_mod.state.created == []
+
+
+@pytest.mark.parametrize(
+    ("change", "probed"),
+    [
+        ({"modbus_host": "gw2.local"}, ("gw2.local", 502, 1)),
+        ({"modbus_port": 1502}, ("gw.local", 1502, 1)),
+        ({"modbus_unit_id": 0}, ("gw.local", 502, 0)),
+    ],
+)
+def test_cloud_options_changed_gateway_is_probed(flow_mod, change, probed):
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow_mod.state.discover = []
+    result = _run(flow.async_step_init({**_STORED_GATEWAY, **change}))
+    assert result["errors"] == {"base": "modbus_no_units"}
+    assert flow_mod.state.created == [probed]

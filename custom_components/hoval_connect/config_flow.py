@@ -42,6 +42,7 @@ from .const import (
 from .modbus import HovalModbusClient, HovalModbusError
 from .modbus_hv import HovalModbusPoller
 from .options import (
+    ModbusSettings,
     get_modbus_plant_id,
     get_modbus_scan_interval,
     get_modbus_settings,
@@ -375,11 +376,16 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
                     data[CONF_MODBUS_PLANT_ID] = kept
             if not host:
                 return self.async_create_entry(title="", data=data)
-            error = await _modbus_error_key(
-                host,
-                int(data.get(CONF_MODBUS_PORT, DEFAULT_MODBUS_PORT)),
-                int(data.get(CONF_MODBUS_UNIT_ID, DEFAULT_MODBUS_UNIT_ID)),
-            )
+            port = int(data.get(CONF_MODBUS_PORT, DEFAULT_MODBUS_PORT))
+            unit_id = int(data.get(CONF_MODBUS_UNIT_ID, DEFAULT_MODBUS_UNIT_ID))
+            # Probe only a changed address. The probe opens a second connection
+            # next to the running entry's: with the gateway briefly offline, or
+            # if it accepts one client only, unrelated options could not be saved.
+            if ModbusSettings(host, port, unit_id) == get_modbus_settings(
+                {}, self.config_entry.options
+            ):
+                return self.async_create_entry(title="", data=data)
+            error = await _modbus_error_key(host, port, unit_id)
             if error is None:
                 return self.async_create_entry(title="", data=data)
             errors["base"] = error
