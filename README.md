@@ -198,7 +198,8 @@ show unit id 0, but the gateway has been seen to answer on **unit id 1**, so ent
   host* (IP address or name of the gateway), port (502), unit id (1) and the *Modbus polling interval*
   (10, 30, 60 or 120 seconds, default 30). If your account has several plants, pick the one the
   gateway belongs to. An empty host means cloud only, exactly as before. Existing entities keep their
-  entity IDs, history and long-term statistics.
+  entity IDs, history and long-term statistics. Saving checks a new or changed gateway address;
+  saving other options leaves the gateway alone.
 - **Local only:** **Add Integration > Hoval Connect > Local gateway (Modbus TCP, no account)** and enter
   host, port and unit id. The integration finds the HV units itself. This creates new entities (it is
   not a drop-in for an existing cloud entry). **Reconfigure** changes the gateway's address later.
