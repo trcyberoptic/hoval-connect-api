@@ -432,3 +432,18 @@ class TestOssScannerImage:
         assert ci and image
         missing = set(ci.group(1).split()) - set(image.group(1).split())
         assert not missing, f".oss-scanner/Dockerfile lacks CI's test packages: {sorted(missing)}"
+
+
+class TestModbusIsDependencyFree:
+    def test_no_pymodbus_anywhere(self):
+        for path in _BASE.glob("*.py"):
+            assert "pymodbus" not in path.read_text(encoding="utf-8").lower(), path.name
+
+    def test_manifest_has_no_requirements(self):
+        assert '"requirements": []' in _read("manifest.json")
+
+    def test_modbus_modules_make_no_cloud_calls(self):
+        for name in ("modbus.py", "modbus_hv.py"):
+            src = _read(name)
+            assert "aiohttp" not in src, name
+            assert "/v3/" not in src, name
