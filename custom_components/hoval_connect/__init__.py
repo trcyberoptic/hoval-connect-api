@@ -125,6 +125,10 @@ def _apply_intervals(coordinator: HovalDataCoordinator, entry: HovalConnectConfi
 _FAN_UNIQUE_ID = re.compile(r"^(?P<plant>.+)_(?P<path>\d+\.\d+\.\d+)_fan$")
 
 
+# Identifier of a circuit device: `{plant_id}_{path}` (a plant device has no path).
+_CIRCUIT_DEVICE_ID = re.compile(r"_\d+\.\d+\.\d+$")
+
+
 def _seed_topology(
     hass: HomeAssistant, entry: HovalConnectConfigEntry, modbus_plant_id: str | None
 ) -> dict[str, Any] | None:
@@ -136,8 +140,11 @@ def _seed_topology(
     `{plant_id}_{path}_fan` this entry registered as a cloud entry, and the
     device registry holds their names (with the "Hoval " prefix that
     plant_device_info/circuit_device_info add). Only one plant is seeded: the
-    plant chosen in the options, else the only plant found; otherwise None,
-    and the first start needs the cloud as before. The coordinator uses the
+    plant chosen in the options, else the only plant of the account; otherwise
+    None, and the first start needs the cloud as before. The account's plants
+    are the plant devices this entry registered, not the plants with an HV
+    unit: a seed on a two-plant account would bind the gateway implicitly, and
+    the stored topology would make that permanent. The coordinator uses the
     seed like a stored topology; the next successful cloud poll stores it.
     """
     circuits: dict[str, list[str]] = {}
@@ -146,14 +153,19 @@ def _seed_topology(
             continue
         if (match := _FAN_UNIQUE_ID.match(entity.unique_id)) is not None:
             circuits.setdefault(match["plant"], []).append(match["path"])
+    device_reg = dr.async_get(hass)
     if modbus_plant_id:
         plant_id = modbus_plant_id if modbus_plant_id in circuits else None
     else:
-        plant_id = next(iter(circuits)) if len(circuits) == 1 else None
+        plant_devices = {
+            identifier
+            for device in dr.async_entries_for_config_entry(device_reg, entry.entry_id)
+            for domain, identifier in device.identifiers
+            if domain == DOMAIN and not _CIRCUIT_DEVICE_ID.search(identifier)
+        }
+        plant_id = next(iter(circuits)) if len(circuits) == 1 and len(plant_devices) == 1 else None
     if plant_id is None:
         return None
-
-    device_reg = dr.async_get(hass)
 
     def name(identifier: str, fallback: str) -> str:
         device = device_reg.async_get_device(identifiers={(DOMAIN, identifier)})
