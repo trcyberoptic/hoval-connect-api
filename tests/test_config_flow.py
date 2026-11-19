@@ -451,3 +451,18 @@ def test_cloud_options_keep_stored_plant_binding_when_selector_hidden(flow_mod):
         )
     )
     assert result["data"]["modbus_plant_id"] == "P2"
+
+
+def test_options_flow_error_keys_are_translated_in_options_error():
+    """HA resolves option-flow errors from options.error, not config.error."""
+    import json
+    import re
+
+    src = Path("custom_components/hoval_connect/config_flow.py").read_text(encoding="utf-8")
+    flow_src = src[src.index("class HovalConnectOptionsFlow") :]
+    keys = set(re.findall(r'errors\["base"\] = "([a-z_]+)"', flow_src))
+    keys |= {"modbus_cannot_connect", "modbus_no_units"}  # returned via _modbus_error_key
+    for name in ("strings.json", "translations/en.json", "translations/de.json"):
+        data = json.loads(Path("custom_components/hoval_connect", name).read_text(encoding="utf-8"))
+        missing = keys - set(data["options"].get("error", {}))
+        assert not missing, (name, missing)
