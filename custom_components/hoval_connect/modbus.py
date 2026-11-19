@@ -175,6 +175,15 @@ class HovalModbusClient:
     async def _exchange(self, function: int, address: int, word: int) -> bytes:
         self._transaction_id = (self._transaction_id + 1) & 0xFFFF
         tid = self._transaction_id
+        # A peer that closed or reset an idle connection is only noticed after we
+        # send. Drop it before sending: a request that was never sent is safe to
+        # send on a fresh connection, even for writes.
+        if self._reader is not None and (
+            self._reader.at_eof()
+            or self._reader.exception() is not None
+            or (self._writer is not None and self._writer.is_closing())
+        ):
+            await self._disconnect()
         try:
             async with asyncio.timeout(self._timeout):
                 if self._writer is None or self._reader is None:

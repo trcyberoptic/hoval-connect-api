@@ -248,3 +248,33 @@ async def test_connection_refused_raises_modbus_error():
     client = modbus.HovalModbusClient("127.0.0.1", port, timeout=1.0, request_gap=0)
     with pytest.raises(modbus.HovalModbusError):
         await client.read_holding(1, 1)
+
+
+async def test_write_reconnects_when_idle_connection_was_closed_by_peer():
+    writers = []
+
+    def script(srv, _conn, req):
+        if req[1] == 3:
+            return _read_response(req[0], BLOCK)
+        return _write_echo(req[0], req[2], req[3])
+
+    async with FakeServer(script) as server:
+        orig = server._handle
+
+        async def handle(reader, writer):
+            writers.append(writer)
+            await orig(reader, writer)
+
+        server._server.close()
+        await server._server.wait_closed()
+        server._server = await asyncio.start_server(handle, "127.0.0.1", server.port)
+        client = _client(server)
+        try:
+            assert await client.read_holding(23622, 13) == BLOCK
+            writers[0].close()  # server drops the idle connection
+            await asyncio.sleep(0.1)
+            await client.write_register(23624, 66)
+        finally:
+            await client.close()
+        assert server.connections == 2
+        assert [r for r in server.requests if r[1] == 6] == [(server.requests[-1][0], 6, 23624, 66)]
