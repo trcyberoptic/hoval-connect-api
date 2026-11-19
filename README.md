@@ -72,12 +72,12 @@ Plants and circuits are discovered automatically from your account.
 - Current program pre-selected
 
 **Sensor entities** (per circuit, filtered by type):
-- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume, constant- and eco-mode air volume (from the circuit details, refreshed hourly)
-- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint)
+- **HV:** Outside temperature, exhaust temperature, air volume, humidity (actual/target), program air volume, constant- and eco-mode air volume (from the circuit details, refreshed hourly), room air quality (poor / medium / good; only on units with an air-quality sensor)
+- **HK:** Outside temperature, flow temperature (actual/target), room temperature (actual + setpoint), holiday end (timestamp, empty when no holiday program runs), heating/cooling control (diagnostic)
 - **BL:** Heat generator temperature (actual/target), return temperature, operating hours, operating hours >50%, switching cycles, heat produced, electrical energy consumed, current output heating, modulation, FA status, electric heater (operating hours, switching cycles, heat produced, energy consumed, active)
-- **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2)
+- **WW:** Hot water setpoint, tank temperature top (SF1), tank temperature bottom (SF2), holiday end
 - **PS:** Buffer target temperature, buffer temperature top (PF1) / bottom (PF2)
-- **All:** Status, operation mode, active week program, active day program, temporary change ends (timestamp, v1.0.2 — empty when no override is running)
+- **All:** Status (heating / cooling / active / inactive / ventilation), operation mode, active week program, active day program, temporary change ends (timestamp, v1.0.2 — empty when no override is running)
 
 > Outside temperature is created only on HV/HK circuits (v0.15.4+). Upgrading from ≤0.15.3: any outside-temperature sensors you already have on BL/WW circuits are preserved — only newly-discovered circuits get the filtered set.
 
@@ -179,7 +179,7 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **No controller status or CO₂/VOC sensors (since v1.1.0).** Hoval asked for the endpoint they came from to be dropped (#24). See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for which ones have no replacement.
+- **No detailed controller status and no CO₂/VOC values (since v1.1.0).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list follow in the next release. See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Sensors removed in v1.1.0
@@ -191,10 +191,10 @@ stop calling that endpoint ([#24][issue-24]), so v1.1.0 no longer does.
 | Sensor (English / German) | Circuit | Datapoint | Status since v1.1.0 |
 |---|---|---|---|
 | Control status / Regelungsstatus | HV | `39652` | **No replacement.** No other endpoint reports why the unit deviates from its schedule (normal, VOC, humidity, frost protection, CoolVent, fault, summer humidity, switch-off stop). `operationMode` stays `ventilation` during CoolVent and summer humidity. |
-| Control status / Regelungsstatus | HK | `2051` | **No replacement** ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)). |
-| CO₂ extract air / CO₂ Abluft | HV | `37606` | **No replacement.** Only showed values on units with an air-quality sensor. |
-| VOC extract air / VOC Abluft | HV | `37608` | **No replacement.** As above. |
-| VOC outside air / VOC Aussenluft | HV | `37611` | **No replacement.** As above. |
+| Control status / Regelungsstatus | HK | `2051` | **Partly replaced** in the next release ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)): *Status* now shows heating / cooling / active / inactive, *Holiday end* shows a running holiday program, and *Heating/cooling control* shows the control type on reversible heat pumps. Frost protection, screed drying, SmartGrid and the other detail states have no replacement. |
+| CO₂ extract air / CO₂ Abluft | HV | `37606` | **Partly replaced** in the next release by *Room air quality* / *Raumluftqualität*: poor / medium / good instead of ppm, from `airQuality.actualRoomAirQuality` on the circuit list. Created only on units with an air-quality sensor. |
+| VOC extract air / VOC Abluft | HV | `37608` | **Partly replaced.** As above. |
+| VOC outside air / VOC Aussenluft | HV | `37611` | **Partly replaced.** As above. |
 | Air quality control (code) / Luftqualitätsregelung (Code) | HV | `39600` | **Partly replaced** by the new binary sensor *Air quality guided* / *Luftqualitätsgeführt*: on/off instead of the raw code. |
 | Operating selection / Betriebswahl | HV | `40650` | **Covered** by the program select, which shows the same value. |
 | Constant mode air volume / Luftmenge Konstantbetrieb | HV | `40651` | **Kept.** Same entity, now read from the circuit details once per hour. |

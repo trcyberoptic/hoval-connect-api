@@ -31,12 +31,15 @@ from homeassistant.util import dt as dt_util
 from . import HovalConnectConfigEntry, circuit_device_info, plant_device_info
 from .const import (
     BOILER_FA_STATES,
+    CIRCUIT_CONTROL_TYPES,
+    CIRCUIT_STATUSES,
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_HK,
     CIRCUIT_TYPE_HV,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DOMAIN,
+    ROOM_AIR_QUALITIES,
     is_retired_circuit_sensor,
 )
 from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
@@ -48,6 +51,9 @@ class HovalSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[HovalCircuitData], Any | None]
     circuit_types: frozenset[str] | None = None
+    # Create the entity only for circuits this returns True for (e.g. units
+    # with an air-quality sensor). Already registered entities are kept.
+    exists_fn: Callable[[HovalCircuitData], bool] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -124,7 +130,39 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         key="circuit_status",
         translation_key="circuit_status",
         icon="mdi:information-outline",
-        value_fn=lambda c: c.circuit_status,
+        device_class=SensorDeviceClass.ENUM,
+        options=list(CIRCUIT_STATUSES),
+        value_fn=lambda c: c.circuit_status if c.circuit_status in CIRCUIT_STATUSES else None,
+    ),
+    # Coarse room air quality from the unit's own sensor: the only cloud
+    # stand-in for the CO2/VOC sensors retired in v1.1.0 (#24).
+    HovalSensorEntityDescription(
+        key="room_air_quality",
+        translation_key="room_air_quality",
+        icon="mdi:air-filter",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(ROOM_AIR_QUALITIES),
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=lambda c: c.has_air_quality_sensor or c.room_air_quality is not None,
+        value_fn=lambda c: c.room_air_quality if c.room_air_quality in ROOM_AIR_QUALITIES else None,
+    ),
+    HovalSensorEntityDescription(
+        key="holiday_end",
+        translation_key="holiday_end",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:beach",
+        circuit_types=frozenset({CIRCUIT_TYPE_HK, CIRCUIT_TYPE_WW}),
+        value_fn=lambda c: c.holiday_end,
+    ),
+    HovalSensorEntityDescription(
+        key="circuit_control_type",
+        translation_key="circuit_control_type",
+        icon="mdi:tune-variant",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(CIRCUIT_CONTROL_TYPES.values()),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HK}),
+        value_fn=lambda c: CIRCUIT_CONTROL_TYPES.get(c.circuit_control_type),
     ),
     # Setpoints of the constant and eco programs, from the circuit details.
     HovalSensorEntityDescription(
@@ -509,10 +547,17 @@ async def async_setup_entry(
                     # circuit_types filter is newly added/tightened (e.g.
                     # outside_temperature → HV/HK only in #5), existing users keep the
                     # entity they already have; only fresh circuits get the filtered set.
+                    is_registered = ent_reg.async_get_entity_id("sensor", DOMAIN, uid) is not None
                     if (
                         description.circuit_types is not None
                         and circuit.circuit_type not in description.circuit_types
-                        and ent_reg.async_get_entity_id("sensor", DOMAIN, uid) is None
+                        and not is_registered
+                    ):
+                        continue
+                    if (
+                        description.exists_fn is not None
+                        and not description.exists_fn(circuit)
+                        and not is_registered
                     ):
                         continue
                     if uid in known:

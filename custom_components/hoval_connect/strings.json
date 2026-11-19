@@ -80,7 +80,38 @@
         "name": "Target humidity"
       },
       "circuit_status": {
-        "name": "Status"
+        "name": "Status",
+        "state": {
+          "heating": "Heating",
+          "cooling": "Cooling",
+          "active": "Active",
+          "inactive": "Inactive",
+          "ventilation": "Ventilation"
+        }
+      },
+      "room_air_quality": {
+        "name": "Room air quality",
+        "state": {
+          "poor": "Poor",
+          "medium": "Medium",
+          "good": "Good"
+        }
+      },
+      "holiday_end": {
+        "name": "Holiday end"
+      },
+      "circuit_control_type": {
+        "name": "Heating/cooling control",
+        "state": {
+          "heating_only": "Heating only",
+          "cooling_only": "Cooling only",
+          "fully_automatic": "Fully automatic",
+          "semi_automatic": "Semi-automatic",
+          "manual": "Manual",
+          "manual_external": "Manual (external)",
+          "semi_automatic_external": "Semi-automatic (external)",
+          "manual_cooling_only": "Manual, cooling only"
+        }
       },
       "operation_mode": {
         "name": "Operation mode"

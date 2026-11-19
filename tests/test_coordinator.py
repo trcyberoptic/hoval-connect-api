@@ -647,3 +647,38 @@ class TestRetiredDatapointSensors:
         assert not hasattr(circuit, "datapoints")
         assert circuit.constant_value is None
         assert circuit.eco_mode_value is None
+
+
+class TestCircuitListStatusSensors:
+    """Enum sensors read from the circuit list (stand-ins after #24, see #14)."""
+
+    @pytest.mark.parametrize(
+        ("key", "states"),
+        [
+            ("circuit_status", "CIRCUIT_STATUSES"),
+            ("room_air_quality", "ROOM_AIR_QUALITIES"),
+            ("circuit_control_type", "CIRCUIT_CONTROL_TYPES"),
+        ],
+    )
+    def test_every_state_is_translated(self, key, states):
+        import json
+        import pathlib
+
+        from custom_components.hoval_connect import const
+
+        values = getattr(const, states)
+        expected = set(values.values() if isinstance(values, dict) else values)
+        base = pathlib.Path("custom_components/hoval_connect")
+        for f in ("strings.json", "translations/en.json", "translations/de.json"):
+            sensor = json.loads((base / f).read_text(encoding="utf-8"))["entity"]["sensor"]
+            assert set(sensor[key]["state"]) == expected, f
+
+    def test_control_types_cover_the_spec_enum(self):
+        import json
+        import pathlib
+
+        from custom_components.hoval_connect.const import CIRCUIT_CONTROL_TYPES
+
+        spec = json.loads(pathlib.Path("docs/openapi-v3.json").read_text(encoding="utf-8"))
+        prop = spec["components"]["schemas"]["CircuitV3DTO"]["properties"]["circuitControlType"]
+        assert set(CIRCUIT_CONTROL_TYPES) == set(prop["enum"])

@@ -91,6 +91,8 @@ def test_duplicate_plants_do_not_double_requests(runtime):
         {"targetValue": "nan"},
         {"targetValue": float("inf")},
         {"temporaryChange": {"value": "nan", "end": [], "type": {}}},
+        {"holidayEnd": [], "circuitControlType": {}},
+        {"airQuality": {"actualRoomAirQuality": 5, "hasAirQualitySensor": "true"}},
     ],
 )
 def test_malformed_optional_dto_fields_preserve_live_values(runtime, fields):
@@ -101,6 +103,32 @@ def test_malformed_optional_dto_fields_preserve_live_values(runtime, fields):
     assert circuit.target_value is None
     assert circuit.temporary_change_value is None
     assert circuit.name == "BL"
+    assert circuit.room_air_quality is None
+    assert not circuit.has_air_quality_sensor
+    assert circuit.holiday_end is None
+    assert circuit.circuit_control_type is None
+
+
+def test_circuit_list_status_fields_are_parsed(runtime):
+    """Stand-ins for the datapoints retired in v1.1.0 (#24), from the circuit list."""
+    key = ("P1", _PATH)
+    coordinator, api = _coordinator(runtime, {key: [None]})
+    api.get_circuits = AsyncMock(
+        return_value=[
+            {
+                "type": "BL",
+                "path": _PATH,
+                "airQuality": {"actualRoomAirQuality": "medium", "hasAirQualitySensor": True},
+                "holidayEnd": "2026-12-27T00:00:00+01:00",
+                "circuitControlType": "semiAutomatic",
+            }
+        ]
+    )
+    circuit = _refresh(coordinator, api).plants["P1"].circuits[_PATH]
+    assert circuit.room_air_quality == "medium"
+    assert circuit.has_air_quality_sensor
+    assert circuit.holiday_end == "2026-12-27T00:00:00+01:00"
+    assert circuit.circuit_control_type == "semiAutomatic"
 
 
 def test_boolean_strings_are_not_true(runtime):

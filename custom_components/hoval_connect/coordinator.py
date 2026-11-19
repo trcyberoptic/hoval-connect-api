@@ -254,6 +254,16 @@ class HovalCircuitData:
     # circuit list endpoint's `targetValue` (renamed from v1 `targetAirVolume`).
     target_value: float | None = None
     is_air_quality_guided: bool = False
+    # `airQuality` on the circuit list (HV): coarse room air quality from the
+    # unit's own sensor ("poor"/"medium"/"good"), null without one. The only
+    # cloud stand-in for the CO2/VOC datapoints retired in v1.1.0 (#24).
+    room_air_quality: str | None = None
+    has_air_quality_sensor: bool = False
+    # `holidayEnd` on the circuit list: set while a holiday program runs.
+    holiday_end: str | None = None
+    # `circuitControlType` on the circuit list: heating/cooling selection of
+    # reversible heat pumps (HK); null where it does not apply.
+    circuit_control_type: str | None = None
     has_error: bool = False
     # HV: setpoints of the constant and eco programs (`constantValue` and
     # `ecoModeValue` from the circuit details endpoint). None until known.
@@ -634,6 +644,14 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                         active_program=_V1_PROGRAM_MAP.get(raw_program, raw_program),
                         target_value=_coerce_finite_number(circuit.get("targetValue")),
                         is_air_quality_guided=_coerce_bool(air_quality.get("isAirQualityGuided")),
+                        room_air_quality=_coerce_optional_str(
+                            air_quality.get("actualRoomAirQuality")
+                        ),
+                        has_air_quality_sensor=_coerce_bool(air_quality.get("hasAirQualitySensor")),
+                        holiday_end=_coerce_optional_str(circuit.get("holidayEnd")),
+                        circuit_control_type=_coerce_optional_str(
+                            circuit.get("circuitControlType")
+                        ),
                         has_error=_coerce_bool(circuit.get("hasError")),
                     )
                     if circuit_data.active_program in {"week1", "week2"}:
