@@ -146,10 +146,20 @@ class HovalModbusClient:
         async with self._lock:
             await self._disconnect()
 
-    async def _disconnect(self) -> None:
+    def _drop_connection(self) -> asyncio.StreamWriter | None:
+        """Forget the connection and start closing it.
+
+        Synchronous, so it is safe in any exception handler, also while the
+        task is being cancelled or the coroutine closed.
+        """
         writer, self._reader, self._writer = self._writer, None, None
         if writer is not None:
             writer.close()
+        return writer
+
+    async def _disconnect(self) -> None:
+        writer = self._drop_connection()
+        if writer is not None:
             with contextlib.suppress(OSError):
                 await writer.wait_closed()
 
@@ -215,7 +225,8 @@ class HovalModbusClient:
             # its reply still to come. Drop the connection, or that late reply
             # would answer the next request (transaction id mismatch), and a
             # write could be reported failed after the gateway executed it.
-            await self._disconnect()
+            # Without awaiting: a cancelled or closing coroutine must not wait.
+            self._drop_connection()
             raise
         try:
             return parse_pdu(
