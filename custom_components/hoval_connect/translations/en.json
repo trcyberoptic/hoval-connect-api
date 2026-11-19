@@ -309,34 +309,34 @@
         "name": "Eco mode air volume"
       },
       "hv_control_state": {
-        "name": "Ventilation control state",
+        "name": "Control status",
         "state": {
           "off": "Off",
-          "normal": "Normal",
-          "voc": "VOC control",
-          "humidity": "Humidity control",
+          "normal": "Normal ventilation",
+          "voc": "VOC mode",
+          "humidity": "Humidity mode",
           "frost_protection": "Frost protection",
-          "coolvent": "Cooling ventilation",
+          "coolvent": "CoolVent",
           "fault": "Fault",
-          "summer_humidity": "Summer humidity protection",
-          "switch_off_stop": "Switch-off / stop"
+          "summer_humidity": "Summer humidity",
+          "switch_off_stop": "Switch-off stop"
         }
       },
       "hv_operating_selection": {
         "name": "Operating selection",
         "state": {
           "standby": "Standby",
-          "week1": "Week program 1",
-          "week2": "Week program 2",
-          "constant": "Constant mode",
-          "ecoMode": "Eco mode"
+          "week1": "Week 1",
+          "week2": "Week 2",
+          "constant": "Constant",
+          "eco": "Eco"
         }
       },
       "hv_air_quality_control": {
-        "name": "Air quality control"
+        "name": "Air quality control (code)"
       },
       "hv_co2_extract": {
-        "name": "CO2 extract air"
+        "name": "CO₂ extract air"
       },
       "hv_voc_extract": {
         "name": "VOC extract air"
