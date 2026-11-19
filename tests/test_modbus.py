@@ -338,3 +338,35 @@ async def test_requests_after_close_raise_instead_of_reconnecting():
             await client.close()
         assert server.connections == 1
         assert len(server.requests) == 1
+
+
+async def test_timeout_after_connect_is_flagged_as_no_answer():
+    """A switched-off Modbus on the TTE-GW accepts the connection and never answers."""
+    async with FakeServer(lambda *_: b"") as server:
+        client = _client(server, timeout=0.2)
+        try:
+            with pytest.raises(modbus.HovalModbusError) as err:
+                await client.read_holding(23622, 13)
+        finally:
+            await client.close()
+    assert err.value.no_answer is True
+
+
+async def test_refused_connection_is_not_flagged_as_no_answer():
+    async with FakeServer(lambda *_: None) as server:
+        port = server.port
+    client = modbus.HovalModbusClient("127.0.0.1", port, timeout=1.0, request_gap=0)
+    with pytest.raises(modbus.HovalModbusError) as err:
+        await client.read_holding(1, 1)
+    assert err.value.no_answer is False
+
+
+async def test_connect_timeout_is_not_flagged_as_no_answer(monkeypatch):
+    async def hang(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(modbus.asyncio, "open_connection", hang)
+    client = modbus.HovalModbusClient("192.0.2.1", 502, timeout=0.1, request_gap=0)
+    with pytest.raises(modbus.HovalModbusError) as err:
+        await client.read_holding(1, 1)
+    assert err.value.no_answer is False
