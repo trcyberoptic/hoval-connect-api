@@ -36,8 +36,9 @@ class FakeServer:
     Returning None closes the connection without answering.
     """
 
-    def __init__(self, script):
+    def __init__(self, script, *, delay=0.02):
         self._script = script
+        self.delay = delay  # seconds between receiving a request and replying
         self.requests: list[tuple[int, int, int, int]] = []  # tid, fc, address, word
         self.connections = 0
         self.in_flight = 0
@@ -55,14 +56,15 @@ class FakeServer:
                 self.requests.append((tid, fc, address, word))
                 self.in_flight += 1
                 self.max_in_flight = max(self.max_in_flight, self.in_flight)
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(self.delay)
                 reply = self._script(self, conn, (tid, fc, address, word))
                 self.in_flight -= 1
                 if reply is None:
                     break
                 writer.write(reply)
                 await writer.drain()
-        except asyncio.IncompleteReadError:
+        except (asyncio.IncompleteReadError, ConnectionError):
+            # The client dropped the connection (e.g. after a cancelled request).
             pass
         finally:
             writer.close()
@@ -278,3 +280,61 @@ async def test_write_reconnects_when_idle_connection_was_closed_by_peer():
             await client.close()
         assert server.connections == 2
         assert [r for r in server.requests if r[1] == 6] == [(server.requests[-1][0], 6, 23624, 66)]
+
+
+async def test_timeout_error_text_names_the_exception():
+    """str(TimeoutError()) is empty; the message must not end in "failed: " (D1)."""
+    async with FakeServer(lambda *_: b"") as server:  # reads, never answers
+        client = _client(server, timeout=0.2)
+        try:
+            with pytest.raises(modbus.HovalModbusError) as err:
+                await client.write_register(23624, 66)
+        finally:
+            await client.close()
+    assert str(err.value).endswith("failed: TimeoutError")
+
+
+async def test_cancelled_request_does_not_leave_a_stale_reply_for_the_next():
+    """A request cancelled mid-exchange must not let its late reply answer the next one (D2)."""
+
+    def script(_srv, _conn, req):
+        return _read_response(req[0], BLOCK)
+
+    async with FakeServer(script, delay=0.3) as server:
+        client = _client(server)
+        try:
+            task = asyncio.create_task(client.read_holding(23622, 13))
+            await asyncio.sleep(0.1)  # request sent, reply not yet received
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(0.4)  # the late reply to the cancelled request arrives
+            server.delay = 0.0
+            assert await client.read_holding(23622, 13) == BLOCK
+        finally:
+            await client.close()
+        assert server.connections == 2
+
+
+async def test_requests_after_close_raise_instead_of_reconnecting():
+    """close() is final: a poll still running must not open a new connection (M2)."""
+
+    def script(_srv, _conn, req):
+        return _read_response(req[0], BLOCK)
+
+    async with FakeServer(script, delay=0.1) as server:
+        client = _client(server)
+        try:
+            # close() runs while the first read is in flight and waits for it.
+            first, _ = await asyncio.gather(client.read_holding(23622, 13), client.close())
+            assert first == BLOCK
+            with pytest.raises(modbus.HovalModbusError, match="closed"):
+                await client.read_holding(23622, 13)
+            with pytest.raises(modbus.HovalModbusError, match="closed"):
+                await client.write_register(23624, 66)
+        finally:
+            # Without the fix the reads above reconnect; the server only shuts
+            # down once every connection is closed.
+            await client.close()
+        assert server.connections == 1
+        assert len(server.requests) == 1

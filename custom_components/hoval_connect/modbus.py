@@ -101,6 +101,8 @@ class HovalModbusClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._transaction_id = 0
+        # Set by close(): requests then raise instead of opening a new connection.
+        self._closed = False
 
     @property
     def host(self) -> str:
@@ -135,6 +137,12 @@ class HovalModbusClient:
             raise HovalModbusError(f"Write echo mismatch at register {address}")
 
     async def close(self) -> None:
+        """Close the connection for good.
+
+        Marked closed before waiting for the lock: a poll that is still running
+        (several requests in a row) must not reconnect after the entry unloaded.
+        """
+        self._closed = True
         async with self._lock:
             await self._disconnect()
 
@@ -152,6 +160,8 @@ class HovalModbusClient:
             reconnects_left = 1 if retry_transport else 0
             busy_left = self._busy_retries
             while True:
+                if self._closed:
+                    raise HovalModbusError(f"Modbus client for {self._host}:{self._port} is closed")
                 try:
                     pdu = await self._exchange(function, address, word)
                 except HovalModbusError as err:
@@ -166,8 +176,10 @@ class HovalModbusClient:
                     if reconnects_left > 0:
                         reconnects_left -= 1
                         continue
+                    # str() of a TimeoutError is empty; name the exception instead.
                     raise HovalModbusError(
-                        f"Modbus connection to {self._host}:{self._port} failed: {err or type(err).__name__}"
+                        f"Modbus connection to {self._host}:{self._port} failed: "
+                        f"{str(err) or type(err).__name__}"
                     ) from err
                 await asyncio.sleep(self._request_gap)
                 return pdu
@@ -197,7 +209,12 @@ class HovalModbusClient:
                 if not 2 <= length <= _MAX_PDU + 1:
                     raise HovalModbusError(f"Implausible Modbus length field {length}")
                 body = await self._reader.readexactly(length - 1)
-        except HovalModbusError:
+        except BaseException:
+            # Whatever stopped the exchange (bad header, transport error,
+            # timeout, or a cancelled task) may leave the request in flight with
+            # its reply still to come. Drop the connection, or that late reply
+            # would answer the next request (transaction id mismatch), and a
+            # write could be reported failed after the gateway executed it.
             await self._disconnect()
             raise
         try:
