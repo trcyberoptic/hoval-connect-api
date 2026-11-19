@@ -96,6 +96,10 @@
           "modbus_plant_id": "Zu welcher Anlage Ihres Kontos das Gateway gehört."
         }
       }
+    },
+    "error": {
+      "modbus_cannot_connect": "Das Gateway ist über Modbus TCP nicht erreichbar. Adresse prüfen und kontrollieren, ob Modbus am TopTronic-E-Bedienmodul aktiviert ist (Service > TTE-GW > Modbus > Einstellungen, Mode = TCP). Details stehen im Home-Assistant-Protokoll.",
+      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen."
     }
   },
   "entity": {
