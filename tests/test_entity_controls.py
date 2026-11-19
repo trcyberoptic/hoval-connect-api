@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import sys
+from dataclasses import dataclass
 from enum import IntFlag, StrEnum
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -37,6 +38,18 @@ class _Action(StrEnum):
     OFF = "off"
 
 
+@dataclass(frozen=True, kw_only=True)
+class _Description:
+    key: str
+    translation_key: str | None = None
+    icon: str | None = None
+    entity_category: object = None
+    native_min_value: float | None = None
+    native_max_value: float | None = None
+    native_step: float | None = None
+    native_unit_of_measurement: str | None = None
+
+
 class _CoordinatorEntity:
     @classmethod
     def __class_getitem__(cls, item):
@@ -65,6 +78,8 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
         "homeassistant.components.climate",
         "homeassistant.components.water_heater",
         "homeassistant.components.select",
+        "homeassistant.components.number",
+        "homeassistant.components.button",
         "homeassistant.const",
         "homeassistant.helpers.entity_platform",
     ):
@@ -83,7 +98,13 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
     modules["water_heater"].STATE_HIGH_DEMAND = "high_demand"
     modules["water_heater"].STATE_OFF = "off"
     modules["select"].SelectEntity = type("SelectEntity", (), {})
+    modules["number"].NumberEntity = type("NumberEntity", (), {})
+    modules["number"].NumberEntityDescription = _Description
+    modules["button"].ButtonEntity = type("ButtonEntity", (), {})
+    modules["button"].ButtonEntityDescription = _Description
     modules["const"].UnitOfTemperature = SimpleNamespace(CELSIUS="C")
+    modules["const"].PERCENTAGE = "%"
+    modules["const"].EntityCategory = SimpleNamespace(CONFIG="config")
     modules["entity_platform"].AddEntitiesCallback = object
     sys.modules["homeassistant.core"].callback = lambda fn: fn
     error = type("HomeAssistantError", (Exception,), {})
@@ -99,7 +120,7 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
     package.circuit_device_info = lambda *args: {}
     directory = Path(runtime.coordinator.__file__).parent
     loaded = {}
-    for basename in ("options", "fan", "climate", "water_heater", "select"):
+    for basename in ("options", "fan", "climate", "water_heater", "select", "number", "button"):
         name = f"{package_name}.{basename}"
         spec = importlib.util.spec_from_file_location(name, directory / f"{basename}.py")
         module = importlib.util.module_from_spec(spec)
@@ -114,8 +135,12 @@ def entities(coordinator_runtime, monkeypatch):  # noqa: F811 - imported pytest 
 class _ControlCoordinator:
     """Run lazy entity actions inside a lock without performing cloud I/O."""
 
-    def __init__(self, runtime, circuit_type):
+    def __init__(self, runtime, circuit_type, *, modbus=False, local=False, cloud_ok=True):
         self.hass = SimpleNamespace(async_create_task=asyncio.create_task)
+        self.is_local = local
+        self.hv_writes = []
+        self.hv_error = None
+        self.cloud_flags = []
         self.api = SimpleNamespace(
             set_temporary_change=AsyncMock(),
             set_circuit_mode=AsyncMock(),
@@ -133,18 +158,32 @@ class _ControlCoordinator:
             active_program="week2",
             target_value=40,
         )
+        if modbus:
+            self.circuit.modbus = SimpleNamespace(
+                constant_modulation=60, eco_modulation=30, humidity_target=50
+            )
         self.data = runtime.coordinator.HovalData(
             plants={
                 "P1": runtime.coordinator.HovalPlantData(
                     plant_id="P1", name="Plant", circuits={"1.2.3": self.circuit}
                 )
-            }
+            },
+            cloud_ok=cloud_ok,
         )
 
-    async def async_control_and_refresh(self, action, *, plant_id, circuit_path, mode_override):
+    async def async_hv_write(self, plant_id, circuit_path, name, value):
+        assert (plant_id, circuit_path) == ("P1", "1.2.3")
+        if self.hv_error is not None:
+            raise self.hv_error
+        self.hv_writes.append((name, value))
+
+    async def async_control_and_refresh(
+        self, action, *, plant_id, circuit_path, mode_override, cloud_action=True
+    ):
         assert callable(action)
         assert (plant_id, circuit_path) == ("P1", "1.2.3")
         self.calls.append(mode_override)
+        self.cloud_flags.append(cloud_action)
         async with self.control_lock:
             await action()
 
@@ -158,7 +197,7 @@ class _ControlCoordinator:
         return self.resume_program
 
 
-def _make_entity(entities, platform):
+def _make_entity(entities, platform, **kwargs):
     classes = {
         "fan": (entities.fan.HovalFan, "HV"),
         "climate": (entities.climate.HovalClimate, "HK"),
@@ -166,10 +205,13 @@ def _make_entity(entities, platform):
         "select": (entities.select.HovalProgramSelect, "HK"),
     }
     cls, circuit_type = classes[platform]
-    coordinator = _ControlCoordinator(entities.runtime, circuit_type)
+    options = kwargs.pop("options", {})
+    if kwargs.get("modbus"):
+        circuit_type = "HV"
+    coordinator = _ControlCoordinator(entities.runtime, circuit_type, **kwargs)
     args = [coordinator]
     if platform != "select":
-        args.append(SimpleNamespace(options={}))
+        args.append(SimpleNamespace(options=options))
     entity = cls(*args, "P1", "1.2.3", coordinator.circuit)
     entity.async_write_ha_state = MagicMock()
     return entity, coordinator
@@ -622,3 +664,296 @@ def test_water_heater_boost_keeps_valid_operation_and_boost_metadata(entities):
     # Dedicated temporary-change entities can continue reading this same DTO.
     assert coordinator.circuit.temporary_change_end == "2026-09-21T00:00:00+02:00"
     assert coordinator.circuit.temporary_change_value == 55.5
+
+
+# --- Modbus routing, setpoint numbers and acknowledge buttons ------------------
+
+
+def _hv(entities, kind, **kwargs):
+    """Build a number or button entity on a Modbus-served HV circuit."""
+    coordinator = _ControlCoordinator(entities.runtime, "HV", modbus=True, **kwargs)
+    if kind in ("constant", "eco", "humidity"):
+        register = {
+            "constant": "constant_modulation",
+            "eco": "eco_modulation",
+            "humidity": "humidity_target",
+        }[kind]
+        description = next(d for d in entities.number.NUMBER_DESCRIPTIONS if d.register == register)
+        entity = entities.number.HovalSetpointNumber(
+            coordinator, "P1", "1.2.3", coordinator.circuit, description
+        )
+    else:
+        description = next(d for d in entities.button.BUTTON_DESCRIPTIONS if d.key == kind)
+        entity = entities.button.HovalAcknowledgeButton(
+            coordinator, "P1", "1.2.3", coordinator.circuit, description
+        )
+    entity.async_write_ha_state = MagicMock()
+    return entity, coordinator
+
+
+def _no_debounce(entities, monkeypatch):
+    async def instant(delay):
+        return None
+
+    monkeypatch.setattr(
+        entities.fan,
+        "asyncio",
+        SimpleNamespace(sleep=instant, current_task=asyncio.current_task),
+    )
+
+
+def test_select_writes_program_over_modbus(entities):
+    async def scenario():
+        select, coordinator = _make_entity(entities, "select", modbus=True)
+        await select.async_select_option("Standby")
+        assert coordinator.hv_writes == [("program", 0)]
+        assert coordinator.cloud_flags == [False]
+        coordinator.api.set_program.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+def test_select_without_modbus_uses_cloud(entities):
+    async def scenario():
+        select, coordinator = _make_entity(entities, "select")
+        await select.async_select_option("Standby")
+        coordinator.api.set_program.assert_awaited_once_with("P1", "1.2.3", "standby")
+        assert coordinator.hv_writes == []
+        assert coordinator.cloud_flags == [True]
+
+    asyncio.run(scenario())
+
+
+def test_select_modbus_failure_becomes_home_assistant_error(entities):
+    async def scenario():
+        select, coordinator = _make_entity(entities, "select", modbus=True)
+        coordinator.hv_error = entities.runtime.modbus.HovalModbusError("read-back mismatch")
+        with pytest.raises(entities.error, match="program=1.*read-back mismatch"):
+            await select.async_select_option("Week 1")
+
+    asyncio.run(scenario())
+
+
+def test_fan_off_and_on_write_program(entities):
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True)
+        await fan.async_turn_off()
+        assert coordinator.hv_writes == [("program", 0)]
+        coordinator.hv_writes.clear()
+        coordinator.resume_program = "week2"
+        await fan.async_turn_on()
+        assert coordinator.hv_writes == [("program", 2)]
+        assert coordinator.cloud_flags == [False, False]
+        coordinator.api.set_circuit_mode.assert_not_called()
+        coordinator.api.reset_circuit.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+def test_fan_on_with_fixed_week_option_writes_that_week(entities):
+    async def scenario():
+        fan, coordinator = _make_entity(
+            entities, "fan", modbus=True, options={"turn_on_mode": "week1"}
+        )
+        await fan.async_turn_on()
+        assert coordinator.hv_writes == [("program", 1)]
+
+    asyncio.run(scenario())
+
+
+def test_fan_is_on_from_modbus_program(entities):
+    fan, coordinator = _make_entity(entities, "fan", modbus=True)
+    coordinator.circuit.operation_mode = "standby"  # cloud field must not matter
+    coordinator.circuit.active_program = "week1"
+    assert fan.is_on is True
+    coordinator.circuit.active_program = "standby"
+    assert fan.is_on is False
+    coordinator.circuit.active_program = None
+    assert fan.is_on is None
+
+
+def test_modbus_controls_available_without_cloud_but_local_needs_a_reading(entities):
+    fan, coordinator = _make_entity(entities, "fan", modbus=True, cloud_ok=False)
+    select, _ = _make_entity(entities, "select", modbus=True, cloud_ok=False)
+    assert fan.available is True
+    assert select.available is True
+    local_fan, local = _make_entity(entities, "fan", local=True)
+    assert local.circuit.modbus is None
+    assert local_fan.available is False
+
+
+def test_hybrid_fan_percentage_uses_cloud_temporary_change(entities, monkeypatch):
+    _no_debounce(entities, monkeypatch)
+
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True)
+        await fan.async_set_percentage(60)
+        await fan._debounce_task
+        coordinator.api.set_temporary_change.assert_awaited_once()
+        assert coordinator.hv_writes == []
+        assert coordinator.cloud_flags == [True]
+
+    asyncio.run(scenario())
+
+
+def test_hybrid_fan_percentage_cloud_failure_raises_without_fallback(entities, monkeypatch):
+    _no_debounce(entities, monkeypatch)
+
+    async def scenario():
+        # Cloud already known to be down: raises at once, nothing is queued.
+        fan, coordinator = _make_entity(entities, "fan", modbus=True, cloud_ok=False)
+        with pytest.raises(entities.error, match="cloud"):
+            await fan.async_set_percentage(60)
+        assert fan._debounce_task is None
+        assert coordinator.hv_writes == []
+        coordinator.api.set_temporary_change.assert_not_called()
+        # Cloud call fails after being sent: the error surfaces, still no Modbus write.
+        fan, coordinator = _make_entity(entities, "fan", modbus=True)
+        coordinator.api.set_temporary_change.side_effect = entities.runtime.api.HovalApiError("x")
+        with pytest.raises(entities.error, match="Failed to set fan speed"):
+            await fan._send_percentage(60, object())
+        assert coordinator.hv_writes == []
+
+    asyncio.run(scenario())
+
+
+def test_hybrid_fan_off_still_works_with_cloud_down(entities):
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True, cloud_ok=False)
+        await fan.async_turn_off()
+        assert coordinator.hv_writes == [("program", 0)]
+
+    asyncio.run(scenario())
+
+
+def test_local_fan_percentage_sets_constant(entities, monkeypatch):
+    _no_debounce(entities, monkeypatch)
+
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True, local=True)
+        coordinator.api = None
+        await fan.async_set_percentage(60)
+        await fan._debounce_task
+        assert coordinator.hv_writes == [("constant_modulation", 60), ("program", 4)]
+        assert coordinator.cloud_flags == [False]
+
+    asyncio.run(scenario())
+
+
+def test_local_fan_percentage_is_clamped(entities, monkeypatch):
+    _no_debounce(entities, monkeypatch)
+
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True, local=True)
+        await fan.async_set_percentage(5)
+        await fan._debounce_task
+        assert coordinator.hv_writes[0] == ("constant_modulation", 15)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("kind", "value"),
+    [("constant", 10), ("constant", 101), ("eco", 14), ("humidity", 29), ("humidity", 66)],
+)
+def test_number_rejects_out_of_range_before_write(entities, kind, value):
+    async def scenario():
+        number, coordinator = _hv(entities, kind)
+        with pytest.raises(entities.error, match="outside"):
+            await number.async_set_native_value(value)
+        assert coordinator.hv_writes == []
+        assert coordinator.calls == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), True, "50"])
+def test_number_rejects_non_numbers(entities, value):
+    async def scenario():
+        number, coordinator = _hv(entities, "humidity")
+        with pytest.raises(entities.error):
+            await number.async_set_native_value(value)
+        assert coordinator.hv_writes == []
+
+    asyncio.run(scenario())
+
+
+def test_number_writes_and_refreshes(entities):
+    async def scenario():
+        number, coordinator = _hv(entities, "humidity")
+        await number.async_set_native_value(55.0)
+        assert coordinator.hv_writes == [("humidity_target", 55)]
+        assert isinstance(coordinator.hv_writes[0][1], int)
+        assert coordinator.cloud_flags == [False]
+        number, coordinator = _hv(entities, "constant")
+        await number.async_set_native_value(44.6)
+        assert coordinator.hv_writes == [("constant_modulation", 45)]
+        number, coordinator = _hv(entities, "eco")
+        await number.async_set_native_value(20)
+        assert coordinator.hv_writes == [("eco_modulation", 20)]
+
+    asyncio.run(scenario())
+
+
+def test_number_metadata_and_value(entities):
+    number, coordinator = _hv(entities, "humidity")
+    assert number.native_value == 50
+    assert number._attr_unique_id == "P1_1.2.3_humidity_setpoint"
+    description = number.entity_description
+    assert (description.native_min_value, description.native_max_value) == (30, 65)
+    assert _hv(entities, "constant")[0]._attr_unique_id == "P1_1.2.3_constant_modulation_setpoint"
+    assert _hv(entities, "eco")[0]._attr_unique_id == "P1_1.2.3_eco_modulation_setpoint"
+    coordinator.circuit.modbus = None
+    assert number.available is False
+    assert number.native_value is None
+
+
+def test_number_modbus_failure_names_value(entities):
+    async def scenario():
+        number, coordinator = _hv(entities, "humidity")
+        coordinator.hv_error = ValueError("not allowed")
+        with pytest.raises(entities.error, match="humidity_target to 55.*not allowed"):
+            await number.async_set_native_value(55)
+
+    asyncio.run(scenario())
+
+
+def test_buttons_write_acknowledge_values(entities):
+    async def scenario():
+        button, coordinator = _hv(entities, "acknowledge_maintenance")
+        await button.async_press()
+        assert coordinator.hv_writes == [("acknowledge", 7)]
+        assert coordinator.cloud_flags == [False]
+        assert button._attr_unique_id == "P1_1.2.3_acknowledge_maintenance"
+        button, coordinator = _hv(entities, "acknowledge_filter_cleaning")
+        await button.async_press()
+        assert coordinator.hv_writes == [("acknowledge", 8)]
+        assert button._attr_unique_id == "P1_1.2.3_acknowledge_filter_cleaning"
+        assert button.entity_description.entity_category == "config"
+
+    asyncio.run(scenario())
+
+
+def test_button_reports_gateway_exception(entities):
+    async def scenario():
+        button, coordinator = _hv(entities, "acknowledge_maintenance")
+        coordinator.hv_error = entities.runtime.modbus.HovalModbusError(
+            "gateway exception 2", exception_code=2
+        )
+        with pytest.raises(entities.error, match="acknowledge maintenance.*gateway exception 2"):
+            await button.async_press()
+
+    asyncio.run(scenario())
+
+
+def test_local_fan_percentage_modbus_failure_reverts_pending_value(entities):
+    async def scenario():
+        fan, coordinator = _make_entity(entities, "fan", modbus=True, local=True)
+        coordinator.hv_error = entities.runtime.modbus.HovalModbusError("down")
+        fan._pending_percentage = 60
+        request = fan._pending_request = object()
+        with pytest.raises(entities.error, match="constant_modulation=60"):
+            await fan._send_percentage(60, request)
+        assert fan._pending_percentage is None
+
+    asyncio.run(scenario())
