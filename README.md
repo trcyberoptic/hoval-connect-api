@@ -181,7 +181,7 @@ Hoval account and keeps working when the cloud is down or blocked. The integrati
 
 - **Hybrid:** you keep your cloud entry and add the gateway in its options. Live values, program and
   setpoints of the ventilation unit then come from the gateway; the cloud still supplies what only it
-  has, at the slow 15-minute rhythm.
+  has, at the configured cloud interval (at least 15 minutes).
 - **Local only:** no account at all. You add the gateway as its own entry.
 
 Scope: **HomeVent (HV) units only.** Heating, hot-water, solar and other circuits stay cloud-only.
@@ -190,7 +190,7 @@ Scope: **HomeVent (HV) units only.** Heating, hot-water, solar and other circuit
 
 On the controller panel open **Service > TTE-GW > Modbus > Einstellungen** (the panel's menu is in German)
 and set **Mode = TCP**. The gateway must be reachable from Home Assistant on port 502. The panel may
-show unit id 0, but the gateway has been seen to answer on **unit id 1**, so enter 1 first.
+show unit id 0, but the gateway has been seen to answer on **unit id 1**, so enter 1 first. If setup reports that no unit answered, try the unit id shown on the panel.
 
 #### 2. Add the gateway
 
@@ -232,7 +232,7 @@ to the cloud's live values.
 
 #### Acknowledge buttons
 
-*Acknowledge maintenance* and *Acknowledge filter cleaning* write 7 or 8 to register 21054 of the unit,
+*Acknowledge maintenance* and *Acknowledge filter cleaning* write 7 or 8 to Hoval's datapoint 21054 of the unit,
 as Hoval's own comment for that register describes. Hoval's datapoint list marks the register
 **read-only** in the same row, so whether the gateway accepts the write is **not verified yet**. If it
 refuses, the button raises an error that names the gateway's answer. Press a button only when the
