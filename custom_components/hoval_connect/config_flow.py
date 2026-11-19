@@ -13,19 +13,43 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import HovalApiError, HovalAuthError, HovalConnectApi
 from .compat import HovalOptionsFlowBase
 from .const import (
+    CONF_HOST,
+    CONF_MODBUS_HOST,
+    CONF_MODBUS_PLANT_ID,
+    CONF_MODBUS_PORT,
+    CONF_MODBUS_SCAN_INTERVAL,
+    CONF_MODBUS_UNIT_ID,
+    CONF_MODE,
     CONF_OVERRIDE_DURATION,
+    CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_TURN_ON_MODE,
+    CONF_UNIT_ID,
+    DEFAULT_MODBUS_PORT,
+    DEFAULT_MODBUS_UNIT_ID,
     DOMAIN,
     DURATION_END_OF_PHASE,
     DURATION_FOUR_HOURS,
     DURATION_MIDNIGHT,
+    MODBUS_SCAN_INTERVAL_OPTIONS,
+    MODBUS_VALIDATION_TIMEOUT_S,
+    MODE_LOCAL,
     SCAN_INTERVAL_OPTIONS,
     TURN_ON_RESUME,
     TURN_ON_WEEK1,
     TURN_ON_WEEK2,
 )
-from .options import get_override_duration, get_scan_interval, get_turn_on_mode
+from .modbus import HovalModbusClient, HovalModbusError
+from .modbus_hv import HovalModbusPoller
+from .options import (
+    get_modbus_plant_id,
+    get_modbus_scan_interval,
+    get_modbus_settings,
+    get_override_duration,
+    get_scan_interval,
+    get_turn_on_mode,
+    is_local_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +89,40 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
+async def _modbus_error_key(host: str, port: int, unit_id: int) -> str | None:
+    """Probe the gateway; return the error key to show, or None when HV units answer."""
+    client = HovalModbusClient(host, port, unit_id)
+    try:
+        async with asyncio.timeout(MODBUS_VALIDATION_TIMEOUT_S):
+            units = await HovalModbusPoller(client).discover()
+    except (HovalModbusError, OSError, TimeoutError) as err:
+        _LOGGER.warning("Modbus validation of %s:%s (unit %s) failed: %r", host, port, unit_id, err)
+        return "modbus_cannot_connect"
+    finally:
+        await client.close()
+    return None if units else "modbus_no_units"
+
+
+def _local_unique_id(host: str, port: int, unit_id: int) -> str:
+    return f"modbus:{host.lower()}:{port}:{unit_id}"
+
+
+def _local_schema(
+    host: str = "", port: int = DEFAULT_MODBUS_PORT, unit_id: int = DEFAULT_MODBUS_UNIT_ID
+) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST, default=host): str,
+            vol.Required(CONF_PORT, default=port): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=65535)
+            ),
+            vol.Required(CONF_UNIT_ID, default=unit_id): vol.All(
+                vol.Coerce(int), vol.Range(min=0, max=255)
+            ),
+        }
+    )
+
+
 class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hoval Connect."""
 
@@ -76,7 +134,11 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         return HovalConnectOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Let the user choose between the cloud account and a local Modbus gateway."""
+        return self.async_show_menu(step_id="user", menu_options=["cloud", "local"])
+
+    async def async_step_cloud(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Handle the Hoval Connect cloud login."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -108,8 +170,89 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="cloud",
             data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_local(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Set up a local-only entry that talks to the TTE-GW over Modbus TCP."""
+        errors: dict[str, str] = {}
+        defaults = user_input or {}
+
+        if user_input is not None:
+            host = str(user_input[CONF_HOST]).strip()
+            port = int(user_input[CONF_PORT])
+            unit_id = int(user_input[CONF_UNIT_ID])
+            if not host:
+                errors["base"] = "modbus_cannot_connect"
+            else:
+                await self.async_set_unique_id(_local_unique_id(host, port, unit_id))
+                self._abort_if_unique_id_configured()
+                error = await _modbus_error_key(host, port, unit_id)
+                if error is None:
+                    return self.async_create_entry(
+                        title=f"Hoval {host}",
+                        data={
+                            CONF_MODE: MODE_LOCAL,
+                            CONF_HOST: host,
+                            CONF_PORT: port,
+                            CONF_UNIT_ID: unit_id,
+                        },
+                    )
+                errors["base"] = error
+
+        return self.async_show_form(
+            step_id="local",
+            data_schema=_local_schema(
+                defaults.get(CONF_HOST, ""),
+                defaults.get(CONF_PORT, DEFAULT_MODBUS_PORT),
+                defaults.get(CONF_UNIT_ID, DEFAULT_MODBUS_UNIT_ID),
+            ),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the gateway address of a local entry."""
+        entry = self._get_reconfigure_entry()
+        if not is_local_entry(entry.data):
+            return self.async_abort(reason="reconfigure_not_supported")
+
+        errors: dict[str, str] = {}
+        defaults = user_input or entry.data
+
+        if user_input is not None:
+            host = str(user_input[CONF_HOST]).strip()
+            port = int(user_input[CONF_PORT])
+            unit_id = int(user_input[CONF_UNIT_ID])
+            unique_id = _local_unique_id(host, port, unit_id)
+            if not host:
+                errors["base"] = "modbus_cannot_connect"
+            elif any(
+                other.unique_id == unique_id and other.entry_id != entry.entry_id
+                for other in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
+            else:
+                error = await _modbus_error_key(host, port, unit_id)
+                if error is None:
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        unique_id=unique_id,
+                        title=f"Hoval {host}",
+                        data_updates={CONF_HOST: host, CONF_PORT: port, CONF_UNIT_ID: unit_id},
+                    )
+                errors["base"] = error
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_local_schema(
+                defaults.get(CONF_HOST, ""),
+                defaults.get(CONF_PORT, DEFAULT_MODBUS_PORT),
+                defaults.get(CONF_UNIT_ID, DEFAULT_MODBUS_UNIT_ID),
+            ),
             errors=errors,
         )
 
@@ -163,45 +306,116 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+# The frontend submits dict-select keys as strings, hence the coercion.
+_SCAN_INTERVAL_VALIDATOR = vol.All(vol.Coerce(int), vol.In(SCAN_INTERVAL_OPTIONS))
+
+_TURN_ON_CHOICES = {
+    TURN_ON_RESUME: "Resume time program",
+    TURN_ON_WEEK1: "Activate week 1",
+    TURN_ON_WEEK2: "Activate week 2",
+}
+
+
 class HovalConnectOptionsFlow(HovalOptionsFlowBase):
     """Handle options for Hoval Connect."""
 
+    def _plant_choices(self) -> dict[str, str]:
+        """Plants of the loaded cloud entry, or {} when they are not available."""
+        try:
+            plants = self.config_entry.runtime_data.coordinator.data.plants
+            return {str(pid): str(plant.name) for pid, plant in plants.items()}
+        except (AttributeError, TypeError):
+            return {}
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
+        if is_local_entry(self.config_entry.data):
+            return await self._async_step_local_options(user_input)
+        return await self._async_step_cloud_options(user_input)
+
+    async def _async_step_local_options(
+        self, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
-
-        current_duration = get_override_duration(self.config_entry.options)
-        current_turn_on = get_turn_on_mode(self.config_entry.options)
-        current_interval = get_scan_interval(self.config_entry.options)
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(
-                        CONF_TURN_ON_MODE,
-                        default=current_turn_on,
-                    ): vol.In(
-                        {
-                            TURN_ON_RESUME: "Resume time program",
-                            TURN_ON_WEEK1: "Activate week 1",
-                            TURN_ON_WEEK2: "Activate week 2",
-                        }
+                    vol.Required(CONF_TURN_ON_MODE, default=get_turn_on_mode(options)): vol.In(
+                        _TURN_ON_CHOICES
                     ),
                     vol.Required(
-                        CONF_OVERRIDE_DURATION,
-                        default=current_duration,
-                    ): vol.In(
-                        {
-                            DURATION_END_OF_PHASE: "Until end of current phase",
-                            DURATION_FOUR_HOURS: "4 hours",
-                            DURATION_MIDNIGHT: "Until midnight",
-                        }
-                    ),
-                    vol.Required(
-                        CONF_SCAN_INTERVAL,
-                        default=current_interval,
-                    ): vol.All(vol.Coerce(int), vol.In(SCAN_INTERVAL_OPTIONS)),
+                        CONF_MODBUS_SCAN_INTERVAL, default=get_modbus_scan_interval(options)
+                    ): vol.All(vol.Coerce(int), vol.In(MODBUS_SCAN_INTERVAL_OPTIONS)),
                 }
             ),
         )
+
+    async def _async_step_cloud_options(
+        self, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        plants = self._plant_choices()
+        show_plants = len(plants) > 1
+        errors: dict[str, str] = {}
+        stored: Any = self.config_entry.options
+
+        if user_input is not None:
+            data = dict(user_input)
+            host = str(data.get(CONF_MODBUS_HOST) or "").strip()
+            data[CONF_MODBUS_HOST] = host
+            # Only store a plant when the selector was shown.
+            if not show_plants:
+                data.pop(CONF_MODBUS_PLANT_ID, None)
+            if not host:
+                return self.async_create_entry(title="", data=data)
+            error = await _modbus_error_key(
+                host,
+                int(data.get(CONF_MODBUS_PORT, DEFAULT_MODBUS_PORT)),
+                int(data.get(CONF_MODBUS_UNIT_ID, DEFAULT_MODBUS_UNIT_ID)),
+            )
+            if error is None:
+                return self.async_create_entry(title="", data=data)
+            errors["base"] = error
+            stored = data
+
+        modbus = get_modbus_settings({}, stored)
+        schema: dict[Any, Any] = {
+            vol.Required(CONF_TURN_ON_MODE, default=get_turn_on_mode(stored)): vol.In(
+                _TURN_ON_CHOICES
+            ),
+            vol.Required(CONF_OVERRIDE_DURATION, default=get_override_duration(stored)): vol.In(
+                {
+                    DURATION_END_OF_PHASE: "Until end of current phase",
+                    DURATION_FOUR_HOURS: "4 hours",
+                    DURATION_MIDNIGHT: "Until midnight",
+                }
+            ),
+            vol.Required(CONF_SCAN_INTERVAL, default=get_scan_interval(stored)): (
+                _SCAN_INTERVAL_VALIDATOR
+            ),
+            # suggested_value, not default: clearing the field must disable Modbus.
+            vol.Optional(
+                CONF_MODBUS_HOST,
+                description={"suggested_value": modbus.host if modbus else ""},
+            ): str,
+            vol.Required(
+                CONF_MODBUS_PORT, default=modbus.port if modbus else DEFAULT_MODBUS_PORT
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=65535)),
+            vol.Required(
+                CONF_MODBUS_UNIT_ID, default=modbus.unit_id if modbus else DEFAULT_MODBUS_UNIT_ID
+            ): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+            vol.Required(
+                CONF_MODBUS_SCAN_INTERVAL, default=get_modbus_scan_interval(stored)
+            ): vol.All(vol.Coerce(int), vol.In(MODBUS_SCAN_INTERVAL_OPTIONS)),
+        }
+        if show_plants:
+            chosen = get_modbus_plant_id(stored)
+            schema[
+                vol.Required(
+                    CONF_MODBUS_PLANT_ID,
+                    default=chosen if chosen in plants else next(iter(plants)),
+                )
+            ] = vol.In(plants)
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema), errors=errors)

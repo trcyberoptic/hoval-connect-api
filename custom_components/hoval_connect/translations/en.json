@@ -3,10 +3,46 @@
     "step": {
       "user": {
         "title": "Hoval Connect",
+        "description": "How should Home Assistant connect to your Hoval system?",
+        "menu_options": {
+          "cloud": "Hoval Connect cloud account",
+          "local": "Local gateway (Modbus TCP, no account)"
+        }
+      },
+      "cloud": {
+        "title": "Hoval Connect",
         "description": "Enter your Hoval Connect account credentials.",
         "data": {
           "email": "Email",
           "password": "Password"
+        }
+      },
+      "local": {
+        "title": "Local Hoval gateway",
+        "description": "Connect to a TTE-GW gateway over Modbus TCP. No Hoval account is needed. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit ID"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of the TTE-GW gateway.",
+          "port": "Modbus TCP port. The default is 502.",
+          "unit_id": "Modbus unit id of the gateway. It usually answers on unit id 1."
+        }
+      },
+      "reconfigure": {
+        "title": "Change the Hoval gateway",
+        "description": "Change the address of the TTE-GW gateway. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit ID"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of the TTE-GW gateway.",
+          "port": "Modbus TCP port. The default is 502.",
+          "unit_id": "Modbus unit id of the gateway. It usually answers on unit id 1."
         }
       },
       "reauth_confirm": {
@@ -24,11 +60,15 @@
       "no_plant_access": "Signed in successfully, but the account is not allowed to list any plants (HTTP 403). Check in the Hoval Connect app that the plant is assigned to this account; retrying will not help.",
       "gateway_blocked": "Hoval's gateway refused this client before the request reached Hoval (HTTP 403). This is not your account, your password or your network — the integration needs an update. See the integration's issue tracker on GitHub.",
       "wrong_account": "The email does not match the account this entry was set up with.",
-      "unknown": "An unexpected error occurred."
+      "unknown": "An unexpected error occurred.",
+      "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and that Modbus is enabled on the TopTronic E panel (Service > TTE-GW > Modbus > Einstellungen, Mode = TCP). The Home Assistant log has details.",
+      "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
     },
     "abort": {
       "already_configured": "This account is already configured.",
-      "reauth_successful": "Re-authentication successful."
+      "reauth_successful": "Re-authentication successful.",
+      "reconfigure_not_supported": "Only local gateway entries can be reconfigured. Change the Modbus gateway of a cloud entry in its options.",
+      "reconfigure_successful": "The gateway address was updated."
     }
   },
   "options": {
@@ -38,12 +78,22 @@
         "data": {
           "turn_on_mode": "Turn-on mode",
           "override_duration": "Temporary override duration",
-          "scan_interval": "Polling interval"
+          "scan_interval": "Polling interval",
+          "modbus_host": "Modbus gateway host",
+          "modbus_port": "Modbus port",
+          "modbus_unit_id": "Modbus unit ID",
+          "modbus_scan_interval": "Modbus polling interval",
+          "modbus_plant_id": "Plant of the Modbus gateway"
         },
         "data_description": {
           "turn_on_mode": "What happens when the fan is turned on from standby.",
           "override_duration": "How long a manual override (fan speed or temperature) lasts before the time program resumes. 'Until end of current phase' uses the next program phase boundary.",
-          "scan_interval": "How often to poll the Hoval API for updates."
+          "scan_interval": "How often to poll the Hoval API for updates.",
+          "modbus_host": "Optional. Hostname or IP address of a TTE-GW gateway for local Modbus TCP data. Leave empty to use the cloud only. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+          "modbus_port": "Modbus TCP port. The default is 502.",
+          "modbus_unit_id": "Modbus unit id of the gateway. It usually answers on unit id 1.",
+          "modbus_scan_interval": "How often to read the gateway over Modbus (seconds).",
+          "modbus_plant_id": "Which plant of your account the gateway belongs to."
         }
       }
     }

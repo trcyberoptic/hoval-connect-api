@@ -60,6 +60,33 @@ DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 CONF_SCAN_INTERVAL = "scan_interval"
 SCAN_INTERVAL_OPTIONS = {900: "15 minutes", 1800: "30 minutes", 3600: "60 minutes"}
 
+# Local Modbus TCP mode (TTE-GW gateway). "Local only" entries carry
+# CONF_MODE == MODE_LOCAL and the gateway address in their data; cloud entries
+# may add a gateway in their options (hybrid), stored under the CONF_MODBUS_* keys.
+CONF_MODE = "mode"
+MODE_LOCAL = "local"
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_UNIT_ID = "unit_id"
+CONF_MODBUS_HOST = "modbus_host"
+CONF_MODBUS_PORT = "modbus_port"
+CONF_MODBUS_UNIT_ID = "modbus_unit_id"
+CONF_MODBUS_SCAN_INTERVAL = "modbus_scan_interval"
+CONF_MODBUS_PLANT_ID = "modbus_plant_id"
+DATA_TOPOLOGY = "topology"
+DEFAULT_MODBUS_PORT = 502
+DEFAULT_MODBUS_UNIT_ID = 1
+DEFAULT_MODBUS_SCAN_INTERVAL = 30
+MODBUS_SCAN_INTERVAL_OPTIONS = {
+    10: "10 seconds",
+    30: "30 seconds",
+    60: "1 minute",
+    120: "2 minutes",
+}
+# Discovery probes several unit ids over a slow serial-bridged gateway; bound
+# the whole validation so the setup dialog cannot hang.
+MODBUS_VALIDATION_TIMEOUT_S = 60
+
 # Program cache TTL. Time programs change rarely, and the circuit details
 # (temporary-change limits) refresh on the same cadence.
 PROGRAM_CACHE_TTL = timedelta(hours=1)
