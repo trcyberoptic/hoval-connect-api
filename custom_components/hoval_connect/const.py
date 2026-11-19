@@ -183,6 +183,27 @@ def clamp_hv_air_volume(percentage: float) -> int:
     return int(max(HV_AIR_VOLUME_MIN, min(HV_AIR_VOLUME_MAX, percentage)))
 
 
+# --- Status fields of the circuit list ----------------------------------------
+#
+# The OpenAPI spec types circuitStatus and airQuality.actualRoomAirQuality as
+# plain strings. These value sets come from the Hoval Connect app (3.5.0), which
+# rejects any other value as invalid; the sensors show such a value as unknown.
+CIRCUIT_STATUSES = ("heating", "cooling", "active", "inactive", "ventilation")
+ROOM_AIR_QUALITIES = ("poor", "medium", "good")
+# circuitControlType (enum in the spec) → HA state; translation keys must be
+# snake_case.
+CIRCUIT_CONTROL_TYPES = {
+    "heatingOnly": "heating_only",
+    "coolingOnly": "cooling_only",
+    "fullyAutomatic": "fully_automatic",
+    "semiAutomatic": "semi_automatic",
+    "manual": "manual",
+    "manualExternal": "manual_external",
+    "semiAutomaticExternal": "semi_automatic_external",
+    "manualCoolingOnly": "manual_cooling_only",
+}
+
+
 # --- Sensors retired with the raw datapoints (#24) ----------------------------
 #
 # Until v1.0.18 these sensors read raw controller datapoints through

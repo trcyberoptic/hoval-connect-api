@@ -80,7 +80,38 @@
         "name": "Feuchtigkeit Soll"
       },
       "circuit_status": {
-        "name": "Status"
+        "name": "Status",
+        "state": {
+          "heating": "Heizen",
+          "cooling": "Kühlen",
+          "active": "Aktiv",
+          "inactive": "Inaktiv",
+          "ventilation": "Lüften"
+        }
+      },
+      "room_air_quality": {
+        "name": "Raumluftqualität",
+        "state": {
+          "poor": "Schlecht",
+          "medium": "Mittel",
+          "good": "Gut"
+        }
+      },
+      "holiday_end": {
+        "name": "Ferien bis"
+      },
+      "circuit_control_type": {
+        "name": "Heiz-/Kühlregelung",
+        "state": {
+          "heating_only": "Nur Heizen",
+          "cooling_only": "Nur Kühlen",
+          "fully_automatic": "Vollautomatisch",
+          "semi_automatic": "Halbautomatisch",
+          "manual": "Manuell",
+          "manual_external": "Manuell (extern)",
+          "semi_automatic_external": "Halbautomatisch (extern)",
+          "manual_cooling_only": "Manuell, nur Kühlen"
+        }
       },
       "operation_mode": {
         "name": "Betriebsmodus"
