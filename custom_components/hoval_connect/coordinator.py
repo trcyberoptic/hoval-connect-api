@@ -286,6 +286,11 @@ class HovalCircuitData:
     program_names: dict[str, str] = field(default_factory=dict)
     # Latest Modbus reading of this circuit (HV with a local gateway), else None.
     modbus: HvModbusReading | None = None
+    # True for a circuit whose Modbus-owned values come from the gateway (hybrid
+    # after discovery, and local), also while the gateway fails and `modbus` is
+    # None: its Modbus-backed entities are then unavailable, with no fallback
+    # to the cloud (which skips that circuit's live values anyway).
+    modbus_served: bool = False
     # True for a circuit rebuilt from the stored topology (no cloud values):
     # its cloud-only fields are empty, so entities must show unavailable.
     restored: bool = False
@@ -333,7 +338,12 @@ _MODBUS_LIVE_KEYS = (
 
 
 def apply_modbus_reading(circuit: HovalCircuitData, reading: HvModbusReading | None) -> None:
-    """Overlay a Modbus reading on a circuit; None blanks the Modbus-owned fields."""
+    """Overlay a Modbus reading on a Modbus-served circuit.
+
+    None (the gateway failed) blanks the Modbus-owned fields; the circuit
+    stays marked as served, so their entities show unavailable.
+    """
+    circuit.modbus_served = True
     circuit.modbus = reading
     if reading is None:
         for key in _MODBUS_LIVE_KEYS:
@@ -413,18 +423,45 @@ def data_from_topology(topology: dict[str, Any]) -> HovalData:
     return HovalData(plants={plant_id: plant}, cloud_ok=False)
 
 
+def _is_modbus_served(circuit: HovalCircuitData) -> bool:
+    return circuit.modbus_served or circuit.modbus is not None
+
+
+def circuit_cloud_available(data: HovalData, circuit: HovalCircuitData | None) -> bool:
+    """Whether this snapshot carries current cloud data for the circuit.
+
+    False while the hybrid cloud fetch fails (the snapshot then holds the last
+    cloud values, frozen) and for a circuit restored from the stored topology.
+    Always true for a circuit of a cloud-only snapshot.
+    """
+    return circuit is not None and data.cloud_ok and not circuit.restored
+
+
 def circuit_value_available(data: HovalData, circuit: HovalCircuitData | None, key: str) -> bool:
     """Whether the value behind entity `key` of this circuit is currently known.
 
-    A Modbus-backed key is available while a Modbus reading exists, whatever
-    the cloud does. Any other key needs this snapshot to carry cloud data for
-    the circuit (not a circuit restored from the stored topology).
+    On a Modbus-served circuit a Modbus-backed key is available exactly while
+    a Modbus reading exists, whatever the cloud does. Any other key needs
+    current cloud data for the circuit (see circuit_cloud_available).
     """
     if circuit is None:
         return False
-    if circuit.modbus is not None and key in MODBUS_BACKED_KEYS:
-        return True
-    return data.cloud_ok and not circuit.restored
+    if key in MODBUS_BACKED_KEYS and _is_modbus_served(circuit):
+        return circuit.modbus is not None
+    return circuit_cloud_available(data, circuit)
+
+
+def circuit_control_available(data: HovalData, circuit: HovalCircuitData | None) -> bool:
+    """Availability of a fan or program select, whose state comes from one source.
+
+    A Modbus-served circuit reports its program and air volume over Modbus,
+    so the entity follows the reading; any other circuit follows the cloud.
+    """
+    if circuit is None:
+        return False
+    if _is_modbus_served(circuit):
+        return circuit.modbus is not None
+    return circuit_cloud_available(data, circuit)
 
 
 async def _no_cloud_live_values() -> list[dict[str, Any]]:
