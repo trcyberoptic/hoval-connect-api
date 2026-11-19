@@ -141,27 +141,36 @@ class TestNoRawDatapoints:
 
     def test_retired_sensors_are_removed_from_the_registry(self):
         src = _read("sensor.py")
-        assert "_remove_retired_sensors(ent_reg, entry.entry_id)" in src
+        assert "_remove_retired_sensors(ent_reg, entry.entry_id, coordinator.has_modbus)" in src
         assert "is_retired_circuit_sensor(entity.unique_id)" in src
         assert 'entity.domain == "sensor"' in src
 
     def test_retired_sensors_have_no_description_or_translation(self):
+        import ast
         import json
-        import re
 
-        # Only the retired set: MODBUS_BACKED_KEYS reuses some hv_* names on purpose.
-        const_src = _read("const.py")
-        retired_block = const_src.split("RETIRED_CIRCUIT_SENSOR_KEYS = ", 1)[1].split("\ndef ", 1)[
-            0
-        ]
-        keys = set(re.findall(r'"(h[kv]_[a-z0-9_]+)",', retired_block))
-        assert "hk_control_state" in keys
+        # Retired keys that Modbus serves again (MODBUS_BACKED_KEYS) get their
+        # description and translation back; the others must stay gone.
+        tree = ast.parse(_read("const.py"))
+        sets = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name in ("RETIRED_CIRCUIT_SENSOR_KEYS", "MODBUS_BACKED_KEYS"):
+                    sets[name] = set(ast.literal_eval(node.value.args[0]))
+        keys = sets["RETIRED_CIRCUIT_SENSOR_KEYS"] - sets["MODBUS_BACKED_KEYS"]
+        assert keys == {"hk_control_state"}
         sensor_src = _read("sensor.py")
         for key in keys:
             assert f'key="{key}"' not in sensor_src, key
+        for key in sets["RETIRED_CIRCUIT_SENSOR_KEYS"] & sets["MODBUS_BACKED_KEYS"]:
+            assert f'key="{key}"' in sensor_src, key
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
             entity = json.loads(_read(f))["entity"]
             assert not keys & set(entity["sensor"]), f
+            assert sets["RETIRED_CIRCUIT_SENSOR_KEYS"] & sets["MODBUS_BACKED_KEYS"] <= set(
+                entity["sensor"]
+            ), f
             assert "air_quality_guided" in entity["binary_sensor"], f
 
 

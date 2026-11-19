@@ -307,6 +307,54 @@
       },
       "hv_eco_modulation": {
         "name": "Eco mode air volume"
+      },
+      "hv_control_state": {
+        "name": "Ventilation control state",
+        "state": {
+          "off": "Off",
+          "normal": "Normal",
+          "voc": "VOC control",
+          "humidity": "Humidity control",
+          "frost_protection": "Frost protection",
+          "coolvent": "Cooling ventilation",
+          "fault": "Fault",
+          "summer_humidity": "Summer humidity protection",
+          "switch_off_stop": "Switch-off / stop"
+        }
+      },
+      "hv_operating_selection": {
+        "name": "Operating selection",
+        "state": {
+          "standby": "Standby",
+          "week1": "Week program 1",
+          "week2": "Week program 2",
+          "constant": "Constant mode",
+          "ecoMode": "Eco mode"
+        }
+      },
+      "hv_air_quality_control": {
+        "name": "Air quality control"
+      },
+      "hv_co2_extract": {
+        "name": "CO2 extract air"
+      },
+      "hv_voc_extract": {
+        "name": "VOC extract air"
+      },
+      "hv_voc_outside": {
+        "name": "VOC outside air"
+      },
+      "hv_exhaust_fan_target": {
+        "name": "Exhaust fan target"
+      },
+      "hv_maintenance_weeks_remaining": {
+        "name": "Weeks until maintenance"
+      },
+      "hv_filter_cleaning_interval": {
+        "name": "Filter cleaning interval"
+      },
+      "hv_active_error": {
+        "name": "Active error code"
       }
     },
     "climate": {

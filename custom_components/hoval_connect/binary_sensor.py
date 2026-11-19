@@ -19,6 +19,7 @@ from .coordinator import (
     HovalCircuitData,
     HovalDataCoordinator,
     HovalPlantData,
+    circuit_value_available,
 )
 
 
@@ -83,6 +84,11 @@ class HovalPlantOnline(CoordinatorEntity[HovalDataCoordinator], BinarySensorEnti
         self._attr_device_info = plant_device_info(plant_data)
 
     @property
+    def available(self) -> bool:
+        """Return if entity is available (cloud-fed unless running local-only)."""
+        return super().available and (self.coordinator.data.cloud_ok or self.coordinator.is_local)
+
+    @property
     def is_on(self) -> bool | None:
         """Return true if the plant is online."""
         plant = self.coordinator.data.plants.get(self._plant_id)
@@ -109,6 +115,11 @@ class HovalPlantError(CoordinatorEntity[HovalDataCoordinator], BinarySensorEntit
         self._plant_id = plant_id
         self._attr_unique_id = f"{plant_id}_error"
         self._attr_device_info = plant_device_info(plant_data)
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available (cloud-fed unless running local-only)."""
+        return super().available and (self.coordinator.data.cloud_ok or self.coordinator.is_local)
 
     @property
     def is_on(self) -> bool | None:
@@ -155,7 +166,9 @@ class HovalTemporaryChange(CoordinatorEntity[HovalDataCoordinator], BinarySensor
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return super().available and self._circuit is not None
+        return super().available and circuit_value_available(
+            self.coordinator.data, self._circuit, "temporary_change"
+        )
 
     @property
     def is_on(self) -> bool | None:
@@ -214,7 +227,9 @@ class HovalAirQualityGuided(CoordinatorEntity[HovalDataCoordinator], BinarySenso
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        return super().available and self._circuit is not None
+        return super().available and circuit_value_available(
+            self.coordinator.data, self._circuit, "air_quality_guided"
+        )
 
     @property
     def is_on(self) -> bool | None:

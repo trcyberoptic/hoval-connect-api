@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EVENTS_CACHE_TTL,
+    MODBUS_BACKED_KEYS,
     PROGRAM_CACHE_TTL,
     PROGRAM_UNAVAILABLE_RETRY_INTERVAL,
     SUPPORTED_CIRCUIT_TYPES,
@@ -285,6 +286,9 @@ class HovalCircuitData:
     program_names: dict[str, str] = field(default_factory=dict)
     # Latest Modbus reading of this circuit (HV with a local gateway), else None.
     modbus: HvModbusReading | None = None
+    # True for a circuit rebuilt from the stored topology (no cloud values):
+    # its cloud-only fields are empty, so entities must show unavailable.
+    restored: bool = False
 
 
 @dataclass
@@ -405,8 +409,22 @@ def data_from_topology(topology: dict[str, Any]) -> HovalData:
     plant_name = _coerce_optional_str(topology.get("plant_name")) or plant_id
     plant = HovalPlantData(plant_id, plant_name, is_online=False)
     for path, name in topology["circuits"].items():
-        plant.circuits[path] = HovalCircuitData(CIRCUIT_TYPE_HV, path, name)
+        plant.circuits[path] = HovalCircuitData(CIRCUIT_TYPE_HV, path, name, restored=True)
     return HovalData(plants={plant_id: plant}, cloud_ok=False)
+
+
+def circuit_value_available(data: HovalData, circuit: HovalCircuitData | None, key: str) -> bool:
+    """Whether the value behind entity `key` of this circuit is currently known.
+
+    A Modbus-backed key is available while a Modbus reading exists, whatever
+    the cloud does. Any other key needs this snapshot to carry cloud data for
+    the circuit (not a circuit restored from the stored topology).
+    """
+    if circuit is None:
+        return False
+    if circuit.modbus is not None and key in MODBUS_BACKED_KEYS:
+        return True
+    return data.cloud_ok and not circuit.restored
 
 
 async def _no_cloud_live_values() -> list[dict[str, Any]]:
@@ -857,7 +875,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             # the gateway may still answer on the LAN (G3): give Modbus the
             # stored HV circuits to merge into.
             for path, name in topology["circuits"].items():
-                plant.circuits.setdefault(path, HovalCircuitData(CIRCUIT_TYPE_HV, path, name))
+                plant.circuits.setdefault(
+                    path, HovalCircuitData(CIRCUIT_TYPE_HV, path, name, restored=True)
+                )
         return data
 
     def _bound_plant(self, data: HovalData | None) -> HovalPlantData | None:
