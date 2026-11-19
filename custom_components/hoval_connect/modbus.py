@@ -31,12 +31,22 @@ class HovalModbusError(Exception):
     """Transport, protocol or Modbus exception error.
 
     ``exception_code`` is set only when the gateway answered with a Modbus
-    exception response.
+    exception response. ``no_answer`` is set when the TCP connection was open
+    but the request timed out: the TTE-GW with Modbus switched off behaves like
+    that (port 502 accepts connections, every request times out), whereas a
+    refused or unreachable gateway never gets that far.
     """
 
-    def __init__(self, message: str, *, exception_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        exception_code: int | None = None,
+        no_answer: bool = False,
+    ) -> None:
         super().__init__(message)
         self.exception_code = exception_code
+        self.no_answer = no_answer
 
 
 def encode_request(
@@ -101,6 +111,8 @@ class HovalModbusClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._transaction_id = 0
+        # Whether the latest exchange had an open connection (see HovalModbusError.no_answer).
+        self._exchange_connected = False
         # Set by close(): requests then raise instead of opening a new connection.
         self._closed = False
 
@@ -189,7 +201,8 @@ class HovalModbusClient:
                     # str() of a TimeoutError is empty; name the exception instead.
                     raise HovalModbusError(
                         f"Modbus connection to {self._host}:{self._port} failed: "
-                        f"{str(err) or type(err).__name__}"
+                        f"{str(err) or type(err).__name__}",
+                        no_answer=isinstance(err, TimeoutError) and self._exchange_connected,
                     ) from err
                 await asyncio.sleep(self._request_gap)
                 return pdu
@@ -197,6 +210,7 @@ class HovalModbusClient:
     async def _exchange(self, function: int, address: int, word: int) -> bytes:
         self._transaction_id = (self._transaction_id + 1) & 0xFFFF
         tid = self._transaction_id
+        self._exchange_connected = False
         # A peer that closed or reset an idle connection is only noticed after we
         # send. Drop it before sending: a request that was never sent is safe to
         # send on a fresh connection, even for writes.
@@ -212,6 +226,7 @@ class HovalModbusClient:
                     self._reader, self._writer = await asyncio.open_connection(
                         self._host, self._port
                     )
+                self._exchange_connected = True
                 self._writer.write(encode_request(tid, self._unit_id, function, address, word))
                 await self._writer.drain()
                 header = await self._reader.readexactly(_MBAP_LEN)
