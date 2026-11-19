@@ -260,8 +260,23 @@ class TestUserAgentOverride:
         assert "USER_AGENT" in src
         assert src.count('"User-Agent": USER_AGENT') == 3
 
+    def test_user_agent_is_built_from_the_admitted_version(self):
+        """Hoval admits client versions by the version in the User-Agent (#24).
+
+        USER_AGENT_VERSION is the last version Hoval admitted and moves only
+        after Hoval admits a newer one; INTEGRATION_VERSION is the release.
+        Building the UA from the release would announce a version Hoval has
+        not admitted (owner decision 2026-11-20).
+        """
+        import re
+
+        const_src = _read("const.py")
+        assert re.search(r'^USER_AGENT_VERSION = "\d+\.\d+\.\d+"$', const_src, re.M)
+        assert 'f"hoval-connect-api/{USER_AGENT_VERSION} ' in const_src
+        assert "{INTEGRATION_VERSION}" not in const_src
+
     def test_version_matches_the_manifest(self):
-        """A stale version in the User-Agent misreports which client is calling."""
+        """INTEGRATION_VERSION is the release version: it must equal the manifest's."""
         import json
         import re
 
