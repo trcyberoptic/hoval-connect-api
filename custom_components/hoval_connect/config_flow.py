@@ -365,9 +365,14 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
             data = dict(user_input)
             host = str(data.get(CONF_MODBUS_HOST) or "").strip()
             data[CONF_MODBUS_HOST] = host
-            # Only store a plant when the selector was shown.
+            # Take a plant from the form only when the selector was shown;
+            # otherwise (single plant, or entry not loaded) keep the stored
+            # binding so saving cannot silently unbind Modbus.
             if not show_plants:
                 data.pop(CONF_MODBUS_PLANT_ID, None)
+                kept = get_modbus_plant_id(self.config_entry.options)
+                if kept:
+                    data[CONF_MODBUS_PLANT_ID] = kept
             if not host:
                 return self.async_create_entry(title="", data=data)
             error = await _modbus_error_key(

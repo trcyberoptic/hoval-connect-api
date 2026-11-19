@@ -436,3 +436,18 @@ def test_local_options_offer_turn_on_mode_and_modbus_interval_only(flow_mod):
     )
     assert result["data"] == {"turn_on_mode": "week1", "modbus_scan_interval": 60}
     assert flow_mod.state.created == []
+
+
+def test_cloud_options_keep_stored_plant_binding_when_selector_hidden(flow_mod):
+    flow = _options_flow(flow_mod, _CLOUD, options={"modbus_plant_id": "P2"})  # not loaded
+    result = _run(
+        flow.async_step_init(
+            {
+                "turn_on_mode": "resume",
+                "override_duration": "endOfPhase",
+                "scan_interval": 900,
+                "modbus_host": "",
+            }
+        )
+    )
+    assert result["data"]["modbus_plant_id"] == "P2"
