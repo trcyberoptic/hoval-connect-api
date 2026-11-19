@@ -848,3 +848,28 @@ def test_gateway_failure_after_rejected_login_keeps_polling(runtime):
     runtime.clock.advance(30)
     _assert_modbus_values(_tick(coordinator).plants["P1"].circuits[_HV], poller)
     assert api.plants_calls == 2
+
+
+# Same literal as _SEEDED in test_lifecycle_runtime.py, where setup seeds it
+# from the registry entry of the fan "P_1_520.50.0_fan" and its device names.
+_SEEDED = {"plant_id": "P_1", "plant_name": "HRT", "circuits": {_HV: "Lüftung"}}
+
+
+def test_seeded_topology_starts_hybrid_with_cloud_down_and_is_stored_later(runtime):
+    """R-SEED: the seed is used like a stored topology and stored on the next good poll."""
+    coordinator, api, poller, hass = _hybrid(runtime, plants=("P_1",), topology=_SEEDED)
+    del coordinator.config_entry.data[runtime.const.DATA_TOPOLOGY]  # seeded, never stored
+    api.plants_error = runtime.api.HovalApiError("blocked")
+    data = _tick(coordinator)
+    assert data.cloud_ok is False
+    plant = data.plants["P_1"]
+    circuit = plant.circuits[_HV]
+    _assert_modbus_values(circuit, poller)
+    # The fan entity gets the unique id the registry already holds.
+    assert f"{plant.plant_id}_{circuit.path}_fan" == "P_1_520.50.0_fan"
+    assert hass.config_entries.updates == []
+    api.plants_error = None
+    runtime.clock.advance(900)
+    _tick(coordinator)
+    stored = hass.config_entries.updates[-1][runtime.const.DATA_TOPOLOGY]
+    assert (stored["plant_id"], list(stored["circuits"])) == ("P_1", [_HV])

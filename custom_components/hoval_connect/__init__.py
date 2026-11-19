@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -20,6 +22,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .api import HovalApiError, HovalConnectApi
 from .compat import DEVICE_INFO_HAS_VIA_DEVICE_ID, OPTIONS_FLOW_RELOADS
 from .const import (
+    CIRCUIT_TYPE_HV,
     CIRCUIT_TYPE_NAMES,
     DATA_TOPOLOGY,
     DOMAIN,
@@ -116,6 +119,60 @@ def _apply_intervals(coordinator: HovalDataCoordinator, entry: HovalConnectConfi
         coordinator.update_interval = timedelta(seconds=get_modbus_scan_interval(entry.options))
     else:
         coordinator.update_interval = timedelta(seconds=cloud_seconds)
+
+
+# Unique id of an HV circuit's fan entity; plant ids may contain underscores.
+_FAN_UNIQUE_ID = re.compile(r"^(?P<plant>.+)_(?P<path>\d+\.\d+\.\d+)_fan$")
+
+
+def _seed_topology(
+    hass: HomeAssistant, entry: HovalConnectConfigEntry, modbus_plant_id: str | None
+) -> dict[str, Any] | None:
+    """Rebuild a hybrid entry's topology from its own registry entries (I6).
+
+    The topology is stored only after a successful cloud poll in hybrid mode,
+    so an entry switched to hybrid while Hoval already refuses it could not
+    start at all. Its HV circuits are known anyway: they are the fan entities
+    `{plant_id}_{path}_fan` this entry registered as a cloud entry, and the
+    device registry holds their names (with the "Hoval " prefix that
+    plant_device_info/circuit_device_info add). Only one plant is seeded: the
+    plant chosen in the options, else the only plant found; otherwise None,
+    and the first start needs the cloud as before. The coordinator uses the
+    seed like a stored topology; the next successful cloud poll stores it.
+    """
+    circuits: dict[str, list[str]] = {}
+    for entity in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id):
+        if entity.domain != Platform.FAN or entity.platform != DOMAIN:
+            continue
+        if (match := _FAN_UNIQUE_ID.match(entity.unique_id)) is not None:
+            circuits.setdefault(match["plant"], []).append(match["path"])
+    if modbus_plant_id:
+        plant_id = modbus_plant_id if modbus_plant_id in circuits else None
+    else:
+        plant_id = next(iter(circuits)) if len(circuits) == 1 else None
+    if plant_id is None:
+        return None
+
+    device_reg = dr.async_get(hass)
+
+    def name(identifier: str, fallback: str) -> str:
+        device = device_reg.async_get_device(identifiers={(DOMAIN, identifier)})
+        registered = device.name if device is not None else None
+        return (registered or "").removeprefix("Hoval ") or fallback
+
+    topology = {
+        "plant_id": plant_id,
+        "plant_name": name(plant_id, plant_id),
+        # The cloud names a circuit without a name after its type.
+        "circuits": {
+            path: name(f"{plant_id}_{path}", CIRCUIT_TYPE_HV) for path in sorted(circuits[plant_id])
+        },
+    }
+    _LOGGER.debug(
+        "No stored plant topology; using %d HV circuit(s) from the entity registry",
+        len(topology["circuits"]),
+    )
+    return topology
 
 
 def _resolve_circuit_from_unique_id(
@@ -224,6 +281,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
         else None
     )
     modbus_plant_id = None if local else get_modbus_plant_id(entry.options)
+    topology = entry.data.get(DATA_TOPOLOGY)
+    if topology is None and poller is not None and not local:
+        topology = _seed_topology(hass, entry, modbus_plant_id)
 
     coordinator = HovalDataCoordinator(
         hass,
@@ -231,7 +291,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
         modbus=poller,
         modbus_plant_id=modbus_plant_id,
         local_plant=(f"local_{entry.entry_id}", entry.title) if local else None,
-        topology=entry.data.get(DATA_TOPOLOGY),
+        topology=topology,
     )
     _apply_intervals(coordinator, entry)
 
