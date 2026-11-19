@@ -290,7 +290,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
         api,
         modbus=poller,
         modbus_plant_id=modbus_plant_id,
-        local_plant=(f"local_{entry.entry_id}", entry.title) if local else None,
+        # The plant is named after the gateway host: the entry title already
+        # reads "Hoval <host>", and the plant device prefixes "Hoval " itself.
+        local_plant=(
+            (f"local_{entry.entry_id}", settings.host if settings is not None else entry.title)
+            if local
+            else None
+        ),
         topology=topology,
     )
     _apply_intervals(coordinator, entry)

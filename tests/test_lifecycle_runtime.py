@@ -401,7 +401,7 @@ async def test_setup_local_has_no_api(runtime):
     coordinator = entry.runtime_data.coordinator
     assert entry.runtime_data.api is None
     assert coordinator.args[1] is None
-    assert coordinator.kwargs["local_plant"] == ("local_synthetic-entry", "Synthetic title")
+    assert coordinator.kwargs["local_plant"] == ("local_synthetic-entry", "192.0.2.10")
     assert coordinator.kwargs["modbus"] is not None
     assert coordinator.update_interval.total_seconds() == 30
 
@@ -668,3 +668,17 @@ async def test_seed_only_for_hybrid_entries_without_stored_topology(runtime, kin
     assert entry.runtime_data.coordinator.kwargs["topology"] == (
         stored if kind == "stored" else None
     )
+
+
+@pytest.mark.asyncio
+async def test_local_plant_device_is_not_named_hoval_twice(runtime):
+    """M5: the entry title already reads "Hoval <host>" and plant_device_info adds "Hoval "."""
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.title = "Hoval 192.0.2.10"
+    entry.data = {"mode": "local", "host": "192.0.2.10", "port": 502, "unit_id": 1}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    plant_id, plant_name = entry.runtime_data.coordinator.kwargs["local_plant"]
+    info = ctx.component.plant_device_info(SimpleNamespace(plant_id=plant_id, name=plant_name))
+    assert info["name"] == "Hoval 192.0.2.10"
