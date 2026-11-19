@@ -9,8 +9,11 @@ name: User-Agent Canary
 # same rule. This job exists so that the next block arrives as one e-mail to the
 # maintainer rather than as a stream of issues.
 #
-# No credentials: /v3/api-docs is public, and the question is only whether the
-# gateway lets our UA through, not what the API answers.
+# No credentials: the question is only whether the gateway lets our UA through,
+# not what the API answers. /v3/api-docs was public until 2026-11-19; since then
+# Hoval's backend answers it with an empty 401. That 401 still proves the request
+# got past the gateway, whose refusal is its own HTML page (403 + signature), so
+# a 401 without the signature counts as "accepted" below.
 #
 # Note: GitHub disables scheduled workflows in a repository with no activity for
 # 60 days. If this has been quiet for a while, check that it is still enabled.
@@ -73,7 +76,9 @@ jobs:
                   return f"inconclusive:{type(err).__name__}: {err}"
               if SIGNATURE in body.lower():
                   return "blocked"
-              if status == 200:
+              # 401: the backend itself answered (spec needs a login since
+              # 2026-11-19), so the gateway let the request through.
+              if status in (200, 401):
                   return "pass"
               return f"inconclusive:HTTP {status}"
 

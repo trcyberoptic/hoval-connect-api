@@ -229,6 +229,15 @@ class TestUserAgentOverride:
         # Exactly one failure exit, reserved for the shipped UA being blocked.
         assert wf.count("raise SystemExit(1)") == 1
 
+    def test_the_canary_counts_a_backend_401_as_accepted(self):
+        """Since 2026-11-19 /v3/api-docs needs a login and answers 401. Requiring
+        200 turned every run into a silent, green "inconclusive", so a new block
+        would never have mailed anyone. The gateway's refusal is its HTML page,
+        which the signature check catches first."""
+        wf = (pathlib.Path(".github") / "workflows" / "ua-canary.yml").read_text(encoding="utf-8")
+        assert "status in (200, 401)" in wf
+        assert wf.index("SIGNATURE in body.lower()") < wf.index("status in (200, 401)")
+
     def test_the_example_client_sets_it_too(self):
         """examples/hoval_client.py uses `requests`, whose default User-Agent
         (`python-requests/...`) the same gateway refuses — a reader following
