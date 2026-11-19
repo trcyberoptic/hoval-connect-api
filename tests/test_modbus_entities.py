@@ -314,7 +314,7 @@ def test_control_state_values(ent):
     selection = next(
         d for d in ent.sensor.CIRCUIT_SENSOR_DESCRIPTIONS if d.key == "hv_operating_selection"
     )
-    assert selection.options == ["standby", "week1", "week2", "constant", "ecoMode"]
+    assert selection.options == ["standby", "week1", "week2", "constant", "eco"]
 
 
 @pytest.mark.parametrize(("errors", "value"), [((), 0), ((41, 7), 41), (None, None)])
@@ -479,3 +479,179 @@ def test_modbus_served_circuit_without_reading_unavailable_for_backed_keys(ent):
     assert _sensor(ent, coordinator, circuit, "active_week_program").available is True
     aq = ent.binary_sensor.HovalAirQualityGuided(coordinator, "P1", "1.50.0", circuit)
     assert aq.available is False
+
+
+# --- Revived sensors keep their v1.0.18 definitions (R-REVIVE: I3, I4) ----------
+
+# The last definitions before v1.1.0 retired these sensors, copied from
+# `git show v1.0.18:custom_components/hoval_connect/sensor.py` and const.py.
+# Entity ids and long-term statistics continue only if nothing here changes.
+_V1_0_18 = {
+    "hv_control_state": dict(
+        device_class="enum",
+        native_unit_of_measurement=None,
+        state_class=None,
+        entity_category=None,
+        icon="mdi:state-machine",
+        options=[
+            "off",
+            "normal",
+            "voc",
+            "humidity",
+            "frost_protection",
+            "coolvent",
+            "fault",
+            "summer_humidity",
+            "switch_off_stop",
+        ],
+    ),
+    "hv_operating_selection": dict(
+        device_class="enum",
+        native_unit_of_measurement=None,
+        state_class=None,
+        entity_category="diagnostic",
+        icon="mdi:tune-variant",
+        options=["standby", "week1", "week2", "constant", "eco"],
+    ),
+    "hv_air_quality_control": dict(
+        device_class=None,
+        native_unit_of_measurement=None,
+        state_class=None,
+        entity_category="diagnostic",
+        icon="mdi:air-filter",
+        options=None,
+    ),
+    "hv_co2_extract": dict(
+        device_class=None,
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        entity_category=None,
+        icon="mdi:molecule-co2",
+        options=None,
+    ),
+    "hv_voc_extract": dict(
+        device_class=None,
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        entity_category=None,
+        icon="mdi:air-filter",
+        options=None,
+    ),
+    "hv_voc_outside": dict(
+        device_class=None,
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        entity_category=None,
+        icon="mdi:weather-windy",
+        options=None,
+    ),
+}
+
+
+@pytest.mark.parametrize("key", sorted(_V1_0_18))
+def test_revived_sensor_matches_v1_0_18(ent, key):
+    description = next(d for d in ent.sensor.CIRCUIT_SENSOR_DESCRIPTIONS if d.key == key)
+    assert description.translation_key == key
+    actual = {field: getattr(description, field) for field in _V1_0_18[key]}
+    assert actual == _V1_0_18[key]
+
+
+@pytest.mark.parametrize(
+    ("program", "state"),
+    [
+        ("standby", "standby"),
+        ("week1", "week1"),
+        ("week2", "week2"),
+        ("constant", "constant"),
+        ("ecoMode", "eco"),
+        (None, None),
+    ],
+)
+def test_operating_selection_maps_modbus_program_to_old_state_keys(ent, program, state):
+    coordinator, circuit = _setup(ent.runtime, reading=_reading(ent.runtime, program=program))
+    assert _sensor(ent, coordinator, circuit, "hv_operating_selection").native_value == state
+
+
+def test_every_modbus_program_has_an_operating_selection_state(ent):
+    programs = set(ent.runtime.modbus_hv.PROGRAM_BY_VALUE.values())
+    assert set(ent.sensor.HV_OPERATING_SELECTIONS) == programs
+
+
+def test_co2_extract_is_a_percentage(ent):
+    coordinator, circuit = _setup(ent.runtime, reading=_reading(ent.runtime, co2_extract=42))
+    sensor = _sensor(ent, coordinator, circuit, "hv_co2_extract")
+    assert sensor.native_value == 42.0
+    assert sensor.entity_description.native_unit_of_measurement == "%"
+    assert sensor.entity_description.device_class is None
+
+
+_TRANSLATION_FILES = ("strings.json", "translations/en.json", "translations/de.json")
+
+
+def _translations(name):
+    import json
+
+    path = Path(__file__).resolve().parents[1] / "custom_components" / "hoval_connect" / name
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", _TRANSLATION_FILES)
+def test_entity_state_keys_pass_hassfest(name):
+    """hassfest's translation schema (script/hassfest/translations.py) only
+    accepts lowercase snake_case state keys; "ecoMode" failed it (I4)."""
+    import re
+
+    pattern = re.compile(r"^(?!.+[_-]{2})(?![_-])[a-z0-9-_]+(?<![_-])$")
+    bad = [
+        f"{platform}.{key}.{state}"
+        for platform, entities in _translations(name)["entity"].items()
+        for key, entity in entities.items()
+        for state in entity.get("state", {})
+        if not pattern.match(state)
+    ]
+    assert not bad
+
+
+@pytest.mark.parametrize("name", _TRANSLATION_FILES)
+def test_enum_sensor_options_equal_translated_state_keys(ent, name):
+    sensors = _translations(name)["entity"]["sensor"]
+    descriptions = (*ent.sensor.CIRCUIT_SENSOR_DESCRIPTIONS, *ent.sensor.PLANT_SENSOR_DESCRIPTIONS)
+    enums = [d for d in descriptions if d.device_class == "enum"]
+    assert enums
+    for description in enums:
+        states = sensors[description.translation_key].get("state", {})
+        assert sorted(description.options) == sorted(states), description.key
+
+
+# v1.0.18 names; entity ids derive from them when an entity is (re)created.
+_V1_0_18_NAMES = {
+    "translations/en.json": {
+        "hv_control_state": "Control status",
+        "hv_operating_selection": "Operating selection",
+        "hv_air_quality_control": "Air quality control (code)",
+        "hv_co2_extract": "CO₂ extract air",
+        "hv_voc_extract": "VOC extract air",
+        "hv_voc_outside": "VOC outside air",
+    },
+    "translations/de.json": {
+        "hv_control_state": "Regelungsstatus",
+        "hv_operating_selection": "Betriebswahl",
+        "hv_air_quality_control": "Luftqualitätsregelung (Code)",
+        "hv_co2_extract": "CO₂ Abluft",
+        "hv_voc_extract": "VOC Abluft",
+        "hv_voc_outside": "VOC Aussenluft",
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(_V1_0_18_NAMES))
+def test_revived_sensor_names_match_v1_0_18(name):
+    sensors = _translations(name)["entity"]["sensor"]
+    assert {key: sensors[key]["name"] for key in _V1_0_18_NAMES[name]} == _V1_0_18_NAMES[name]
+
+
+def test_strings_json_matches_english_for_revived_sensors():
+    english = _translations("translations/en.json")["entity"]["sensor"]
+    source = _translations("strings.json")["entity"]["sensor"]
+    for key in _V1_0_18_NAMES["translations/en.json"]:
+        assert source[key] == english[key], key

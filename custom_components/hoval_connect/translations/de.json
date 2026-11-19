@@ -309,34 +309,34 @@
         "name": "Luftmenge Sparbetrieb"
       },
       "hv_control_state": {
-        "name": "Status Lüftungsregelung",
+        "name": "Regelungsstatus",
         "state": {
           "off": "Aus",
-          "normal": "Normal",
-          "voc": "VOC-Regelung",
-          "humidity": "Feuchteregelung",
+          "normal": "Normaler Lüftungsbetrieb",
+          "voc": "VOC-Modus",
+          "humidity": "Feuchtigkeitsmodus",
           "frost_protection": "Frostschutz",
-          "coolvent": "Kühllüftung",
-          "fault": "Störung",
-          "summer_humidity": "Sommer-Feuchteschutz",
-          "switch_off_stop": "Abschaltung / Stopp"
+          "coolvent": "CoolVent",
+          "fault": "Fehlerzustand",
+          "summer_humidity": "Sommerfeuchte",
+          "switch_off_stop": "Ausschaltstopp"
         }
       },
       "hv_operating_selection": {
         "name": "Betriebswahl",
         "state": {
           "standby": "Standby",
-          "week1": "Wochenprogramm 1",
-          "week2": "Wochenprogramm 2",
+          "week1": "Woche 1",
+          "week2": "Woche 2",
           "constant": "Konstantbetrieb",
-          "ecoMode": "Sparbetrieb"
+          "eco": "Sparbetrieb"
         }
       },
       "hv_air_quality_control": {
-        "name": "Luftqualitätsregelung"
+        "name": "Luftqualitätsregelung (Code)"
       },
       "hv_co2_extract": {
-        "name": "CO2 Abluft"
+        "name": "CO₂ Abluft"
       },
       "hv_voc_extract": {
         "name": "VOC Abluft"

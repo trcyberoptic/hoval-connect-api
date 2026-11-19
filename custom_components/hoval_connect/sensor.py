@@ -14,7 +14,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
     EntityCategory,
     UnitOfEnergy,
@@ -51,7 +50,7 @@ from .coordinator import (
     HovalPlantData,
     circuit_value_available,
 )
-from .modbus_hv import HV_CONTROL_STATES, PROGRAM_BY_VALUE, HvModbusReading
+from .modbus_hv import HV_CONTROL_STATES, HvModbusReading
 
 
 def _no_cloud_value(_circuit: HovalCircuitData) -> None:
@@ -101,6 +100,17 @@ def _coerce_timestamp(value: Any) -> datetime | None:
 
 def _has_modbus(circuit: HovalCircuitData) -> bool:
     return circuit.modbus is not None
+
+
+# Modbus program (Betriebswahl) -> the state keys hv_operating_selection had
+# in v1.0.18. "ecoMode" is not a valid state key (hassfest: lowercase only).
+HV_OPERATING_SELECTIONS: dict[str, str] = {
+    "standby": "standby",
+    "week1": "week1",
+    "week2": "week2",
+    "constant": "constant",
+    "ecoMode": "eco",
+}
 
 
 CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
@@ -209,15 +219,17 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         value_fn=lambda c: c.eco_mode_value,
     ),
     # Sensors that only exist with a Modbus reading. The first six were retired
-    # in v1.1.0 (the cloud lost them) and come back under their old keys, so
-    # their history continues.
+    # in v1.1.0 (the cloud lost them) and come back under their old keys. Their
+    # translation keys, names, units, device and state classes, categories,
+    # icons and enum state keys are exactly those of v1.0.18, so entity ids
+    # and long-term statistics continue (HA < 2025.7 does not restore a
+    # deleted entity id by name).
     HovalSensorEntityDescription(
         key="hv_control_state",
         translation_key="hv_control_state",
-        icon="mdi:state-machine",
         device_class=SensorDeviceClass.ENUM,
         options=list(HV_CONTROL_STATES),
-        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:state-machine",
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=_has_modbus,
         modbus_value_fn=lambda r: r.control_state,
@@ -225,30 +237,32 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
     HovalSensorEntityDescription(
         key="hv_operating_selection",
         translation_key="hv_operating_selection",
-        icon="mdi:calendar-check",
         device_class=SensorDeviceClass.ENUM,
-        options=list(PROGRAM_BY_VALUE.values()),
+        options=list(HV_OPERATING_SELECTIONS.values()),
+        icon="mdi:tune-variant",
         entity_category=EntityCategory.DIAGNOSTIC,
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=_has_modbus,
-        modbus_value_fn=lambda r: r.program,
+        modbus_value_fn=lambda r: HV_OPERATING_SELECTIONS.get(r.program),
     ),
     HovalSensorEntityDescription(
         key="hv_air_quality_control",
         translation_key="hv_air_quality_control",
         icon="mdi:air-filter",
-        state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=_has_modbus,
+        # Hoval documents this as a list but ships no labels for it, so the raw
+        # code is shown rather than an invented mapping.
         modbus_value_fn=lambda r: r.air_quality_control,
     ),
+    # Datapoint 37606 is a U8 percentage (0..100), not ppm.
     HovalSensorEntityDescription(
         key="hv_co2_extract",
         translation_key="hv_co2_extract",
-        device_class=SensorDeviceClass.CO2,
-        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:molecule-co2",
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=lambda c: _has_modbus(c) and c.modbus.co2_extract is not None,
         modbus_value_fn=lambda r: r.co2_extract,
@@ -258,7 +272,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         translation_key="hv_voc_extract",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:molecule",
+        icon="mdi:air-filter",
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=lambda c: _has_modbus(c) and c.modbus.voc_extract is not None,
         modbus_value_fn=lambda r: r.voc_extract,
@@ -268,7 +282,7 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         translation_key="hv_voc_outside",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:molecule",
+        icon="mdi:weather-windy",
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         exists_fn=lambda c: _has_modbus(c) and c.modbus.voc_outside is not None,
         modbus_value_fn=lambda r: r.voc_outside,
