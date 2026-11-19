@@ -238,8 +238,31 @@ async def test_modern_reauth_reloads_without_conflicting_update_listener(runtime
     assert entry.update_listeners == []
     assert result["reason"] == "reauth_successful"
     reload.assert_called_once_with(
-        entry, data={"email": entry.data["email"], "password": "replacement-password"}
+        entry, data_updates={"email": entry.data["email"], "password": "replacement-password"}
     )
+
+
+@pytest.mark.asyncio
+async def test_reauth_keeps_the_stored_topology(runtime):
+    """M3: data= replaced all of entry.data and dropped the hybrid topology."""
+    ctx = runtime()
+    entry = _ConfigEntry()
+    topology = {"plant_id": "P1", "plant_name": "HRT", "circuits": {"520.50.0": "HV"}}
+    entry.data = {**entry.data, "topology": topology}
+    flow = ctx.config_flow.HovalConnectConfigFlow()
+    flow.hass = ctx.hass
+    flow._get_reauth_entry = lambda: entry
+    calls = []
+    flow.async_update_reload_and_abort = lambda e, **kwargs: calls.append(kwargs) or {}
+
+    await flow.async_step_reauth_confirm({"email": entry.data["email"], "password": "new"})
+
+    (kwargs,) = calls
+    assert "data" not in kwargs
+    # What HA 2024.11.0 does with data_updates: entry.data | data_updates.
+    merged = entry.data | kwargs["data_updates"]
+    assert merged["topology"] == topology
+    assert merged["password"] == "new"
 
 
 @pytest.mark.asyncio
