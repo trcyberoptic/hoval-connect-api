@@ -137,6 +137,7 @@ def runtime(monkeypatch):
             data=SimpleNamespace(plants={}),
             async_config_entry_first_refresh=AsyncMock(),
             async_close=AsyncMock(),
+            has_modbus=kwargs.get("modbus") is not None,
             args=args,
             kwargs=kwargs,
         )
@@ -156,6 +157,7 @@ def runtime(monkeypatch):
                 async_forward_entry_setups=AsyncMock(),
                 async_unload_platforms=AsyncMock(return_value=True),
                 async_entries=MagicMock(return_value=[]),
+                async_schedule_reload=MagicMock(),
             ),
             services=SimpleNamespace(
                 has_service=MagicMock(return_value=True),
@@ -300,6 +302,7 @@ async def test_circuit_devices_link_to_their_plant_device(runtime, modern):
     ctx.component.HovalDataCoordinator = lambda *args, **kwargs: SimpleNamespace(
         data=SimpleNamespace(plants={"P1": plant}),
         async_config_entry_first_refresh=AsyncMock(),
+        has_modbus=False,
     )
     registry = SimpleNamespace(
         async_get_or_create=MagicMock(return_value=SimpleNamespace(id="device-P1"))
@@ -387,6 +390,93 @@ async def test_topology_write_keeps_modbus_cadence_on_legacy_ha(runtime):
 
     assert coordinator.update_interval.total_seconds() == 60
     assert coordinator.cloud_interval == 900
+    ctx.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_adding_modbus_on_legacy_ha_reloads_and_never_polls_cloud_at_modbus_rate(runtime):
+    """C1: the cloud-only coordinator has no poller; 30 s would be 30 s cloud polls."""
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()  # cloud entry, no Modbus at setup
+    entry.entry_id = "e1"
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+    coordinator = entry.runtime_data.coordinator
+    assert coordinator.kwargs["modbus"] is None
+
+    # Legacy HA does not reload on its own: only the update listener runs.
+    entry.options = dict(_MODBUS_OPTIONS)
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    assert coordinator.update_interval.total_seconds() == 900
+    ctx.hass.config_entries.async_schedule_reload.assert_called_once_with("e1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"modbus_host": "192.0.2.11"},
+        {"modbus_port": 1502},
+        {"modbus_unit_id": 0},
+        {"modbus_plant_id": "plant-y"},
+        {"modbus_host": ""},
+    ],
+)
+async def test_changed_gateway_or_binding_on_legacy_ha_reloads(runtime, change):
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()
+    entry.options = {**_MODBUS_OPTIONS, "modbus_plant_id": "plant-x"}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    entry.options = {**entry.options, **change}
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    ctx.hass.config_entries.async_schedule_reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_interval_change_on_legacy_ha_does_not_reload(runtime):
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()
+    entry.options = {**_MODBUS_OPTIONS, "modbus_plant_id": "plant-x"}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+    coordinator = entry.runtime_data.coordinator
+
+    entry.options = {**entry.options, "modbus_scan_interval": 120, "scan_interval": 3600}
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    assert coordinator.update_interval.total_seconds() == 120
+    assert coordinator.cloud_interval == 3600
+    ctx.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_plant_choice_without_modbus_on_legacy_ha_does_not_reload(runtime):
+    """An entry without Modbus behaves as before: saving options never reloads it."""
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    entry.options = {"scan_interval": 1800, "modbus_host": "", "modbus_plant_id": "plant-x"}
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 1800
+    ctx.hass.config_entries.async_schedule_reload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_local_options_on_legacy_ha_update_interval_without_reload(runtime):
+    """Local entries change their gateway via reconfigure, which reloads by itself."""
+    ctx = runtime(modern=False)
+    entry = _ConfigEntry()
+    entry.data = {"mode": "local", "host": "192.0.2.10"}
+    assert await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    entry.options = {"modbus_scan_interval": 60}
+    await entry.update_listeners[0](ctx.hass, entry)
+
+    assert entry.runtime_data.coordinator.update_interval.total_seconds() == 60
+    ctx.hass.config_entries.async_schedule_reload.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -430,6 +520,7 @@ async def test_failed_first_refresh_closes_modbus_client(runtime):
             data=SimpleNamespace(plants={}),
             async_config_entry_first_refresh=AsyncMock(side_effect=RuntimeError("not ready")),
             async_close=closed,
+            has_modbus=True,
         )
 
     ctx.component.HovalDataCoordinator = failing
