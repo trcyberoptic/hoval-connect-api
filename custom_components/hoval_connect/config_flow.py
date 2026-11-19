@@ -26,7 +26,11 @@ from .const import (
     CONF_TURN_ON_MODE,
     CONF_UNIT_ID,
     DEFAULT_MODBUS_PORT,
+    DEFAULT_MODBUS_SCAN_INTERVAL,
     DEFAULT_MODBUS_UNIT_ID,
+    DEFAULT_OVERRIDE_DURATION,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TURN_ON_MODE,
     DOMAIN,
     DURATION_END_OF_PHASE,
     DURATION_FOUR_HOURS,
@@ -91,17 +95,61 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 async def _modbus_error_key(host: str, port: int, unit_id: int) -> str | None:
-    """Probe the gateway; return the error key to show, or None when HV units answer."""
+    """Probe the gateway; return the error key to show, or None when HV units answer.
+
+    `modbus_no_answer` when the connection opened but the requests timed out
+    (what the TTE-GW does while Modbus is switched off), `modbus_cannot_connect`
+    when the gateway could not be reached at all.
+    """
     client = HovalModbusClient(host, port, unit_id)
     try:
         async with asyncio.timeout(MODBUS_VALIDATION_TIMEOUT_S):
             units = await HovalModbusPoller(client).discover()
     except (HovalModbusError, OSError, TimeoutError) as err:
         _LOGGER.warning("Modbus validation of %s:%s (unit %s) failed: %r", host, port, unit_id, err)
+        if isinstance(err, HovalModbusError) and err.no_answer:
+            return "modbus_no_answer"
         return "modbus_cannot_connect"
     finally:
         await client.close()
     return None if units else "modbus_no_units"
+
+
+def _hybrid_gateway_schema(
+    plants: dict[str, str], user_input: dict[str, Any] | None = None
+) -> vol.Schema:
+    """Gateway form of the hybrid setup; the plant selector only for several plants."""
+    defaults = user_input or {}
+    schema: dict[Any, Any] = {
+        vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+        vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, DEFAULT_MODBUS_PORT)): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=65535)
+        ),
+        vol.Required(
+            CONF_UNIT_ID, default=defaults.get(CONF_UNIT_ID, DEFAULT_MODBUS_UNIT_ID)
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+        vol.Required(
+            CONF_MODBUS_SCAN_INTERVAL,
+            default=defaults.get(CONF_MODBUS_SCAN_INTERVAL, DEFAULT_MODBUS_SCAN_INTERVAL),
+        ): vol.All(vol.Coerce(int), vol.In(MODBUS_SCAN_INTERVAL_OPTIONS)),
+    }
+    if len(plants) > 1:
+        schema[
+            vol.Required(
+                CONF_MODBUS_PLANT_ID,
+                default=defaults.get(CONF_MODBUS_PLANT_ID, next(iter(plants))),
+            )
+        ] = vol.In(plants)
+    return vol.Schema(schema)
+
+
+def _plant_choices(plants: Any) -> dict[str, str]:
+    """Plant id -> display name from the get_plants() result (naming as in the coordinator)."""
+    choices: dict[str, str] = {}
+    for plant in plants if isinstance(plants, list) else []:
+        plant_id = str(plant.get("plantExternalId"))
+        choices[plant_id] = str(plant.get("description") or plant_id)
+    return choices
 
 
 def _local_unique_id(host: str, port: int, unit_id: int) -> str:
@@ -129,50 +177,129 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    # Carried from the hybrid login step to the gateway step.
+    _hybrid_credentials: dict[str, str]
+    _hybrid_plants: dict[str, str]
+
     @staticmethod
     def async_get_options_flow(config_entry):
         """Get the options flow handler."""
         return HovalConnectOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Let the user choose between the cloud account and a local Modbus gateway."""
-        return self.async_show_menu(step_id="user", menu_options=["cloud", "local"])
+        """Let the user choose between cloud, cloud + Modbus (hybrid) and a local gateway."""
+        return self.async_show_menu(step_id="user", menu_options=["cloud", "hybrid", "local"])
+
+    async def _async_validate_login(
+        self, user_input: dict[str, Any], errors: dict[str, str]
+    ) -> list[dict[str, Any]] | None:
+        """Log in and list the plants; None, with `errors` set, when that fails.
+
+        Shared by the cloud and the hybrid setup so both show the same errors.
+        """
+        session = async_get_clientsession(self.hass)
+        api = HovalConnectApi(session, user_input["email"], user_input["password"])
+
+        try:
+            async with asyncio.timeout(_VALIDATION_TIMEOUT_S):
+                return await api.get_plants()
+        except TimeoutError:
+            _LOGGER.warning("Hoval validation timed out after %d s", _VALIDATION_TIMEOUT_S)
+            errors["base"] = "cannot_connect"
+        except HovalAuthError as err:
+            _LOGGER.warning("Hoval auth failed: %s", err)
+            errors["base"] = "invalid_auth"
+        except HovalApiError as err:
+            _LOGGER.error("Hoval API error during setup: %s", err)
+            errors["base"] = _api_error_key(err)
+        return None
 
     async def async_step_cloud(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the Hoval Connect cloud login."""
         errors: dict[str, str] = {}
 
-        if user_input is not None:
-            session = async_get_clientsession(self.hass)
-            api = HovalConnectApi(session, user_input["email"], user_input["password"])
+        if (
+            user_input is not None
+            and await self._async_validate_login(user_input, errors) is not None
+        ):
+            await self.async_set_unique_id(user_input["email"].lower())
+            self._abort_if_unique_id_configured()
 
-            try:
-                async with asyncio.timeout(_VALIDATION_TIMEOUT_S):
-                    await api.get_plants()
-            except TimeoutError:
-                _LOGGER.warning("Hoval validation timed out after %d s", _VALIDATION_TIMEOUT_S)
-                errors["base"] = "cannot_connect"
-            except HovalAuthError as err:
-                _LOGGER.warning("Hoval auth failed: %s", err)
-                errors["base"] = "invalid_auth"
-            except HovalApiError as err:
-                _LOGGER.error("Hoval API error during setup: %s", err)
-                errors["base"] = _api_error_key(err)
-            else:
-                await self.async_set_unique_id(user_input["email"].lower())
-                self._abort_if_unique_id_configured()
-
-                return self.async_create_entry(
-                    title=user_input["email"],
-                    data={
-                        "email": user_input["email"],
-                        "password": user_input["password"],
-                    },
-                )
+            return self.async_create_entry(
+                title=user_input["email"],
+                data={
+                    "email": user_input["email"],
+                    "password": user_input["password"],
+                },
+            )
 
         return self.async_show_form(
             step_id="cloud",
             data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_hybrid(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Cloud login of a hybrid setup; the gateway follows in `hybrid_gateway`."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            plants = await self._async_validate_login(user_input, errors)
+            if plants is not None:
+                await self.async_set_unique_id(user_input["email"].lower())
+                self._abort_if_unique_id_configured()
+                self._hybrid_credentials = {
+                    "email": user_input["email"],
+                    "password": user_input["password"],
+                }
+                self._hybrid_plants = _plant_choices(plants)
+                return await self.async_step_hybrid_gateway()
+
+        return self.async_show_form(
+            step_id="hybrid",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_hybrid_gateway(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Gateway of a hybrid setup. The entry is a cloud entry whose options hold the gateway."""
+        errors: dict[str, str] = {}
+        credentials = self._hybrid_credentials
+        plants = self._hybrid_plants
+
+        if user_input is not None:
+            host = str(user_input[CONF_HOST]).strip()
+            port = int(user_input[CONF_PORT])
+            unit_id = int(user_input[CONF_UNIT_ID])
+            if not host:
+                error: str | None = "modbus_cannot_connect"
+            else:
+                error = await _modbus_error_key(host, port, unit_id)
+            if error is None:
+                # The same keys the options flow writes, defaults included.
+                options: dict[str, Any] = {
+                    CONF_TURN_ON_MODE: DEFAULT_TURN_ON_MODE,
+                    CONF_OVERRIDE_DURATION: DEFAULT_OVERRIDE_DURATION,
+                    CONF_SCAN_INTERVAL: int(DEFAULT_SCAN_INTERVAL.total_seconds()),
+                    CONF_MODBUS_HOST: host,
+                    CONF_MODBUS_PORT: port,
+                    CONF_MODBUS_UNIT_ID: unit_id,
+                    CONF_MODBUS_SCAN_INTERVAL: int(
+                        user_input.get(CONF_MODBUS_SCAN_INTERVAL, DEFAULT_MODBUS_SCAN_INTERVAL)
+                    ),
+                }
+                if len(plants) > 1 and user_input.get(CONF_MODBUS_PLANT_ID) in plants:
+                    options[CONF_MODBUS_PLANT_ID] = user_input[CONF_MODBUS_PLANT_ID]
+                return self.async_create_entry(
+                    title=credentials["email"], data=dict(credentials), options=options
+                )
+            errors["base"] = error
+
+        return self.async_show_form(
+            step_id="hybrid_gateway",
+            data_schema=_hybrid_gateway_schema(plants, user_input),
             errors=errors,
         )
 

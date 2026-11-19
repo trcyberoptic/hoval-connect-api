@@ -3,9 +3,10 @@
     "step": {
       "user": {
         "title": "Hoval Connect",
-        "description": "How should Home Assistant connect to your Hoval system?",
+        "description": "How should Home Assistant connect to your Hoval system? Local and hybrid need Modbus enabled on the Hoval gateway, which is off by default.",
         "menu_options": {
           "cloud": "Hoval Connect cloud account",
+          "hybrid": "Cloud account + local Modbus (hybrid)",
           "local": "Local gateway (Modbus TCP, no account)"
         }
       },
@@ -17,9 +18,35 @@
           "password": "Password"
         }
       },
+      "hybrid": {
+        "title": "Hoval Connect (hybrid)",
+        "description": "Step 1 of 2: enter your Hoval Connect account credentials. The Modbus gateway follows in the next step.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "hybrid_gateway": {
+        "title": "Hoval gateway for Modbus",
+        "description": "Step 2 of 2: Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit ID",
+          "modbus_scan_interval": "Modbus polling interval",
+          "modbus_plant_id": "Plant of the Modbus gateway"
+        },
+        "data_description": {
+          "host": "Hostname or IP address of the TTE-GW gateway.",
+          "port": "Modbus TCP port. The default is 502.",
+          "unit_id": "Modbus unit id of the gateway. It usually answers on unit id 1.",
+          "modbus_scan_interval": "How often to read the gateway over Modbus (seconds).",
+          "modbus_plant_id": "Which plant of your account the gateway belongs to."
+        }
+      },
       "local": {
         "title": "Local Hoval gateway",
-        "description": "Connect to a TTE-GW gateway over Modbus TCP. No Hoval account is needed. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+        "description": "Connect to a TTE-GW gateway over Modbus TCP. No Hoval account is needed. Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -33,7 +60,7 @@
       },
       "reconfigure": {
         "title": "Change the Hoval gateway",
-        "description": "Change the address of the TTE-GW gateway. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+        "description": "Change the address of the TTE-GW gateway. Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
         "data": {
           "host": "Host",
           "port": "Port",
@@ -61,7 +88,8 @@
       "gateway_blocked": "Hoval's gateway refused this client before the request reached Hoval (HTTP 403). This is not your account, your password or your network — the integration needs an update. See the integration's issue tracker on GitHub.",
       "wrong_account": "The email does not match the account this entry was set up with.",
       "unknown": "An unexpected error occurred.",
-      "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and that Modbus is enabled on the TopTronic E panel (Service > TTE-GW > Modbus > Einstellungen, Mode = TCP). The Home Assistant log has details.",
+      "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off: Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
       "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
     },
     "abort": {
@@ -89,7 +117,7 @@
           "turn_on_mode": "What happens when the fan is turned on from standby.",
           "override_duration": "How long a manual override (fan speed or temperature) lasts before the time program resumes. 'Until end of current phase' uses the next program phase boundary.",
           "scan_interval": "How often to poll the Hoval API for updates.",
-          "modbus_host": "Optional. Hostname or IP address of a TTE-GW gateway for local Modbus TCP data. Leave empty to use the cloud only. Modbus must be enabled on the TopTronic E panel under Service > TTE-GW > Modbus > Einstellungen, with Mode = TCP.",
+          "modbus_host": "Optional. Hostname or IP address of a TTE-GW gateway for local Modbus TCP data. Leave empty to use the cloud only. Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
           "modbus_port": "Modbus TCP port. The default is 502.",
           "modbus_unit_id": "Modbus unit id of the gateway. It usually answers on unit id 1.",
           "modbus_scan_interval": "How often to read the gateway over Modbus (seconds).",
@@ -98,7 +126,8 @@
       }
     },
     "error": {
-      "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and that Modbus is enabled on the TopTronic E panel (Service > TTE-GW > Modbus > Einstellungen, Mode = TCP). The Home Assistant log has details.",
+      "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off: Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
       "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
     }
   },
