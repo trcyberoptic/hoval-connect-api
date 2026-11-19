@@ -244,14 +244,15 @@ def test_empty_program_response_uses_normal_cache(runtime, empty_programs):
     assert api.program_calls[key] == 2
 
 
-def test_417_reprobes_after_one_hour_and_recovers(runtime):
+def test_417_reprobes_after_retry_interval_and_recovers(runtime):
     key = ("P1", _PATH)
     coordinator, api = _coordinator(
         runtime,
         {key: [_unsupported(runtime, key), _programs("Back")]},
     )
     retry = runtime.const.PROGRAM_UNAVAILABLE_RETRY_INTERVAL.total_seconds()
-    assert retry == 3600
+    assert retry == 6 * 3600
+    assert retry > runtime.const.PROGRAM_CACHE_TTL.total_seconds()
     ttl = runtime.const.PROGRAM_CACHE_TTL.total_seconds()
     for advance in (0, 60, ttl + 1 - 60, retry - ttl - 2):
         runtime.clock.advance(advance)
@@ -295,8 +296,8 @@ def test_persistent_417_warns_once_then_logs_debug(runtime, caplog):
     assert "P1" in warnings[0].getMessage()
     assert _PATH in warnings[0].getMessage()
 
-    # Issue #16: the hourly re-probe of a circuit that keeps answering 417 is
-    # not news, so it must not add a WARNING every hour.
+    # Issue #16: the periodic re-probe of a circuit that keeps answering 417 is
+    # not news, so it must not add a WARNING every time.
     for _ in range(3):
         runtime.clock.advance(retry)
         _refresh(coordinator, api)
