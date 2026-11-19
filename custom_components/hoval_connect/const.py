@@ -74,6 +74,29 @@ CONF_MODBUS_UNIT_ID = "modbus_unit_id"
 CONF_MODBUS_SCAN_INTERVAL = "modbus_scan_interval"
 CONF_MODBUS_PLANT_ID = "modbus_plant_id"
 DATA_TOPOLOGY = "topology"
+# Entity keys whose value comes from Modbus; they stay available when the cloud is down.
+MODBUS_BACKED_KEYS = frozenset(
+    {
+        "outside_temperature",
+        "exhaust_temperature",
+        "air_volume",
+        "humidity_actual",
+        "humidity_target",
+        "hv_constant_modulation",
+        "hv_eco_modulation",
+        "air_quality_guided",
+        "hv_control_state",
+        "hv_operating_selection",
+        "hv_air_quality_control",
+        "hv_co2_extract",
+        "hv_voc_extract",
+        "hv_voc_outside",
+        "hv_exhaust_fan_target",
+        "hv_maintenance_weeks_remaining",
+        "hv_filter_cleaning_interval",
+        "hv_active_error",
+    }
+)
 DEFAULT_MODBUS_PORT = 502
 DEFAULT_MODBUS_UNIT_ID = 1
 DEFAULT_MODBUS_SCAN_INTERVAL = 30

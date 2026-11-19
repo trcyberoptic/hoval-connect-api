@@ -149,7 +149,12 @@ class TestNoRawDatapoints:
         import json
         import re
 
-        keys = set(re.findall(r'"(h[kv]_[a-z0-9_]+)",', _read("const.py")))
+        # Only the retired set: MODBUS_BACKED_KEYS reuses some hv_* names on purpose.
+        const_src = _read("const.py")
+        retired_block = const_src.split("RETIRED_CIRCUIT_SENSOR_KEYS = ", 1)[1].split("\ndef ", 1)[
+            0
+        ]
+        keys = set(re.findall(r'"(h[kv]_[a-z0-9_]+)",', retired_block))
         assert "hk_control_state" in keys
         sensor_src = _read("sensor.py")
         for key in keys:

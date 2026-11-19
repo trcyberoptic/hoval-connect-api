@@ -23,6 +23,7 @@ from .const import (
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_HK,
     CIRCUIT_TYPE_HV,
+    CIRCUIT_TYPE_NAMES,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DEFAULT_SCAN_INTERVAL,
@@ -33,6 +34,8 @@ from .const import (
     SUPPORTED_CIRCUIT_TYPES,
     WEATHER_CACHE_TTL,
 )
+from .modbus import HovalModbusError
+from .modbus_hv import HovalModbusPoller, HvModbusReading
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
@@ -275,6 +278,8 @@ class HovalCircuitData:
     program_air_volume: float | None = None
     # User-defined program names: API key → display name (e.g. "week1" → "Normal")
     program_names: dict[str, str] = field(default_factory=dict)
+    # Latest Modbus reading of this circuit (HV with a local gateway), else None.
+    modbus: HvModbusReading | None = None
 
 
 @dataclass
@@ -305,6 +310,53 @@ class HovalData:
     """Top-level data returned by the coordinator."""
 
     plants: dict[str, HovalPlantData] = field(default_factory=dict)
+    # False when this snapshot has no cloud data (local-only, or the cloud failed).
+    cloud_ok: bool = True
+
+
+_MODBUS_LIVE_KEYS = (
+    "airVolume",
+    "humidityActual",
+    "humidityTarget",
+    "outsideTemperature",
+    "exhaustTemp",
+)
+
+
+def apply_modbus_reading(circuit: HovalCircuitData, reading: HvModbusReading | None) -> None:
+    """Overlay a Modbus reading on a circuit; None blanks the Modbus-owned fields."""
+    circuit.modbus = reading
+    if reading is None:
+        for key in _MODBUS_LIVE_KEYS:
+            circuit.live_values.pop(key, None)
+        circuit.active_program = None
+        circuit.constant_value = None
+        circuit.eco_mode_value = None
+        circuit.target_value = None
+        # A bool field: "unknown" is False, not None.
+        circuit.is_air_quality_guided = False
+        return
+    values = {
+        "airVolume": reading.air_volume,
+        "humidityActual": reading.humidity_actual,
+        "humidityTarget": reading.humidity_target,
+        "outsideTemperature": reading.outside_temperature,
+        "exhaustTemp": reading.exhaust_temperature,
+    }
+    for key, value in values.items():
+        if value is None:
+            circuit.live_values.pop(key, None)
+        else:
+            circuit.live_values[key] = str(value)
+    circuit.active_program = reading.program
+    circuit.constant_value = (
+        None if reading.constant_modulation is None else float(reading.constant_modulation)
+    )
+    circuit.eco_mode_value = (
+        None if reading.eco_modulation is None else float(reading.eco_modulation)
+    )
+    circuit.target_value = None if reading.air_volume is None else float(reading.air_volume)
+    circuit.is_air_quality_guided = reading.air_quality_control == 1
 
 
 def _parse_event(raw: dict) -> HovalEventData:
@@ -371,9 +423,18 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
     def __init__(
         self,
         hass: HomeAssistant,
-        api: HovalConnectApi,
+        api: HovalConnectApi | None,
+        *,
+        modbus: HovalModbusPoller | None = None,
+        modbus_plant_id: str | None = None,
+        local_plant: tuple[str, str] | None = None,
+        topology: dict[str, Any] | None = None,
     ) -> None:
-        """Initialize the coordinator."""
+        """Initialize the coordinator.
+
+        api None = local-only (Modbus, no Hoval account); api and modbus both
+        set = hybrid.
+        """
         super().__init__(
             hass,
             _LOGGER,
@@ -381,6 +442,13 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.api = api
+        self.modbus = modbus
+        self.modbus_plant_id = modbus_plant_id
+        self.topology = topology
+        self._local_plant = local_plant
+        self.cloud_interval: float = DEFAULT_SCAN_INTERVAL.total_seconds()
+        # Unit ids found by discovery; None = not discovered yet (retried each update).
+        self._local_units: list[int] | None = None
         self._circuit_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._circuit_fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_CIRCUIT_FETCHES)
         # Optimistic mode override per circuit (set by control actions,
@@ -419,6 +487,27 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._offline_polls: dict[str, int] = {}
         # Device-registry ids of the plant devices, filled by async_setup_entry.
         self.plant_device_ids: dict[str, str] = {}
+
+    @property
+    def has_modbus(self) -> bool:
+        """True when a Modbus poller is configured."""
+        return self.modbus is not None
+
+    @property
+    def is_local(self) -> bool:
+        """True in local-only mode (no cloud API)."""
+        return self.api is None
+
+    async def async_hv_write(self, plant_id: str, circuit_path: str, name: str, value: int) -> None:
+        """Write one HV register over Modbus (unit = first path segment)."""
+        if self.modbus is None:
+            raise HovalModbusError("Modbus is not configured")
+        await self.modbus.write(int(circuit_path.split(".")[0]), name, value)
+
+    async def async_close(self) -> None:
+        """Close the Modbus connection, if any."""
+        if self.modbus is not None:
+            await self.modbus.client.close()
 
     def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -463,6 +552,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         plant_id: str,
         circuit_path: str,
         mode_override: str,
+        cloud_action: bool = True,
     ) -> None:
         """Execute a control command with lock, optimistic state, and refresh.
 
@@ -496,7 +586,51 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             )
 
     async def _async_update_data(self) -> HovalData:
-        """Fetch data from the API."""
+        """Dispatch to the cloud or the local-only path."""
+        if self.api is not None:
+            # Cloud-only, and (until the hybrid merge exists) hybrid too.
+            return await self._async_fetch_cloud()
+        return await self._async_fetch_local()
+
+    async def _async_fetch_local(self) -> HovalData:
+        """Build the whole data model from Modbus (no cloud account)."""
+        if self.modbus is None:
+            raise UpdateFailed("Neither cloud nor Modbus is configured")
+        plant_id, plant_name = self._local_plant or ("local", "Hoval")
+        try:
+            if self._local_units is None:
+                units = await self.modbus.discover()
+                if not units:
+                    raise UpdateFailed("No HV unit answered on the Modbus gateway")
+                self._local_units = units
+            readings = await self.modbus.poll(self._local_units)
+        except (HovalModbusError, OSError, TimeoutError) as err:
+            raise UpdateFailed(f"Modbus error: {err}") from err
+        plant = HovalPlantData(plant_id, plant_name, is_online=True)
+        multiple = len(self._local_units) > 1
+        for unit in self._local_units:
+            reading = readings.get(unit)
+            if reading is None:
+                continue
+            path = f"{unit}.50.0"
+            name = CIRCUIT_TYPE_NAMES[CIRCUIT_TYPE_HV]
+            circuit = HovalCircuitData(
+                CIRCUIT_TYPE_HV, path, f"{name} {unit}" if multiple else name
+            )
+            apply_modbus_reading(circuit, reading)
+            plant.circuits[path] = circuit
+            if reading.active_errors:
+                plant.has_error = True
+        return HovalData(plants={plant_id: plant}, cloud_ok=False)
+
+    async def _async_fetch_cloud(self) -> HovalData:
+        """Fetch data from the API.
+
+        This is the former _async_update_data body, moved unchanged so the
+        cloud-only behaviour stays identical.
+        """
+        if self.api is None:  # only reachable by calling this directly
+            raise UpdateFailed("Cloud API is not configured")
         # Timestamp BEFORE any fetch: overrides set after this instant belong
         # to control actions this poll's data snapshot cannot reflect yet, so
         # the pruning at the end must leave them alone.
