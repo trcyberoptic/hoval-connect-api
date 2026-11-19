@@ -68,8 +68,8 @@ account** (local only).
 - Silent fallbacks that change meaning — e.g. the fan percentage in hybrid mode
   quietly writing a permanent "constant" program when the cloud call fails.
 - Writing a register the datapoint list marks read-only, or a value outside its
-  documented range. The one deliberate exception is the acknowledge register
-  (see Decisions), which Hoval marks read-only but documents as written.
+  documented range. The one deliberate exception is the acknowledge datapoint 21054
+  (Modbus address 28939 for unit 520; see Decisions), which Hoval marks read-only but documents as written.
 
 ## Measured facts (2026-11-19, owner's gateway, read-only FC03, Modbus unit id 1)
 
@@ -106,7 +106,7 @@ account** (local only).
 - **Two lists compared.** The old CSV and Hoval's German datapoint list (copy in
   `BernhardSchlegel/hoval-gateway-modbus/docs/TTE-GW-Modbus-datapoints-german.csv`)
   agree on address, datapoint, type, scale, range and writability for all 26
-  registers of unit 520 — except 21054 Quittierung: Hoval's list says
+  registers of unit 520 — except datapoint 21054 Quittierung (address 28939): Hoval's list says
   `Writable = No`, the old CSV says `Yes`. Hoval's own comment on it reads
   "acknowledge with value 7 = maintenance, 8 = cleaning".
 - **For LIST types the "Min. value" column is a bitmask of the valid values**:
@@ -252,7 +252,7 @@ Calls made in the design (the owner can overrule):
   if it differs.
 - **Acknowledge buttons (owner's request).** Two button entities per HV unit,
   "Acknowledge maintenance" (writes 7) and "Acknowledge filter cleaning"
-  (writes 8) to 21054. This is the one register written although Hoval's list
+  (writes 8) to datapoint 21054 (Modbus address 28939 for unit 520). This is the one register written although Hoval's list
   marks it read-only, allowed only with those two values. No read-back
   comparison (it is an action, not a setting); success is the gateway's echo,
   and the next maintenance read should show the counter reset. If the gateway
