@@ -581,6 +581,8 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._events_cache_ttl = EVENTS_CACHE_TTL.total_seconds()
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
+        # Circuits that have had a Modbus reading: the first one adds entities.
+        self._modbus_circuits: set[str] = set()
         # Consecutive polls per plant that reported isOnline=false.
         self._offline_polls: dict[str, int] = {}
         # Device-registry ids of the plant devices, filled by async_setup_entry.
@@ -1532,6 +1534,18 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         }
         new_circuits = current_circuits - self._known_circuits
         self._known_circuits = current_circuits
+        # Modbus-only entities exist only with a reading, so a circuit that
+        # gains its first one (gateway back after an HA start without it)
+        # needs the platforms to look again.
+        with_modbus = {
+            f"{pid}_{path}"
+            for pid, plant in self.data.plants.items()
+            for path, circuit in plant.circuits.items()
+            if circuit.modbus is not None
+        }
+        new_modbus = with_modbus - self._modbus_circuits
+        self._modbus_circuits |= with_modbus
         if new_circuits:
             _LOGGER.info("New circuits discovered: %s", new_circuits)
+        if new_circuits or new_modbus:
             async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)

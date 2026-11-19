@@ -45,7 +45,7 @@ async def async_setup_entry(
                 entities.append(HovalPlantError(coordinator, plant_id, plant_data))
             for path, circuit in plant_data.circuits.items():
                 uid_tc = f"{plant_id}_{path}_temporary_change"
-                if uid_tc not in known:
+                if not coordinator.is_local and uid_tc not in known:
                     known.add(uid_tc)
                     entities.append(HovalTemporaryChange(coordinator, plant_id, path, circuit))
                 uid_aq = f"{plant_id}_{path}_air_quality_guided"
