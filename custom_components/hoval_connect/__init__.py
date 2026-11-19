@@ -224,33 +224,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry)
     )
     _apply_intervals(coordinator, entry)
 
-    await coordinator.async_config_entry_first_refresh()
+    # HA does not call async_unload_entry when setup fails, so release the
+    # (lazily connected) Modbus client here, or retries would pile up connections.
+    try:
+        await coordinator.async_config_entry_first_refresh()
 
-    entry.runtime_data = HovalRuntimeData(coordinator=coordinator, api=api)
+        entry.runtime_data = HovalRuntimeData(coordinator=coordinator, api=api)
 
-    # Register a parent device for each plant before the platforms set up, so
-    # circuit devices can link to it by registry id (see circuit_device_info).
-    device_reg = dr.async_get(hass)
-    plant_device_ids: dict[str, str] = {}
-    for plant_id, plant_data in coordinator.data.plants.items():
-        plant_device = device_reg.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
-        )
-        plant_device_ids[plant_id] = plant_device.id
-    coordinator.plant_device_ids = plant_device_ids
+        # Register a parent device for each plant before the platforms set up, so
+        # circuit devices can link to it by registry id (see circuit_device_info).
+        device_reg = dr.async_get(hass)
+        plant_device_ids: dict[str, str] = {}
+        for plant_id, plant_data in coordinator.data.plants.items():
+            plant_device = device_reg.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, plant_id)},
+                name=f"Hoval {plant_data.name}",
+                manufacturer="Hoval",
+                model="Plant",
+            )
+            plant_device_ids[plant_id] = plant_device.id
+        coordinator.plant_device_ids = plant_device_ids
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    _async_register_services(hass)
+        _async_register_services(hass)
 
-    # New HA reloads via the options flow. Combining that with an update
-    # listener is rejected; old HA keeps the existing in-place interval update.
-    if not OPTIONS_FLOW_RELOADS:
-        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+        # New HA reloads via the options flow. Combining that with an update
+        # listener is rejected; old HA keeps the existing in-place interval update.
+        if not OPTIONS_FLOW_RELOADS:
+            entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    except BaseException:
+        await coordinator.async_close()
+        raise
 
     return True
 

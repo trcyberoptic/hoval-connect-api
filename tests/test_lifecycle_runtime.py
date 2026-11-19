@@ -415,3 +415,25 @@ async def test_reset_temporary_change_rejected_for_local_entry(runtime):
 
     with pytest.raises(Exception, match="Hoval account"):
         await ctx.component._async_handle_reset_temporary_change(ctx.hass, call)
+
+
+@pytest.mark.asyncio
+async def test_failed_first_refresh_closes_modbus_client(runtime):
+    ctx = runtime()
+    entry = _ConfigEntry()
+    entry.options = dict(_MODBUS_OPTIONS)
+    closed = AsyncMock()
+
+    def failing(*args, **kwargs):
+        return SimpleNamespace(
+            data=SimpleNamespace(plants={}),
+            async_config_entry_first_refresh=AsyncMock(side_effect=RuntimeError("not ready")),
+            async_close=closed,
+        )
+
+    ctx.component.HovalDataCoordinator = failing
+
+    with pytest.raises(RuntimeError, match="not ready"):
+        await ctx.component.async_setup_entry(ctx.hass, entry)
+
+    closed.assert_awaited_once()
