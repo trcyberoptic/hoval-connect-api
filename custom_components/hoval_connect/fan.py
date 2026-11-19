@@ -23,7 +23,12 @@ from .const import (
     TURN_ON_RESUME,
     clamp_hv_air_volume,
 )
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    circuit_control_available,
+)
 from .modbus import HovalModbusError
 from .modbus_hv import VALUE_BY_PROGRAM
 from .options import get_override_duration, get_turn_on_mode
@@ -166,12 +171,18 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
+        """Return if entity is available.
+
+        A Modbus-served circuit follows its Modbus reading, any other circuit
+        the cloud (unavailable while a hybrid cloud fetch fails).
+        """
         circuit = self._circuit
         if circuit is None or not super().available:
             return False
         # Local-only entries have no cloud route: without a reading nothing works.
-        return circuit.modbus is not None or not self.coordinator.is_local
+        if self.coordinator.is_local:
+            return circuit.modbus is not None
+        return circuit_control_available(self.coordinator.data, circuit)
 
     @property
     def is_on(self) -> bool | None:

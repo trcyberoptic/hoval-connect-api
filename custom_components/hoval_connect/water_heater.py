@@ -26,7 +26,12 @@ from .const import (
     OPERATION_MODE_REGULAR,
     OPERATION_MODE_STANDBY,
 )
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    circuit_cloud_available,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,8 +134,13 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return super().available and self._circuit is not None
+        """Return if entity is available.
+
+        Everything here comes from the cloud. In hybrid mode a failed cloud
+        fetch keeps the circuit with its last (frozen) values, so the entity
+        must go unavailable then, as a cloud-only entry does.
+        """
+        return super().available and circuit_cloud_available(self.coordinator.data, self._circuit)
 
     @property
     def min_temp(self) -> float:

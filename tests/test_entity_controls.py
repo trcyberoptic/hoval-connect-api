@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.test_modbus_coordinator import _HK, _HV, _hybrid, _tick
 from tests.test_program_polling import runtime as coordinator_runtime  # noqa: F401
 
 
@@ -957,3 +958,67 @@ def test_local_fan_percentage_modbus_failure_reverts_pending_value(entities):
         assert fan._pending_percentage is None
 
     asyncio.run(scenario())
+
+
+# --- Availability during a hybrid cloud outage (C2) -----------------------------
+
+
+def test_hybrid_cloud_outage_takes_cloud_fed_controls_unavailable(entities):
+    """C2: HK/WW circuits stay in the snapshot with frozen cloud values; their
+    entities must go unavailable, while Modbus-served HV controls keep working."""
+    rt = entities.runtime
+    coordinator, api, _, _ = _hybrid(rt)
+    data = _tick(coordinator)
+    entry = SimpleNamespace(options={})
+    hk = data.plants["P1"].circuits[_HK]
+    hv = data.plants["P1"].circuits[_HV]
+    climate = entities.climate.HovalClimate(coordinator, entry, "P1", _HK, hk)
+    hk_select = entities.select.HovalProgramSelect(coordinator, "P1", _HK, hk)
+    hv_select = entities.select.HovalProgramSelect(coordinator, "P1", _HV, hv)
+    fan = entities.fan.HovalFan(coordinator, entry, "P1", _HV, hv)
+    controls = (climate, hk_select, hv_select, fan)
+    assert all(e.available for e in controls)
+
+    rt.clock.advance(900)
+    api.plants_error = rt.api.HovalApiError("blocked")
+    for _ in range(4):  # one cloud attempt, then three Modbus-only updates
+        data = _tick(coordinator)
+        rt.clock.advance(30)
+
+    assert data.cloud_ok is False and _HK in data.plants["P1"].circuits
+    assert climate.available is False
+    assert hk_select.available is False
+    assert hv_select.available is True
+    assert fan.available is True
+
+
+@pytest.mark.parametrize("platform", ["climate", "water_heater", "select", "fan"])
+def test_cloud_fed_entities_unavailable_while_cloud_down(entities, platform):
+    entity, _ = _make_entity(entities, platform, cloud_ok=False)
+    assert entity.available is False
+
+
+@pytest.mark.parametrize("platform", ["climate", "water_heater", "select", "fan"])
+def test_cloud_only_entity_availability_unchanged(entities, platform):
+    entity, coordinator = _make_entity(entities, platform)
+    assert coordinator.data.cloud_ok is True and coordinator.circuit.modbus is None
+    assert entity.available is True
+
+
+@pytest.mark.parametrize("platform", ["select", "fan"])
+def test_restored_circuit_without_reading_unavailable(entities, platform):
+    entity, coordinator = _make_entity(entities, platform, cloud_ok=False)
+    coordinator.circuit.circuit_type = "HV"
+    coordinator.circuit.restored = True
+    assert entity.available is False
+
+
+@pytest.mark.parametrize("platform", ["select", "fan"])
+def test_modbus_served_control_follows_the_reading_not_the_cloud(entities, platform):
+    entity, coordinator = _make_entity(entities, platform)
+    entities.runtime.coordinator.apply_modbus_reading(coordinator.circuit, None)  # gateway down
+    assert coordinator.data.cloud_ok is True
+    assert entity.available is False
+    coordinator.circuit.modbus = SimpleNamespace()
+    coordinator.data.cloud_ok = False
+    assert entity.available is True

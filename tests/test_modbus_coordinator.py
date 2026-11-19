@@ -780,3 +780,26 @@ def test_hybrid_resume_after_standby_uses_modbus_week_program(runtime):
     coordinator, _api, poller, _ = _hybrid(runtime)
     resolved = _resume_after_standby(runtime, coordinator, poller, "P1", _HV, advance=True)
     assert resolved == "week2"
+
+
+def test_modbus_served_circuits_are_marked_in_hybrid(runtime):
+    """I2: a served circuit stays marked while the gateway fails, so its keys go unavailable."""
+    coordinator, _, poller, _ = _hybrid(runtime)
+    data = _tick(coordinator)
+    assert data.plants["P1"].circuits[_HV].modbus_served is True
+    assert data.plants["P1"].circuits[_HK].modbus_served is False
+    poller.poll_error = OSError("down")
+    runtime.clock.advance(30)
+    hv = _tick(coordinator).plants["P1"].circuits[_HV]
+    assert hv.modbus is None
+    assert hv.modbus_served is True
+    # The marking lives on the per-update copy, never on the cached cloud snapshot.
+    assert coordinator._cloud_data.plants["P1"].circuits[_HV].modbus_served is False
+
+
+def test_unserved_and_local_circuits_marking(runtime):
+    poller = _FakePoller(runtime, units=())  # block of 520 answers exception 2
+    coordinator, _, _, _ = _hybrid(runtime, poller=poller)
+    assert _tick(coordinator).plants["P1"].circuits[_HV].modbus_served is False
+    local = _update(_local(runtime, _FakePoller(runtime)))
+    assert local.plants["local_E1"].circuits["520.50.0"].modbus_served is True

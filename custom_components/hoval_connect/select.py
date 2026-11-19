@@ -15,7 +15,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import HovalConnectConfigEntry, circuit_device_info
 from .api import HovalApiError, HovalAuthError
 from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, OPERATION_MODE_REGULAR
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    circuit_control_available,
+)
 from .modbus import HovalModbusError
 from .modbus_hv import VALUE_BY_PROGRAM
 
@@ -147,12 +152,18 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
+        """Return if entity is available.
+
+        A Modbus-served circuit follows its Modbus reading, any other circuit
+        the cloud (unavailable while a hybrid cloud fetch fails).
+        """
         circuit = self._circuit
         if circuit is None or not super().available:
             return False
         # Local-only entries have no cloud route: without a reading nothing works.
-        return circuit.modbus is not None or not self.coordinator.is_local
+        if self.coordinator.is_local:
+            return circuit.modbus is not None
+        return circuit_control_available(self.coordinator.data, circuit)
 
     @property
     def current_option(self) -> str | None:

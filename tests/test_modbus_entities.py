@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from tests.test_modbus_coordinator import _HV, _hybrid, _tick
 from tests.test_program_polling import runtime  # noqa: F401
 
 
@@ -434,3 +435,47 @@ def test_modbus_only_sensors_appear_when_reading_arrives_later(ent, monkeypatch)
     ent.runtime.coordinator.apply_modbus_reading(circuit, _reading(ent.runtime))
     callbacks[0]()
     assert [e for e in added if e._attr_unique_id.endswith("_hv_control_state")]
+
+
+def test_gateway_failure_in_hybrid_makes_modbus_backed_entities_unavailable(ent):
+    """I2: with the cloud fine and the gateway down, Modbus keys show unavailable.
+
+    Before, they fell back to the cloud rule and showed "unknown", and
+    air_quality_guided showed a made-up "off".
+    """
+    rt = ent.runtime
+    coordinator, _, poller, _ = _hybrid(rt)
+    hv = _tick(coordinator).plants["P1"].circuits[_HV]
+
+    def sensor(key):
+        description = next(d for d in ent.sensor.CIRCUIT_SENSOR_DESCRIPTIONS if d.key == key)
+        return ent.sensor.HovalCircuitSensor(coordinator, "P1", _HV, hv, description)
+
+    modbus_entities = [
+        sensor("air_volume"),
+        sensor("hv_constant_modulation"),
+        sensor("hv_control_state"),
+        ent.binary_sensor.HovalAirQualityGuided(coordinator, "P1", _HV, hv),
+    ]
+    cloud_entities = [
+        sensor("active_week_program"),
+        ent.binary_sensor.HovalTemporaryChange(coordinator, "P1", _HV, hv),
+    ]
+    assert all(e.available for e in modbus_entities + cloud_entities)
+
+    poller.poll_error = OSError("gateway down")
+    rt.clock.advance(30)
+    data = _tick(coordinator)
+
+    assert data.cloud_ok is True
+    assert [e.available for e in modbus_entities] == [False] * len(modbus_entities)
+    assert all(e.available for e in cloud_entities)
+
+
+def test_modbus_served_circuit_without_reading_unavailable_for_backed_keys(ent):
+    coordinator, circuit = _setup(ent.runtime)
+    ent.runtime.coordinator.apply_modbus_reading(circuit, None)  # served, gateway down
+    assert _sensor(ent, coordinator, circuit, "air_volume").available is False
+    assert _sensor(ent, coordinator, circuit, "active_week_program").available is True
+    aq = ent.binary_sensor.HovalAirQualityGuided(coordinator, "P1", "1.50.0", circuit)
+    assert aq.available is False
