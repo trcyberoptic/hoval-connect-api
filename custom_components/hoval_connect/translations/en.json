@@ -89,7 +89,7 @@
       "wrong_account": "The email does not match the account this entry was set up with.",
       "unknown": "An unexpected error occurred.",
       "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
-      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off: Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
       "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
     },
     "abort": {
@@ -127,7 +127,7 @@
     },
     "error": {
       "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
-      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off: Modbus is off by default. On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
       "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
     }
   },
