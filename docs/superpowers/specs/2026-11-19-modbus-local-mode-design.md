@@ -43,7 +43,8 @@ account** (local only).
   maintenance and pre-filter counters, active errors.
 - **G5 Local control.** Program select and fan on/off write the operating
   selection over Modbus; normal/eco modulation and humidity setpoint become
-  writable number entities.
+  writable number entities; two buttons acknowledge a due maintenance and a
+  due pre-filter cleaning.
 - **G6 Less cloud load.** In hybrid mode the integration stops fetching
   `live-values` and circuit details for Modbus-served HV circuits.
 
@@ -53,7 +54,8 @@ account** (local only).
   writing to heating circuits blind is too risky. The register map must be
   per circuit type so these can be added later.
 - Modbus RTU (RS485 port).
-- Acknowledging maintenance/cleaning (register 21054, values 7/8) — later.
+- A "weeks remaining" sensor for the pre-filter cleaning: neither datapoint
+  list has such a register (only its on/off switch and its interval).
 - A local stand-in for the cloud's temporary change with auto-revert.
 - Turning a local-only entry into a hybrid one (add a cloud entry instead).
 - A `pymodbus` dependency (see Decisions).
@@ -66,7 +68,8 @@ account** (local only).
 - Silent fallbacks that change meaning — e.g. the fan percentage in hybrid mode
   quietly writing a permanent "constant" program when the cloud call fails.
 - Writing a register the datapoint list marks read-only, or a value outside its
-  documented range.
+  documented range. The one deliberate exception is the acknowledge register
+  (see Decisions), which Hoval marks read-only but documents as written.
 
 ## Measured facts (2026-11-19, owner's gateway, read-only FC03, Modbus unit id 1)
 
@@ -94,6 +97,22 @@ account** (local only).
   from its cache. Client timeout 6–10 s, retry on 6.
 - Registers 0 and 1476 returned 51 earlier and 1 now; they are **not** an
   outdoor temperature for this plant. Do not use them.
+- **Write test (FC06), done with the owner's consent:** eco modulation 23624
+  written 65 → 66 while the program was week1 (eco modulation has no effect
+  there). The gateway echoed the request (1.2 s), read-back gave 66 at +0/2/5 s;
+  written back to 65 and read back 65. Not yet shown: that the value reached the
+  HV controller and not only the gateway's cache (the panel or a physical
+  effect such as a program switch would show it).
+- **Two lists compared.** The old CSV and Hoval's German datapoint list (copy in
+  `BernhardSchlegel/hoval-gateway-modbus/docs/TTE-GW-Modbus-datapoints-german.csv`)
+  agree on address, datapoint, type, scale, range and writability for all 26
+  registers of unit 520 — except 21054 Quittierung: Hoval's list says
+  `Writable = No`, the old CSV says `Yes`. Hoval's own comment on it reads
+  "acknowledge with value 7 = maintenance, 8 = cleaning".
+- **For LIST types the "Min. value" column is a bitmask of the valid values**:
+  Betriebswahl `0x37` = {0, 1, 2, 4, 5} (exactly the five programs, 3 unused),
+  Quittierung `0x180` = {7, 8}, Luftqualität Regulierung and both
+  "Konfiguration" registers `0x3` = {0, 1}.
 
 ## HV register map (offsets within a unit's block)
 
@@ -121,6 +140,7 @@ Unit 520 shown:
 | 28934 | 20034 | Konfiguration Wartung | LIST | – | no | 0 off / 1 on |
 | 28935–36 | 20037 | Wartungszählwert (weeks) | U32 | – | no | interval |
 | 28937–38 | 21058 | Restlaufzeit Wartungszähler (weeks) | S32 | – | no | new sensor |
+| 28939 | 21054 | Quittierung | LIST | – | see Decisions | buttons: 7 = acknowledge maintenance, 8 = acknowledge cleaning |
 | 28940 | 37606 | CO2 Abluft | U8 | % | no | sensor, 255 = not fitted |
 | 28944 | 41612 | Konfiguration Reinigung Vorfilter | LIST | – | no | 0 off / 1 on |
 | 28945–46 | 41613 | Reinigungszählwert (weeks) | U32 | – | no | interval |
@@ -227,8 +247,18 @@ Calls made in the design (the owner can overrule):
   ~50 ms pause between requests; exception 2 → field `None`, not an error;
   check transaction id and unit id of every response.
 - **Write safety.** Only registers marked writable; validate the value against
-  the datapoint's min/max (and the enum's defined values) before sending; read
-  the register back after writing and raise if it differs.
+  the datapoint's min/max, and for LIST types against the bitmask in
+  "Min. value", before sending; read the register back after writing and raise
+  if it differs.
+- **Acknowledge buttons (owner's request).** Two button entities per HV unit,
+  "Acknowledge maintenance" (writes 7) and "Acknowledge filter cleaning"
+  (writes 8) to 21054. This is the one register written although Hoval's list
+  marks it read-only, allowed only with those two values. No read-back
+  comparison (it is an action, not a setting); success is the gateway's echo,
+  and the next maintenance read should show the counter reset. If the gateway
+  answers with an exception, the button raises a clear error naming it. Not
+  tested live yet: acknowledging now would reset a counter that is not due;
+  verify at the next real maintenance or cleaning message.
 - **Error-log poll cadence.** HV block every tick; error entries and the
   maintenance block on a slower TTL (e.g. 5 min), since they are 6 extra
   requests at ~1 s each.
