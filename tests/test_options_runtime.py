@@ -58,3 +58,40 @@ def test_valid_durations_and_turn_on_modes_survive(options):
         assert options.get_override_duration({"override_duration": value}) == value
     for value in ("resume", "week1", "week2"):
         assert options.get_turn_on_mode({"turn_on_mode": value}) == value
+
+
+def test_get_modbus_settings_cloud_and_local(options):
+    local = {"mode": "local", "host": " gw.local ", "port": 1502, "unit_id": 2}
+    assert options.is_local_entry(local)
+    assert options.get_modbus_settings(local, {}) == options.ModbusSettings("gw.local", 1502, 2)
+
+    cloud = {"email": "a@b.c", "password": "x"}
+    assert not options.is_local_entry(cloud)
+    assert options.get_modbus_settings(cloud, {}) is None
+    assert options.get_modbus_settings(cloud, {"modbus_host": ""}) is None
+    assert options.get_modbus_settings(cloud, {"modbus_host": "  "}) is None
+    opts = {"modbus_host": "10.0.0.9", "modbus_port": "503", "modbus_unit_id": 3}
+    assert options.get_modbus_settings(cloud, opts) == options.ModbusSettings("10.0.0.9", 503, 3)
+    # Defaults and corrupt values.
+    assert options.get_modbus_settings(cloud, {"modbus_host": "h", "modbus_port": True}) == (
+        options.ModbusSettings("h", 502, 1)
+    )
+    # A cloud entry never reads the local keys from its options.
+    assert options.get_modbus_settings(cloud, {"host": "h"}) is None
+
+
+@pytest.mark.parametrize("value", [45, "x", True, None, [], 10**100, 0])
+def test_get_modbus_scan_interval_rejects_unknown(options, value):
+    assert options.get_modbus_scan_interval({"modbus_scan_interval": value}) == 30
+
+
+@pytest.mark.parametrize("value", [10, 30, 60, 120, "60"])
+def test_get_modbus_scan_interval_keeps_allowed(options, value):
+    assert options.get_modbus_scan_interval({"modbus_scan_interval": value}) == int(value)
+    assert options.get_modbus_scan_interval({}) == 30
+
+
+def test_get_modbus_plant_id(options):
+    assert options.get_modbus_plant_id({"modbus_plant_id": "p1"}) == "p1"
+    assert options.get_modbus_plant_id({"modbus_plant_id": ""}) is None
+    assert options.get_modbus_plant_id({}) is None

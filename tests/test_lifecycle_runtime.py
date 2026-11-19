@@ -200,6 +200,9 @@ async def test_corrupt_options_do_not_block_setup_or_form(runtime):
         "scan_interval": 900,
         "override_duration": "endOfPhase",
         "turn_on_mode": "resume",
+        "modbus_port": 502,
+        "modbus_unit_id": 1,
+        "modbus_scan_interval": 30,
     }
 
 

@@ -3,10 +3,46 @@
     "step": {
       "user": {
         "title": "Hoval Connect",
+        "description": "Wie soll Home Assistant mit Ihrer Hoval-Anlage verbunden werden?",
+        "menu_options": {
+          "cloud": "Hoval-Connect-Cloud-Konto",
+          "local": "Lokales Gateway (Modbus TCP, ohne Konto)"
+        }
+      },
+      "cloud": {
+        "title": "Hoval Connect",
         "description": "Bitte geben Sie Ihre Hoval Connect Kontodaten ein:",
         "data": {
           "email": "Email",
           "password": "Passwort"
+        }
+      },
+      "local": {
+        "title": "Lokales Hoval-Gateway",
+        "description": "Verbindung zu einem TTE-GW-Gateway über Modbus TCP. Ein Hoval-Konto ist nicht nötig. Modbus muss am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen aktiviert sein, mit Mode = TCP.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit-ID"
+        },
+        "data_description": {
+          "host": "Hostname oder IP-Adresse des TTE-GW-Gateways.",
+          "port": "Modbus-TCP-Port. Standard ist 502.",
+          "unit_id": "Modbus-Unit-ID des Gateways. Es antwortet in der Regel auf die Unit-ID 1."
+        }
+      },
+      "reconfigure": {
+        "title": "Hoval-Gateway ändern",
+        "description": "Adresse des TTE-GW-Gateways ändern. Modbus muss am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen aktiviert sein, mit Mode = TCP.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit-ID"
+        },
+        "data_description": {
+          "host": "Hostname oder IP-Adresse des TTE-GW-Gateways.",
+          "port": "Modbus-TCP-Port. Standard ist 502.",
+          "unit_id": "Modbus-Unit-ID des Gateways. Es antwortet in der Regel auf die Unit-ID 1."
         }
       },
       "reauth_confirm": {
@@ -24,11 +60,15 @@
       "no_plant_access": "Anmeldung erfolgreich, aber das Konto darf keine Anlagen abrufen (HTTP 403). Prüfe in der Hoval-Connect-App, ob die Anlage diesem Konto zugeordnet ist; erneutes Versuchen hilft nicht.",
       "gateway_blocked": "Hovals Gateway hat diesen Client abgewiesen, bevor die Anfrage Hoval erreicht hat (HTTP 403). Das liegt nicht an deinem Konto, deinem Passwort oder deinem Netzwerk — die Integration braucht ein Update. Siehe den Issue-Tracker der Integration auf GitHub.",
       "wrong_account": "Die E-Mail-Adresse gehört nicht zu dem Konto, mit dem dieser Eintrag eingerichtet wurde.",
-      "unknown": "Ein unerwarteter Fehler ist aufgetreten."
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten.",
+      "modbus_cannot_connect": "Das Gateway ist über Modbus TCP nicht erreichbar. Adresse prüfen und kontrollieren, ob Modbus am TopTronic-E-Bedienmodul aktiviert ist (Service > TTE-GW > Modbus > Einstellungen, Mode = TCP). Details stehen im Home-Assistant-Protokoll.",
+      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen."
     },
     "abort": {
       "already_configured": "Dieses Konto ist bereits konfiguriert.",
-      "reauth_successful": "Re-Authentifizierung erfolgreich."
+      "reauth_successful": "Re-Authentifizierung erfolgreich.",
+      "reconfigure_not_supported": "Nur lokale Gateway-Einträge lassen sich neu konfigurieren. Das Modbus-Gateway eines Cloud-Eintrags wird in dessen Optionen geändert.",
+      "reconfigure_successful": "Die Gateway-Adresse wurde aktualisiert."
     }
   },
   "options": {
@@ -38,12 +78,22 @@
         "data": {
           "turn_on_mode": "Modus nach dem Einschalten:",
           "override_duration": "Dauer der temporären Programm-Anpassung:",
-          "scan_interval": "Abfrageintervall:"
+          "scan_interval": "Abfrageintervall:",
+          "modbus_host": "Modbus-Gateway (Host):",
+          "modbus_port": "Modbus-Port:",
+          "modbus_unit_id": "Modbus-Unit-ID:",
+          "modbus_scan_interval": "Modbus-Abfrageintervall:",
+          "modbus_plant_id": "Anlage des Modbus-Gateways:"
         },
         "data_description": {
           "turn_on_mode": "Was passieren soll, wenn der Lüfter aus dem Standby eingeschaltet wird.",
           "override_duration": "Wie lange eine manuelle Überschreibung (Lüftergeschwindigkeit oder Temperatur) dauert, bevor das Zeitprogramm wieder übernimmt. 'Bis zum Ende der aktuellen Phase' verwendet die nächste Programmphasen-Grenze.",
-          "scan_interval": "Wie oft die Hoval API auf Updates abgefragt wird."
+          "scan_interval": "Wie oft die Hoval API auf Updates abgefragt wird.",
+          "modbus_host": "Optional. Hostname oder IP-Adresse eines TTE-GW-Gateways für lokale Modbus-TCP-Daten. Leer lassen, um nur die Cloud zu nutzen. Modbus muss am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen aktiviert sein, mit Mode = TCP.",
+          "modbus_port": "Modbus-TCP-Port. Standard ist 502.",
+          "modbus_unit_id": "Modbus-Unit-ID des Gateways. Es antwortet in der Regel auf die Unit-ID 1.",
+          "modbus_scan_interval": "Wie oft das Gateway über Modbus gelesen wird (Sekunden).",
+          "modbus_plant_id": "Zu welcher Anlage Ihres Kontos das Gateway gehört."
         }
       }
     }
