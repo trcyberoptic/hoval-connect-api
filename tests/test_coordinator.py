@@ -548,8 +548,10 @@ class TestResolveActiveProgramRobustness:
 from datetime import timedelta as _timedelta  # noqa: E402
 
 from custom_components.hoval_connect.const import (  # noqa: E402
+    DEFAULT_SCAN_INTERVAL,
     EVENTS_CACHE_TTL,
     PROGRAM_CACHE_TTL,
+    SCAN_INTERVAL_OPTIONS,
     WEATHER_CACHE_TTL,
 )
 
@@ -561,8 +563,28 @@ class TestCacheTtls:
     def test_weather_ttl_longer_than_events(self):
         assert WEATHER_CACHE_TTL > EVENTS_CACHE_TTL
 
-    def test_program_ttl_unchanged(self):
-        assert _timedelta(minutes=5) == PROGRAM_CACHE_TTL
+    def test_program_ttl_is_one_hour(self):
+        assert _timedelta(hours=1) == PROGRAM_CACHE_TTL
+
+    def test_weather_ttl_is_one_hour(self):
+        assert _timedelta(hours=1) == WEATHER_CACHE_TTL
+
+    def test_events_refresh_with_every_regular_poll(self):
+        # Below the polling floor, so the cache never skips a regular poll.
+        assert _timedelta(seconds=min(SCAN_INTERVAL_OPTIONS)) > EVENTS_CACHE_TTL
+
+
+class TestPollingFloor:
+    """Hoval blocked the integration for polling too often and asked for
+    15 minutes on /circuits and /live-values (#24). No selectable interval,
+    and not the default, may undercut that."""
+
+    def test_default_is_fifteen_minutes(self):
+        assert _timedelta(minutes=15) == DEFAULT_SCAN_INTERVAL
+
+    def test_no_option_below_fifteen_minutes(self):
+        assert min(SCAN_INTERVAL_OPTIONS) == 15 * 60
+        assert int(DEFAULT_SCAN_INTERVAL.total_seconds()) in SCAN_INTERVAL_OPTIONS
 
 
 class TestRawDatapointConstants:

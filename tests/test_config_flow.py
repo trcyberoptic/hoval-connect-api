@@ -75,15 +75,15 @@ class TestApiErrorKey:
 
 
 class TestScanIntervalSchema:
-    """The HA frontend submits dict-select keys as STRINGS ("60"), not ints."""
+    """The HA frontend submits dict-select keys as STRINGS ("900"), not ints."""
 
     def test_string_from_frontend_is_coerced_and_accepted(self):
-        result = _scan_interval_schema()({"scan_interval": "60"})
-        assert result["scan_interval"] == 60
+        result = _scan_interval_schema()({"scan_interval": "900"})
+        assert result["scan_interval"] == 900
         assert isinstance(result["scan_interval"], int)
 
     def test_int_value_accepted(self):
-        assert _scan_interval_schema()({"scan_interval": 120})["scan_interval"] == 120
+        assert _scan_interval_schema()({"scan_interval": 1800})["scan_interval"] == 1800
 
     def test_unknown_value_rejected(self):
         with pytest_raises_invalid():

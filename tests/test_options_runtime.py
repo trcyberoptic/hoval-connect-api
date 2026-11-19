@@ -28,7 +28,7 @@ def options(monkeypatch):
     return loaded["options"]
 
 
-@pytest.mark.parametrize("value", [30, 60, 120, 300, "30", "60", "120", "300"])
+@pytest.mark.parametrize("value", [900, 1800, 3600, "900", "1800", "3600"])
 def test_supported_intervals_survive(options, value):
     assert options.get_scan_interval({"scan_interval": value}) == int(value)
 
@@ -37,7 +37,14 @@ def test_supported_intervals_survive(options, value):
     "value", [None, True, False, [], {}, "", "bad", "60.5", 60.5, 0, -1, 45, 10**100]
 )
 def test_corrupt_intervals_fall_back(options, value):
-    assert options.get_scan_interval({"scan_interval": value}) == 60
+    assert options.get_scan_interval({"scan_interval": value}) == 900
+
+
+# 30..300 s were selectable until Hoval's 15-minute floor (#24). A stored
+# legacy value must fall back to the floor, not keep polling faster.
+@pytest.mark.parametrize("value", [30, 60, 120, 300, "30", "60", "120", "300"])
+def test_legacy_fast_intervals_fall_back_to_floor(options, value):
+    assert options.get_scan_interval({"scan_interval": value}) == 900
 
 
 @pytest.mark.parametrize("value", [None, [], {}, False, 42, "unknown"])
