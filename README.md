@@ -20,22 +20,29 @@ Reverse-engineered API documentation for the **Hoval Connect** IoT platform (use
 Plants and circuits are discovered automatically from your account.
 
 > [!IMPORTANT]
-> **Use v1.0.8 or newer — older releases cannot connect at all.**
+> **Use v1.1.0 or newer. Hoval blocks every older release.**
 >
-> Hoval's Azure Application Gateway refuses every request whose `User-Agent` contains
-> `homeassistant`, and that is exactly what Home Assistant sends by default on behalf of
-> every integration. On v1.0.7 and earlier, setup therefore fails with an HTTP 403 that
-> reads like a wrong password, a permissions problem or a broken network. It is none of
-> those: the request never reaches Hoval at all. Since v1.0.8 the integration sends its
-> own identifier (`hoval-connect-api/<version>`) instead, which the gateway accepts.
+> On 2026-11-19 Hoval blocked this integration at its Azure Application Gateway because it
+> polled the cloud too often ([#24][issue-24]). Requests from v1.0.18 and earlier are refused
+> with HTTP 403 and the gateway's own HTML page (`Microsoft-Azure-Application-Gateway/v2`).
+> The login still succeeds, so this can look like a permissions or network problem. It is
+> neither: the request never reaches Hoval.
 >
-> If you are on an older release, update in HACS and then **restart Home Assistant
-> completely** — a config-entry reload does not re-import Python modules. Do not change
-> any User-Agent yourself; the integration handles it.
+> v1.1.0 does what Hoval asked for. It polls at most every 15 minutes, reads slow-changing
+> data hourly and no longer reads raw controller datapoints. Hoval agreed to allow it and
+> recognises it by the version in its User-Agent (`hoval-connect-api/1.1.0`). Until Hoval
+> has done so, v1.1.0 gets the same 403. [#24][issue-24] shows the current status.
 >
-> This is a workaround for a rule on Hoval's side, not a fix for its cause. If Hoval
-> widens the rule it will stop working. Background and measurements: [#11][issue-11].
+> Update in HACS, then **restart Home Assistant completely**: a config-entry reload does not
+> re-import Python modules. Do not change the User-Agent yourself. Hoval allows the
+> integration by the identifier and version it sends.
+>
+> **History:** from about 2026-09-09 the gateway refused every User-Agent containing
+> `homeassistant`, which Home Assistant sends by default for every integration. v1.0.8
+> worked around that by sending its own identifier, `hoval-connect-api/<version>`
+> ([#11][issue-11]). That identifier is what Hoval blocked in November.
 
+[issue-24]: https://github.com/trcyberoptic/hoval-connect-api/issues/24
 [issue-11]: https://github.com/trcyberoptic/hoval-connect-api/issues/11
 
 ### What You Get
@@ -110,7 +117,7 @@ Plants and circuits are discovered automatically from your account.
 
 ### Standalone examples
 
-The Python reader in [`examples/hoval_client.py`](examples/hoval_client.py) follows plant pagination, uses v3 circuit discovery, and reads live values, weather and events. Install `requests`, then run `python examples/hoval_client.py` without arguments. It prompts for the account email and password (password input is hidden); scripts can supply `HOVAL_EMAIL` and `HOVAL_PASSWORD` through their environment. Every request has a connection/read timeout.
+The Python reader in [`examples/hoval_client.py`](examples/hoval_client.py) follows plant pagination, uses v3 circuit discovery, and reads live values, weather and events. Install `requests`, then run `python examples/hoval_client.py` without arguments. **It currently gets HTTP 403 after the login**, because Hoval's gateway also refuses its User-Agent (see [Rate Limits & Notes](#rate-limits--notes)). It prompts for the account email and password (password input is hidden); scripts can supply `HOVAL_EMAIL` and `HOVAL_PASSWORD` through their environment. Every request has a connection/read timeout.
 
 The Bash/curl live-value example also has bounded timeouts and encodes special characters in form/query values. The reviewed fork improvements and deliberately excluded changes are documented in the [GMH224 adoption review](docs/superpowers/specs/2026-09-20-gmh224-adoptions.md).
 
@@ -178,6 +185,7 @@ to taste.
 ### Requirements
 
 - A Hoval Connect account (same credentials as the Hoval Connect mobile app)
+- Hoval Connect (this integration) v1.1.0 or newer: Hoval blocks older releases (see the note under [Installation](#installation-hacs))
 - Home Assistant 2024.11.0 or newer — the config flow calls `self._get_reauth_entry()` (2024.11) and relies on the base class setting `OptionsFlow.config_entry`, and the integration keeps its state in `entry.runtime_data` (2024.6). The bundled Blueprint separately declares `min_version: "2024.6.0"`.
 
 ---
@@ -692,15 +700,22 @@ The plant access token response includes a feature map indicating what operation
 ## Rate Limits & Notes
 
 - Token lifetime: 30 min (id_token), ~15 min (plant access token)
-- No documented rate limits, but be respectful
+- **Poll sparingly.** There are no documented rate limits, but Hoval blocked clients that
+  polled too often (#24). Hoval asked for an interval of at least 15 minutes on
+  `GET /v3/plants/{id}/circuits` and `GET /v3/api/statistics/live-values/{id}`, and for
+  `GET /api/telemetry-data/snapshots/live/{id}` not to be called at all; it is deprecated.
+  Hoval says it plans an official API for third-party integrations.
 - **Send a `User-Agent` naming your own software.** The gateway in front of the API
-  refuses a short list of client identifiers before the request reaches Hoval, answering
-  with its own HTML block page (`Microsoft-Azure-Application-Gateway/v2`) instead of JSON.
-  Both `homeassistant` and `python-requests` are refused as case-insensitive substrings —
-  so Python's `requests` library is blocked by its default header, while `curl`, `httpx`,
-  `urllib3`, `Go-http-client` and a dozen others pass. `examples/hoval_client.py` sets one
-  explicitly; do the same rather than sending nothing or disguising your client as a
-  browser or as Hoval's own app.
+  refuses a list of client identifiers before the request reaches Hoval, answering with
+  its own HTML block page (`Microsoft-Azure-Application-Gateway/v2`) instead of JSON.
+  `homeassistant`, `python-requests` and, since 2026-11-19, `hoval-connect-api` are refused
+  as case-insensitive substrings. Python's `requests` library is therefore blocked by its
+  default header, while `curl`, `httpx`, `urllib3`, `Go-http-client` and a dozen others pass.
+  Do not leave the header out, and do not disguise your client as a browser or as Hoval's own app.
+  If Hoval blocks your identifier, contact connect@hoval.com instead of changing the header.
+- **`examples/hoval_client.py` is currently blocked too.** Its User-Agent,
+  `hoval-connect-api-example/1.0`, contains `hoval-connect-api`, so the gateway answers
+  every request after the login with 403.
 - The API may lock out accounts after repeated failed auth attempts
 - Some endpoints are partner/business-only (403 for regular users)
 - `business/` endpoints may require elevated access roles
