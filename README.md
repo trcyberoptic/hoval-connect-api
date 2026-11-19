@@ -172,6 +172,80 @@ the office sensor to exclude, the two helpers, and your notify service. The
 thresholds default to 23 °C / 21 °C / 25 °C / 25.5 °C / 15 min / 90 %; adjust
 to taste.
 
+### Local Modbus TCP
+
+Hoval's cloud allows one request per 15 minutes at most, and in November 2026 it blocked this
+integration outright ([#24][issue-24]). The Hoval gateway (TTE-GW, "Gateway v2") can also be read
+directly in your own network over **Modbus TCP**. That is fast (default every 30 seconds), needs no
+Hoval account and keeps working when the cloud is down or blocked. The integration can use it in two ways:
+
+- **Hybrid:** you keep your cloud entry and add the gateway in its options. Live values, program and
+  setpoints of the ventilation unit then come from the gateway; the cloud still supplies what only it
+  has, at the slow 15-minute rhythm.
+- **Local only:** no account at all. You add the gateway as its own entry.
+
+Scope: **HomeVent (HV) units only.** Heating, hot-water, solar and other circuits stay cloud-only.
+
+#### 1. Switch Modbus on at the TopTronic E panel
+
+On the controller panel open **Service > TTE-GW > Modbus > Einstellungen** (the panel's menu is in German)
+and set **Mode = TCP**. The gateway must be reachable from Home Assistant on port 502. The panel may
+show unit id 0, but the gateway has been seen to answer on **unit id 1**, so enter 1 first.
+
+#### 2. Add the gateway
+
+- **Hybrid:** **Settings > Devices & services > Hoval Connect > Configure**, then fill in *Modbus gateway
+  host* (IP address or name of the gateway), port (502), unit id (1) and the *Modbus polling interval*
+  (10, 30, 60 or 120 seconds, default 30). If your account has several plants, pick the one the
+  gateway belongs to. An empty host means cloud only, exactly as before. Existing entities keep their
+  entity IDs, history and long-term statistics.
+- **Local only:** **Add Integration > Hoval Connect > Local gateway (Modbus TCP, no account)** and enter
+  host, port and unit id. The integration finds the HV units itself. This creates new entities (it is
+  not a drop-in for an existing cloud entry). **Reconfigure** changes the gateway's address later.
+
+#### What each mode provides
+
+| | Hybrid | Local only |
+|---|---|---|
+| Live values: air volume, humidity, target humidity, exhaust and outside temperature | Modbus, every poll | Modbus, every poll |
+| Control status, operating selection, air-quality control, CO₂/VOC (the sensors removed in v1.1.0, **back under their old entity IDs**; CO₂/VOC only where a sensor is fitted) | Modbus | Modbus |
+| Exhaust fan target, weeks until maintenance, filter-cleaning interval, active error code | Modbus | Modbus |
+| Program select, fan on/off | written over Modbus | written over Modbus |
+| Number entities: constant and eco modulation (15–100 %), target humidity (30–65 %) | Modbus | Modbus |
+| Buttons: acknowledge maintenance, acknowledge filter cleaning | Modbus | Modbus |
+| Week/day names, program air volume, temporary change with end time, holiday, room air quality | cloud | not available |
+| Weather, forecast, plant events | cloud | not available |
+| *Online* and *Error* of the plant | cloud (unavailable while the cloud is down) | Modbus reachable / an active error entry |
+| `hoval_connect.reset_temporary_change` | works | raises an error (there is no cloud temporary change) |
+
+If the gateway stops answering, the Modbus-backed entities become unavailable. They do not fall back
+to the cloud's live values.
+
+#### Fan percentage: hybrid and local differ
+
+- **Hybrid:** the slider sets a **temporary change in the cloud**, as before. The time program stays
+  active and the change ends by itself; the summer-boost blueprint keeps working. If the cloud call
+  fails, you get the error. Nothing is written locally instead.
+- **Local only:** there is no temporary change. The slider writes the *constant program* setpoint and
+  switches the program to **constant**. This is persistent and visible in the program select until
+  you pick another program. The unit then modulates normally around that setpoint.
+
+#### Acknowledge buttons
+
+*Acknowledge maintenance* and *Acknowledge filter cleaning* write 7 or 8 to register 21054 of the unit,
+as Hoval's own comment for that register describes. Hoval's datapoint list marks the register
+**read-only** in the same row, so whether the gateway accepts the write is **not verified yet**. If it
+refuses, the button raises an error that names the gateway's answer. Press a button only when the
+panel shows the matching message; afterwards the *Weeks until maintenance* sensor should reset.
+
+#### If the cloud is unavailable
+
+In hybrid mode every successful cloud poll stores the plant's name and its HV circuits in the config
+entry. If the cloud fails (blocked, offline, wrong login) or Home Assistant restarts while it is
+down, the entry starts from that stored list and keeps running on Modbus alone. The cloud is retried
+only at its own slow interval, never at the Modbus interval. After a rejected login the cloud stays
+suspended until you re-authenticate, and Modbus keeps working.
+
 ### Known Limitations
 
 - **HV, HK, BL, WW, and PS circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
@@ -179,7 +253,7 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **No detailed controller status and no CO₂/VOC values (since v1.1.0).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list follow in the next release. See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
+- **No detailed controller status and no CO₂/VOC values from the cloud (since v1.1.0; [Local Modbus TCP](#local-modbus-tcp) brings them back for HV units).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list follow in the next release. See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Sensors removed in v1.1.0
