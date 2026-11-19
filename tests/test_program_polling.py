@@ -168,7 +168,7 @@ def runtime(monkeypatch):
     package.__path__ = [str(_COMPONENT)]
     monkeypatch.setitem(sys.modules, _PACKAGE, package)
     loaded = {}
-    for module_name in ("const", "api", "coordinator"):
+    for module_name in ("const", "api", "modbus", "modbus_hv", "coordinator"):
         name = f"{_PACKAGE}.{module_name}"
         spec = importlib.util.spec_from_file_location(name, _COMPONENT / f"{module_name}.py")
         module = importlib.util.module_from_spec(spec)
