@@ -750,3 +750,33 @@ def test_first_modbus_reading_after_start_signals_platforms(runtime, monkeypatch
     assert len(sent) == 2  # first reading of a known circuit
     _tick(coordinator)
     assert len(sent) == 2  # not again for a known reading
+
+
+def _program_reading(runtime, value):
+    return runtime.modbus_hv.decode_hv([value, *LIVE_BLOCK[1:]], None, None)
+
+
+def _resume_after_standby(runtime, coordinator, poller, plant_id, path, advance=None):
+    """Week 2 reading, then standby: what the real resolver offers for fan-on."""
+    step = _update if advance is None else _tick
+    poller.reading = _program_reading(runtime, 2)
+    coordinator.data = step(coordinator)
+    poller.reading = _program_reading(runtime, 0)
+    coordinator.data = step(coordinator)
+    circuit = coordinator.data.plants[plant_id].circuits[path]
+    assert circuit.active_program == "standby"
+    return coordinator.resolve_resume_program(plant_id, path)
+
+
+def test_local_resume_after_standby_returns_last_week_program(runtime):
+    poller = _FakePoller(runtime)
+    coordinator = _local(runtime, poller)
+    resolved = _resume_after_standby(runtime, coordinator, poller, "local_E1", "520.50.0")
+    assert resolved == "week2"
+    assert runtime.modbus_hv.VALUE_BY_PROGRAM[resolved] == 2
+
+
+def test_hybrid_resume_after_standby_uses_modbus_week_program(runtime):
+    coordinator, _api, poller, _ = _hybrid(runtime)
+    resolved = _resume_after_standby(runtime, coordinator, poller, "P1", _HV, advance=True)
+    assert resolved == "week2"
