@@ -158,6 +158,16 @@ class HovalModbusClient:
         async with self._lock:
             await self._disconnect()
 
+    async def disconnect(self) -> None:
+        """Drop the connection but keep the client usable.
+
+        Unlike `close()` this does not set `_closed`: the next request
+        reconnects lazily. The gateway serves one Modbus client at a time, so
+        the options flow frees the running connection before it probes.
+        """
+        async with self._lock:
+            await self._disconnect()
+
     def _drop_connection(self) -> asyncio.StreamWriter | None:
         """Forget the connection and start closing it.
 

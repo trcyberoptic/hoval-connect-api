@@ -89,8 +89,9 @@
       "wrong_account": "The email does not match the account this entry was set up with.",
       "unknown": "An unexpected error occurred.",
       "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
-      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
-      "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended. The gateway also answers only one Modbus client at a time: if another system (Loxone, a Modbus tool, another entry of this integration) is connected, close it first.",
+      "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units.",
+      "gateway_in_use": "Another entry of this integration already uses this gateway. The gateway serves only one Modbus client at a time, so a second entry could not get any answers."
     },
     "abort": {
       "already_configured": "This account is already configured.",
@@ -127,8 +128,9 @@
     },
     "error": {
       "modbus_cannot_connect": "Could not reach the gateway over Modbus TCP. Check the address and the network connection. The Home Assistant log has details.",
-      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended.",
-      "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units."
+      "modbus_no_answer": "The gateway is reachable but does not answer Modbus requests. Modbus is most likely still switched off (it is off by default). On the TopTronic E panel go to Service > TTE-GW > Modbus > Einstellungen, switch \"Aktiv\" on and set \"Mode\" to TCP (not RTU, which is RS485). UnitID on the panel may stay at 0; the gateway still answers on unit id 1. Parity and baud rate only matter for RS485. A fixed IP address for the gateway is recommended. The gateway also answers only one Modbus client at a time: if another system (Loxone, a Modbus tool, another entry of this integration) is connected, close it first.",
+      "modbus_no_units": "The gateway answered, but no HomeVent unit responded. Check the unit id (usually 1) and the wiring to the units.",
+      "gateway_in_use": "Another entry of this integration already uses this gateway. The gateway serves only one Modbus client at a time, so a second entry could not get any answers."
     }
   },
   "entity": {
