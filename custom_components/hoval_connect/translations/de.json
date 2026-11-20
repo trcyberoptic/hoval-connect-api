@@ -89,8 +89,9 @@
       "wrong_account": "Die E-Mail-Adresse gehört nicht zu dem Konto, mit dem dieser Eintrag eingerichtet wurde.",
       "unknown": "Ein unerwarteter Fehler ist aufgetreten.",
       "modbus_cannot_connect": "Das Gateway ist über Modbus TCP nicht erreichbar. Adresse und Netzwerkverbindung prüfen. Details stehen im Home-Assistant-Protokoll.",
-      "modbus_no_answer": "Das Gateway ist erreichbar, beantwortet aber keine Modbus-Anfragen. Modbus ist höchstwahrscheinlich noch ausgeschaltet (ab Werk ist es aus). Am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen «Aktiv» einschalten und «Mode» auf TCP stellen (nicht RTU, das ist RS485). Die UnitID am Bedienmodul kann auf 0 bleiben, das Gateway antwortet trotzdem auf Unit-ID 1. Parität und Baudrate gelten nur für RS485. Empfohlen ist eine feste IP-Adresse für das Gateway.",
-      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen."
+      "modbus_no_answer": "Das Gateway ist erreichbar, beantwortet aber keine Modbus-Anfragen. Modbus ist höchstwahrscheinlich noch ausgeschaltet (ab Werk ist es aus). Am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen «Aktiv» einschalten und «Mode» auf TCP stellen (nicht RTU, das ist RS485). Die UnitID am Bedienmodul kann auf 0 bleiben, das Gateway antwortet trotzdem auf Unit-ID 1. Parität und Baudrate gelten nur für RS485. Empfohlen ist eine feste IP-Adresse für das Gateway. Das Gateway beantwortet ausserdem nur einen Modbus-Client gleichzeitig: Ist ein anderes System (Loxone, ein Modbus-Werkzeug, ein anderer Eintrag dieser Integration) verbunden, schliessen Sie es zuerst.",
+      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen.",
+      "gateway_in_use": "Ein anderer Eintrag dieser Integration nutzt dieses Gateway bereits. Das Gateway bedient nur einen Modbus-Client gleichzeitig, ein zweiter Eintrag würde deshalb keine Antworten erhalten."
     },
     "abort": {
       "already_configured": "Dieses Konto ist bereits konfiguriert.",
@@ -127,8 +128,9 @@
     },
     "error": {
       "modbus_cannot_connect": "Das Gateway ist über Modbus TCP nicht erreichbar. Adresse und Netzwerkverbindung prüfen. Details stehen im Home-Assistant-Protokoll.",
-      "modbus_no_answer": "Das Gateway ist erreichbar, beantwortet aber keine Modbus-Anfragen. Modbus ist höchstwahrscheinlich noch ausgeschaltet (ab Werk ist es aus). Am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen «Aktiv» einschalten und «Mode» auf TCP stellen (nicht RTU, das ist RS485). Die UnitID am Bedienmodul kann auf 0 bleiben, das Gateway antwortet trotzdem auf Unit-ID 1. Parität und Baudrate gelten nur für RS485. Empfohlen ist eine feste IP-Adresse für das Gateway.",
-      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen."
+      "modbus_no_answer": "Das Gateway ist erreichbar, beantwortet aber keine Modbus-Anfragen. Modbus ist höchstwahrscheinlich noch ausgeschaltet (ab Werk ist es aus). Am TopTronic-E-Bedienmodul unter Service > TTE-GW > Modbus > Einstellungen «Aktiv» einschalten und «Mode» auf TCP stellen (nicht RTU, das ist RS485). Die UnitID am Bedienmodul kann auf 0 bleiben, das Gateway antwortet trotzdem auf Unit-ID 1. Parität und Baudrate gelten nur für RS485. Empfohlen ist eine feste IP-Adresse für das Gateway. Das Gateway beantwortet ausserdem nur einen Modbus-Client gleichzeitig: Ist ein anderes System (Loxone, ein Modbus-Werkzeug, ein anderer Eintrag dieser Integration) verbunden, schliessen Sie es zuerst.",
+      "modbus_no_units": "Das Gateway hat geantwortet, aber keine HomeVent-Einheit hat reagiert. Unit-ID (in der Regel 1) und Verkabelung der Einheiten prüfen.",
+      "gateway_in_use": "Ein anderer Eintrag dieser Integration nutzt dieses Gateway bereits. Das Gateway bedient nur einen Modbus-Client gleichzeitig, ein zweiter Eintrag würde deshalb keine Antworten erhalten."
     }
   },
   "entity": {

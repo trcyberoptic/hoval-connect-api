@@ -360,9 +360,12 @@ def test_reconfigure_cloud_aborts(flow_mod):
     assert result == {"type": "abort", "reason": "reconfigure_not_supported"}
 
 
-def _options_flow(mod, data, options=None, plants=None):
+def _options_flow(mod, data, options=None, plants=None, others=()):
     flow = mod.HovalConnectOptionsFlow()
-    entry = SimpleNamespace(data=data, options=options or {})
+    entry = SimpleNamespace(entry_id="me", data=data, options=options or {})
+    flow.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(async_entries=lambda domain: [entry, *others])
+    )
     if plants is not None:
         entry.runtime_data = SimpleNamespace(
             coordinator=SimpleNamespace(
@@ -746,3 +749,140 @@ def test_german_hybrid_texts_use_swiss_orthography():
         data["config"]["error"]["modbus_cannot_connect"],
     ]
     assert not any("ß" in text for text in new if isinstance(text, str))
+
+
+# --- One Modbus client at a time (live finding 2026-11-20) ---------------------
+
+
+def _entry(entry_id, data=None, options=None):
+    return SimpleNamespace(
+        entry_id=entry_id, unique_id=None, data=data or {}, options=options or {}
+    )
+
+
+_HYBRID_OTHER = _entry("h1", {"email": "x@y.z"}, {"modbus_host": "GW.local ", "modbus_port": 502})
+_LOCAL_OTHER = _entry("l1", {"mode": "local", "host": "gw.local", "port": 502, "unit_id": 1})
+
+
+def test_local_step_rejects_gateway_used_by_a_hybrid_entry(flow_mod):
+    flow = _flow(flow_mod)
+    flow.entries = [_HYBRID_OTHER]
+    result = _run(flow.async_step_local({"host": " gw.LOCAL", "port": 502, "unit_id": 1}))
+    assert result["type"] == "form" and result["errors"] == {"base": "gateway_in_use"}
+    assert flow_mod.state.created == []
+
+
+def test_local_step_same_host_other_port_is_allowed(flow_mod):
+    flow = _flow(flow_mod)
+    flow.entries = [_HYBRID_OTHER]
+    result = _run(flow.async_step_local({"host": "gw.local", "port": 1502, "unit_id": 1}))
+    assert result["type"] == "create_entry"
+
+
+def test_hybrid_gateway_rejects_gateway_used_by_a_local_entry(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    flow.entries = [_LOCAL_OTHER]
+    result = _run(flow.async_step_hybrid_gateway(dict(_HYBRID_GATEWAY)))
+    assert result["type"] == "form" and result["errors"] == {"base": "gateway_in_use"}
+    assert flow_mod.state.created == []
+
+
+def test_hybrid_gateway_other_port_is_allowed(flow_mod, monkeypatch):
+    _hybrid_api(monkeypatch, flow_mod)
+    flow, _ = _hybrid_to_gateway(flow_mod)
+    flow.entries = [_LOCAL_OTHER]
+    result = _run(flow.async_step_hybrid_gateway({**_HYBRID_GATEWAY, "port": 1502}))
+    assert result["type"] == "create_entry"
+
+
+def test_reconfigure_rejects_gateway_used_by_a_hybrid_entry(flow_mod):
+    flow = _flow(flow_mod)
+    mine = _entry("e1", {"mode": "local", "host": "old", "port": 502, "unit_id": 1})
+    mine.unique_id = "modbus:old:502:1"
+    flow.reconfigure_entry = mine
+    flow.entries = [mine, _HYBRID_OTHER]
+    result = _run(flow.async_step_reconfigure({"host": "gw.local", "port": 502, "unit_id": 1}))
+    assert result["type"] == "form" and result["errors"] == {"base": "gateway_in_use"}
+
+
+def test_reconfigure_to_own_current_host_is_allowed(flow_mod):
+    flow = _flow(flow_mod)
+    mine = _entry("e1", {"mode": "local", "host": "gw.local", "port": 502, "unit_id": 1})
+    mine.unique_id = "modbus:gw.local:502:1"
+    flow.reconfigure_entry = mine
+    flow.entries = [mine]
+    result = _run(flow.async_step_reconfigure({"host": "gw.local", "port": 502, "unit_id": 2}))
+    assert result["reason"] == "reconfigure_successful"
+
+
+def test_cloud_options_reject_gateway_of_another_entry(flow_mod):
+    flow = _options_flow(
+        flow_mod, _CLOUD, options=dict(_STORED_GATEWAY), others=[_entry("l2", _LOCAL_OTHER.data)]
+    )
+    result = _run(
+        flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "GW.local ", "modbus_port": 503})
+    )
+    assert result["type"] == "create_entry"  # other port: allowed
+    result = _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "other"}))
+    assert result["type"] == "create_entry"
+    flow = _options_flow(
+        flow_mod,
+        _CLOUD,
+        options={**_STORED_GATEWAY, "modbus_host": "mine.local"},
+        others=[_entry("l2", _LOCAL_OTHER.data)],
+    )
+    flow_mod.state.created.clear()
+    result = _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "GW.local "}))
+    assert result["type"] == "form" and result["errors"] == {"base": "gateway_in_use"}
+    assert flow_mod.state.created == []
+
+
+def test_options_probe_frees_the_running_connection_first(flow_mod):
+    order = []
+
+    class Client:
+        async def disconnect(self):
+            order.append("disconnect")
+
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow.config_entry.runtime_data = SimpleNamespace(
+        coordinator=SimpleNamespace(modbus=SimpleNamespace(client=Client()))
+    )
+    original = flow_mod.HovalModbusClient
+
+    def probing_client(*a, **kw):
+        order.append("probe")
+        return original(*a, **kw)
+
+    flow_mod.HovalModbusClient = probing_client
+    result = _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "gw2.local"}))
+    assert result["type"] == "create_entry"
+    assert order == ["disconnect", "probe"]
+
+
+def test_options_unchanged_gateway_keeps_the_connection(flow_mod):
+    calls = []
+
+    class Client:
+        async def disconnect(self):
+            calls.append(1)
+
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow.config_entry.runtime_data = SimpleNamespace(
+        coordinator=SimpleNamespace(modbus=SimpleNamespace(client=Client()))
+    )
+    _run(flow.async_step_init({**_STORED_GATEWAY, "scan_interval": 1800}))
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", _FILES)
+def test_one_client_hint_and_gateway_in_use_are_translated(name):
+    data = _translation(name)
+    for scope in (data["config"]["error"], data["options"]["error"]):
+        assert "one Modbus client at a time" in scope["modbus_no_answer"] or (
+            "nur einen Modbus-Client gleichzeitig" in scope["modbus_no_answer"]
+        )
+        assert "Loxone" in scope["modbus_no_answer"]
+        assert scope["gateway_in_use"]
+    assert "ß" not in data["config"]["error"]["gateway_in_use"]

@@ -115,6 +115,26 @@ async def _modbus_error_key(host: str, port: int, unit_id: int) -> str | None:
     return None if units else "modbus_no_units"
 
 
+def _gateway_in_use(
+    entries: Any, host: str, port: int, *, exclude_entry_id: str | None = None
+) -> bool:
+    """True when another entry of this domain already uses this gateway.
+
+    The TTE-GW answers one Modbus client at a time, so a second entry for the
+    same host and port could never get an answer. Local entries keep the
+    gateway in `data`, cloud/hybrid entries in `options`; host compared
+    case-insensitively, port as int.
+    """
+    wanted = (host.strip().lower(), int(port))
+    for entry in entries:
+        if entry.entry_id == exclude_entry_id:
+            continue
+        settings = get_modbus_settings(entry.data, entry.options)
+        if settings is not None and (settings.host.lower(), settings.port) == wanted:
+            return True
+    return False
+
+
 def _hybrid_gateway_schema(
     plants: dict[str, str], user_input: dict[str, Any] | None = None
 ) -> vol.Schema:
@@ -275,6 +295,8 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             unit_id = int(user_input[CONF_UNIT_ID])
             if not host:
                 error: str | None = "modbus_cannot_connect"
+            elif _gateway_in_use(self._async_current_entries(), host, port):
+                error = "gateway_in_use"
             else:
                 error = await _modbus_error_key(host, port, unit_id)
             if error is None:
@@ -317,7 +339,10 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(_local_unique_id(host, port, unit_id))
                 self._abort_if_unique_id_configured()
-                error = await _modbus_error_key(host, port, unit_id)
+                if _gateway_in_use(self._async_current_entries(), host, port):
+                    error = "gateway_in_use"
+                else:
+                    error = await _modbus_error_key(host, port, unit_id)
                 if error is None:
                     return self.async_create_entry(
                         title=f"Hoval {host}",
@@ -363,6 +388,10 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 for other in self._async_current_entries()
             ):
                 return self.async_abort(reason="already_configured")
+            elif _gateway_in_use(
+                self._async_current_entries(), host, port, exclude_entry_id=entry.entry_id
+            ):
+                errors["base"] = "gateway_in_use"
             else:
                 error = await _modbus_error_key(host, port, unit_id)
                 if error is None:
@@ -457,6 +486,25 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
         except (AttributeError, TypeError):
             return {}
 
+    async def _async_release_gateway(self) -> None:
+        """Drop the running entry's Modbus connection before the probe.
+
+        The gateway answers one client at a time: with the coordinator holding
+        its persistent connection the probe would connect but get no answer.
+        The client stays usable (next poll reconnects) and a successful save
+        reloads the entry anyway. Small remaining race: a poll may reconnect
+        during the ~4 s probe; the probe can then still time out, which the
+        `modbus_no_answer` text covers.
+        """
+        try:
+            client = self.config_entry.runtime_data.coordinator.modbus.client
+        except AttributeError:
+            return  # entry not loaded, or without Modbus
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - never block saving options on this
+            _LOGGER.debug("Could not release the Modbus connection before probing", exc_info=True)
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if is_local_entry(self.config_entry.data):
@@ -514,7 +562,16 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
                 {}, self.config_entry.options
             ):
                 return self.async_create_entry(title="", data=data)
-            error = await _modbus_error_key(host, port, unit_id)
+            if _gateway_in_use(
+                self.hass.config_entries.async_entries(DOMAIN),
+                host,
+                port,
+                exclude_entry_id=self.config_entry.entry_id,
+            ):
+                error = "gateway_in_use"
+            else:
+                await self._async_release_gateway()
+                error = await _modbus_error_key(host, port, unit_id)
             if error is None:
                 return self.async_create_entry(title="", data=data)
             errors["base"] = error

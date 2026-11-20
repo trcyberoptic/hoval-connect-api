@@ -370,3 +370,22 @@ async def test_connect_timeout_is_not_flagged_as_no_answer(monkeypatch):
     with pytest.raises(modbus.HovalModbusError) as err:
         await client.read_holding(1, 1)
     assert err.value.no_answer is False
+
+
+async def test_disconnect_drops_the_socket_but_the_client_stays_usable():
+    """The options flow frees the gateway's single client slot before probing."""
+
+    def script(_srv, _conn, req):
+        return _read_response(req[0], BLOCK)
+
+    async with FakeServer(script) as server:
+        client = _client(server)
+        try:
+            assert await client.read_holding(23622, 13) == BLOCK
+            assert server.connections == 1
+            await client.disconnect()
+            assert client._writer is None and not client._closed
+            assert await client.read_holding(23622, 13) == BLOCK  # lazy reconnect
+            assert server.connections == 2
+        finally:
+            await client.close()
