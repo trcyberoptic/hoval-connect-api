@@ -45,6 +45,11 @@ class _FakePoller:
         self.poll_error = None
         self.discover_errors = []
         self.writes = []
+        self.gateway_clock = None
+        self.invalidated = []
+
+    def invalidate_slow(self, unit_id):
+        self.invalidated.append(unit_id)
 
     async def discover(self, candidates=None):
         self.discover_calls += 1
@@ -873,3 +878,103 @@ def test_seeded_topology_starts_hybrid_with_cloud_down_and_is_stored_later(runti
     _tick(coordinator)
     stored = hass.config_entries.updates[-1][runtime.const.DATA_TOPOLOGY]
     assert (stored["plant_id"], list(stored["circuits"])) == ("P_1", [_HV])
+
+
+# --- Gateway clock sensor data and the acknowledge follow-up --------------------
+
+_MAINT = [1, 0, 52, 0, 2, 0, 255, 0, 0, 0, 1, 0, 14]  # 52-week interval, 2 weeks left
+
+
+def _maint_reading(runtime, weeks):
+    maint = list(_MAINT)
+    maint[3], maint[4] = (weeks >> 16) & 0xFFFF, weeks & 0xFFFF
+    return runtime.modbus_hv.decode_hv(LIVE_BLOCK, maint, None)
+
+
+def _clock(runtime, seconds=1795135617, read_at=1795132008):
+    from datetime import UTC, datetime
+
+    return runtime.modbus_hv.GatewayClockRead(seconds, datetime.fromtimestamp(read_at, UTC))
+
+
+def test_local_plant_carries_the_gateway_clock_offset(runtime):
+    poller = _FakePoller(runtime)
+    poller.gateway_clock = _clock(runtime)
+    plant = _update(_local(runtime, poller)).plants["local_E1"]
+    assert plant.gateway_clock_offset == 9
+    assert plant.gateway_time.isoformat().endswith("+01:00")
+
+
+def test_local_plant_without_clock_has_no_offset(runtime):
+    plant = _update(_local(runtime, _FakePoller(runtime))).plants["local_E1"]
+    assert plant.gateway_clock_offset is None and plant.gateway_time is None
+
+
+def test_hybrid_plant_carries_clock_and_drops_it_when_modbus_fails(runtime):
+    coordinator, _api, poller, _ = _hybrid(runtime)
+    poller.gateway_clock = _clock(runtime)
+    assert _tick(coordinator).plants["P1"].gateway_clock_offset == 9
+    poller.poll_error = runtime.modbus.HovalModbusError("down")
+    assert _tick(coordinator).plants["P1"].gateway_clock_offset is None
+
+
+def _ack_setup(runtime, weeks_before=2):
+    poller = _FakePoller(runtime, reading=_maint_reading(runtime, weeks_before))
+    coordinator = _local(runtime, poller)
+    coordinator.data = _update(coordinator)
+    return coordinator, poller
+
+
+def _ack(coordinator, value):
+    asyncio.run(coordinator.async_hv_write("local_E1", "520.50.0", "acknowledge", value))
+
+
+def _finish(runtime, coordinator, poller, weeks):
+    poller.reading = _maint_reading(runtime, weeks)
+    coordinator.data = _update(coordinator)
+    coordinator._async_refresh_finished()
+
+
+def test_acknowledge_maintenance_reports_the_reset(runtime, caplog):
+    coordinator, poller = _ack_setup(runtime)
+    with caplog.at_level(logging.INFO):
+        _ack(coordinator, 7)
+        assert poller.invalidated == [520]  # forced slow re-read, once
+        _finish(runtime, coordinator, poller, 52)
+    assert poller.writes == [(520, "acknowledge", 7)]
+    messages = [
+        r for r in caplog.records if "maintenance counter reset from 2 to 52" in r.getMessage()
+    ]
+    assert messages and messages[0].levelno == logging.INFO
+    assert not _records(caplog, logging.WARNING, "maintenance counter")
+    # Checked once: a later refresh logs nothing more.
+    caplog.clear()
+    _finish(runtime, coordinator, poller, 51)
+    assert not [r for r in caplog.records if "maintenance counter" in r.getMessage()]
+
+
+def test_acknowledge_maintenance_unchanged_warns_without_raising(runtime, caplog):
+    coordinator, poller = _ack_setup(runtime)
+    with caplog.at_level(logging.INFO):
+        _ack(coordinator, 7)
+        _finish(runtime, coordinator, poller, 2)
+    warnings = _records(caplog, logging.WARNING, "did not change (2 weeks)")
+    assert len(warnings) == 1
+    assert "echoes writes it does not apply" in warnings[0].getMessage()
+
+
+def test_acknowledge_filter_cleaning_cannot_be_verified(runtime, caplog):
+    coordinator, poller = _ack_setup(runtime)
+    with caplog.at_level(logging.INFO):
+        _ack(coordinator, 8)
+        _finish(runtime, coordinator, poller, 2)
+    assert poller.invalidated == [520]
+    infos = [r for r in caplog.records if "cannot be verified" in r.getMessage()]
+    assert len(infos) == 1 and infos[0].levelno == logging.INFO
+    assert not _records(caplog, logging.WARNING, "maintenance counter")
+
+
+def test_other_writes_do_not_force_a_slow_re_read(runtime):
+    coordinator, poller = _ack_setup(runtime)
+    asyncio.run(coordinator.async_hv_write("local_E1", "520.50.0", "eco_modulation", 55))
+    assert poller.invalidated == []

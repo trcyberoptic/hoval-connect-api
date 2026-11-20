@@ -226,6 +226,9 @@
       "weather_temperature": {
         "name": "Vorhergesagte Temperatur"
       },
+      "gateway_clock_offset": {
+        "name": "Gateway-Uhr Abweichung"
+      },
       "flow_temp_actual": {
         "name": "Vorlauftemperatur Ist"
       },

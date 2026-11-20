@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, tzinfo
 
 from .modbus import HovalModbusClient, HovalModbusError
 
@@ -16,6 +17,11 @@ HV_BLOCK_LEN = 13
 HV_MAINTENANCE_LEN = 13
 HV_ERROR_ENTRY_LEN = 9
 HV_ERROR_ENTRIES = 5
+
+# Datapoint 20 "Unixzeit" of the gateway itself (unit GW 1153, FG 0, FN 1): U32 in
+# two registers, high word first. Not per HV unit, so a fixed address.
+GATEWAY_CLOCK_ADDRESS = 19802
+GATEWAY_CLOCK_LEN = 2
 
 _U16_NONE = 0xFFFF
 _U8_NONE = 255
@@ -156,6 +162,35 @@ def decode_hv(
     )
 
 
+@dataclass(frozen=True)
+class GatewayClockRead:
+    """Raw gateway clock value with the (UTC) moment it was read."""
+
+    seconds: int
+    read_at: datetime
+
+
+def decode_gateway_clock(
+    seconds: int | None, read_at: datetime, tz: tzinfo
+) -> tuple[int, datetime] | None:
+    """Return (offset in whole seconds, gateway time) of a raw clock value.
+
+    The gateway sends its LOCAL wall-clock time as seconds since 1970, as if it
+    were UTC (measured: +3600 s in CET). `tz` is the zone the gateway runs in,
+    taken to be Home Assistant's. Offset = gateway time - `read_at` (aware).
+
+    At the autumn DST change a wall-clock time occurs twice and in spring one
+    does not exist; `replace(tzinfo=...)` picks the first occurrence / the
+    pre-transition offset, so the offset can be off by an hour for that one
+    hour. Accepted: it never raises.
+    """
+    if seconds is None:
+        return None
+    local = datetime(1970, 1, 1) + timedelta(seconds=seconds)
+    gateway_time = local.replace(tzinfo=tz)
+    return round((gateway_time - read_at).total_seconds()), gateway_time
+
+
 # name -> (block, offset, allowed values). A LIST datapoint's "Min. value" in
 # Hoval's list is a bitmask of valid values; that is where the program set
 # {0,1,2,4,5} and the acknowledge set {7,8} come from. The acknowledge register
@@ -189,6 +224,9 @@ class HovalModbusPoller:
         self._slow_ttl = slow_ttl
         # unit -> (monotonic time of last slow read, maintenance words, error entries)
         self._slow: dict[int, tuple[float, list[int] | None, list[list[int] | None]]] = {}
+        # Gateway clock, read on the slow cadence; None = unknown / not fitted.
+        self.gateway_clock: GatewayClockRead | None = None
+        self._clock_read_at: float | None = None
 
     async def discover(self, candidates: Iterable[int] = HV_UNIT_IDS) -> list[int]:
         """Return the units whose block answers.
@@ -227,7 +265,33 @@ class HovalModbusPoller:
                 cached = (now, maintenance, errors)
                 self._slow[unit_id] = cached
             result[unit_id] = decode_hv(block, cached[1], cached[2])
+        await self._poll_clock()
         return result
+
+    async def _poll_clock(self) -> None:
+        """Read the gateway clock (once per gateway) when the slow TTL has passed.
+
+        A failed read leaves the value unknown and never fails the poll: a
+        gateway without the datapoint answers exception 2 (read as None), a busy
+        one is retried on the next tick.
+        """
+        now = time.monotonic()
+        if self._clock_read_at is not None and now - self._clock_read_at < self._slow_ttl:
+            return
+        try:
+            words = await self.client.read_holding(GATEWAY_CLOCK_ADDRESS, GATEWAY_CLOCK_LEN)
+        except HovalModbusError:
+            self.gateway_clock = None
+            return
+        self._clock_read_at = now
+        seconds = _u32(words[0], words[1]) if words is not None and len(words) >= 2 else None
+        self.gateway_clock = (
+            None if seconds is None else GatewayClockRead(seconds, datetime.now(UTC))
+        )
+
+    def invalidate_slow(self, unit_id: int) -> None:
+        """Make the next poll re-read the unit's maintenance block and errors."""
+        self._slow.pop(unit_id, None)
 
     async def write(self, unit_id: int, name: str, value: int) -> None:
         """Validate, write, and (except acknowledge) verify by reading back."""

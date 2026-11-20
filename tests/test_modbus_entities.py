@@ -105,7 +105,7 @@ def ent(runtime, monkeypatch):  # noqa: F811 - imported pytest fixture
     const.UnitOfEnergy = SimpleNamespace(MEGA_WATT_HOUR="MWh")
     const.UnitOfPower = SimpleNamespace(KILO_WATT="kW")
     const.UnitOfTemperature = SimpleNamespace(CELSIUS="C")
-    const.UnitOfTime = SimpleNamespace(HOURS="h", WEEKS="w")
+    const.UnitOfTime = SimpleNamespace(HOURS="h", WEEKS="w", SECONDS="s")
     mods["homeassistant.helpers.entity_platform"].AddEntitiesCallback = object
     sys.modules["homeassistant.helpers"].entity_registry = mods[
         "homeassistant.helpers.entity_registry"
@@ -655,3 +655,71 @@ def test_strings_json_matches_english_for_revived_sensors():
     source = _translations("strings.json")["entity"]["sensor"]
     for key in _V1_0_18_NAMES["translations/en.json"]:
         assert source[key] == english[key], key
+
+
+# --- Gateway clock offset (plant-level, Modbus-backed diagnostic sensor) ----------
+
+
+def _with_clock(coordinator, offset=9):
+    from datetime import datetime, timedelta, timezone
+
+    plant = coordinator.data.plants["P1"]
+    plant.gateway_clock_offset = offset
+    plant.gateway_time = datetime(2026, 11, 20, 0, 46, 57, tzinfo=timezone(timedelta(hours=1)))
+
+
+def _clock_sensor(ent, coordinator):
+    description = next(
+        d for d in ent.sensor.PLANT_SENSOR_DESCRIPTIONS if d.key == "gateway_clock_offset"
+    )
+    return ent.sensor.HovalPlantSensor(
+        coordinator, "P1", coordinator.data.plants["P1"], description
+    )
+
+
+def test_gateway_clock_sensor_description(ent):
+    description = next(
+        d for d in ent.sensor.PLANT_SENSOR_DESCRIPTIONS if d.key == "gateway_clock_offset"
+    )
+    assert description.translation_key == "gateway_clock_offset"
+    assert description.native_unit_of_measurement == "s"
+    assert description.state_class == "measurement"
+    assert description.entity_category == "diagnostic"
+    assert description.icon == "mdi:clock-alert-outline"
+
+
+def test_gateway_clock_sensor_value_and_attribute(ent):
+    coordinator, _ = _setup(ent.runtime, reading=_reading(ent.runtime))
+    _with_clock(coordinator)
+    sensor = _clock_sensor(ent, coordinator)
+    assert sensor._attr_unique_id == "P1_gateway_clock_offset"
+    assert sensor.native_value == 9
+    assert sensor.extra_state_attributes == {"gateway_time": "2026-11-20T00:46:57+01:00"}
+    assert sensor.available is True
+
+
+def test_gateway_clock_sensor_available_while_cloud_down(ent):
+    coordinator, _ = _setup(ent.runtime, cloud_ok=False, reading=_reading(ent.runtime))
+    _with_clock(coordinator)
+    assert _clock_sensor(ent, coordinator).available is True
+
+
+def test_gateway_clock_sensor_unavailable_without_value(ent):
+    coordinator, _ = _setup(ent.runtime, reading=_reading(ent.runtime))
+    assert _clock_sensor(ent, coordinator).available is False
+
+
+def test_gateway_clock_sensor_created_only_with_a_value(ent):
+    coordinator, _ = _setup(ent.runtime, reading=_reading(ent.runtime))
+    assert "P1_gateway_clock_offset" not in _created_keys(ent, coordinator)
+    _with_clock(coordinator)
+    assert "P1_gateway_clock_offset" in _created_keys(ent, coordinator)
+
+
+def test_gateway_clock_sensor_in_local_entry_but_not_without_modbus(ent):
+    coordinator, _ = _setup(ent.runtime, cloud_ok=False, reading=_reading(ent.runtime), local=True)
+    _with_clock(coordinator)
+    assert "P1_gateway_clock_offset" in _created_keys(ent, coordinator)
+    cloud_only, _ = _setup(ent.runtime)
+    _with_clock(cloud_only)
+    assert "P1_gateway_clock_offset" not in _created_keys(ent, cloud_only)
