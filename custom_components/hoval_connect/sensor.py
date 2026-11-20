@@ -39,17 +39,35 @@ from .const import (
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
     DOMAIN,
+    MODBUS_BACKED_KEYS,
     ROOM_AIR_QUALITIES,
     is_retired_circuit_sensor,
 )
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator, HovalPlantData
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    HovalPlantData,
+    circuit_value_available,
+)
+from .modbus_hv import HV_CONTROL_STATES, HvModbusReading
+
+
+def _no_cloud_value(_circuit: HovalCircuitData) -> None:
+    """Default value_fn of sensors that only exist with a Modbus reading."""
+    return None
 
 
 @dataclass(frozen=True, kw_only=True)
 class HovalSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval sensor entity."""
 
-    value_fn: Callable[[HovalCircuitData], Any | None]
+    value_fn: Callable[[HovalCircuitData], Any | None] = _no_cloud_value
+    # Value read from the circuit's Modbus reading (keys in MODBUS_BACKED_KEYS
+    # that have no cloud counterpart); wins over value_fn when set.
+    modbus_value_fn: Callable[[HvModbusReading], Any | None] | None = None
+    # Extra state attributes, computed from the Modbus reading.
+    modbus_attributes_fn: Callable[[HvModbusReading], dict[str, Any]] | None = None
     circuit_types: frozenset[str] | None = None
     # Create the entity only for circuits this returns True for (e.g. units
     # with an air-quality sensor). Already registered entities are kept.
@@ -61,6 +79,11 @@ class HovalPlantSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval plant-level sensor entity."""
 
     value_fn: Callable[[HovalPlantData], Any | None]
+    # Value comes from the Modbus gateway: no cloud needed, created only once a
+    # value was read (an already registered entity is kept), available while
+    # Modbus delivers it.
+    modbus_backed: bool = False
+    attributes_fn: Callable[[HovalPlantData], dict[str, Any]] | None = None
 
 
 def _coerce_timestamp(value: Any) -> datetime | None:
@@ -78,6 +101,21 @@ def _coerce_timestamp(value: Any) -> datetime | None:
     if dt_value.tzinfo is None:
         return dt_util.as_utc(dt_value)
     return dt_value
+
+
+def _has_modbus(circuit: HovalCircuitData) -> bool:
+    return circuit.modbus is not None
+
+
+# Modbus program (Betriebswahl) -> the state keys hv_operating_selection had
+# in v1.0.18. "ecoMode" is not a valid state key (hassfest: lowercase only).
+HV_OPERATING_SELECTIONS: dict[str, str] = {
+    "standby": "standby",
+    "week1": "week1",
+    "week2": "week2",
+    "constant": "constant",
+    "ecoMode": "eco",
+}
 
 
 CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
@@ -184,6 +222,126 @@ CIRCUIT_SENSOR_DESCRIPTIONS: tuple[HovalSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         circuit_types=frozenset({CIRCUIT_TYPE_HV}),
         value_fn=lambda c: c.eco_mode_value,
+    ),
+    # Sensors that only exist with a Modbus reading. The first six were retired
+    # in v1.1.0 (the cloud lost them) and come back under their old keys. Their
+    # translation keys, names, units, device and state classes, categories,
+    # icons and enum state keys are exactly those of v1.0.18, so entity ids
+    # and long-term statistics continue (HA < 2025.7 does not restore a
+    # deleted entity id by name).
+    HovalSensorEntityDescription(
+        key="hv_control_state",
+        translation_key="hv_control_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(HV_CONTROL_STATES),
+        icon="mdi:state-machine",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: r.control_state,
+    ),
+    HovalSensorEntityDescription(
+        key="hv_operating_selection",
+        translation_key="hv_operating_selection",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(HV_OPERATING_SELECTIONS.values()),
+        icon="mdi:tune-variant",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: HV_OPERATING_SELECTIONS.get(r.program),
+    ),
+    HovalSensorEntityDescription(
+        key="hv_air_quality_control",
+        translation_key="hv_air_quality_control",
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        # Hoval documents this as a list but ships no labels for it, so the raw
+        # code is shown rather than an invented mapping.
+        modbus_value_fn=lambda r: r.air_quality_control,
+    ),
+    # Datapoint 37606 is a U8 percentage (0..100), not ppm.
+    HovalSensorEntityDescription(
+        key="hv_co2_extract",
+        translation_key="hv_co2_extract",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:molecule-co2",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=lambda c: _has_modbus(c) and c.modbus.co2_extract is not None,
+        modbus_value_fn=lambda r: r.co2_extract,
+    ),
+    HovalSensorEntityDescription(
+        key="hv_voc_extract",
+        translation_key="hv_voc_extract",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:air-filter",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=lambda c: _has_modbus(c) and c.modbus.voc_extract is not None,
+        modbus_value_fn=lambda r: r.voc_extract,
+    ),
+    HovalSensorEntityDescription(
+        key="hv_voc_outside",
+        translation_key="hv_voc_outside",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:weather-windy",
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=lambda c: _has_modbus(c) and c.modbus.voc_outside is not None,
+        modbus_value_fn=lambda r: r.voc_outside,
+    ),
+    HovalSensorEntityDescription(
+        key="hv_exhaust_fan_target",
+        translation_key="hv_exhaust_fan_target",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:fan-chevron-up",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: r.exhaust_fan_target,
+    ),
+    HovalSensorEntityDescription(
+        key="hv_maintenance_weeks_remaining",
+        translation_key="hv_maintenance_weeks_remaining",
+        native_unit_of_measurement=UnitOfTime.WEEKS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:wrench-clock",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: r.maintenance_weeks_remaining,
+        modbus_attributes_fn=lambda r: {
+            "enabled": r.maintenance_enabled,
+            "interval_weeks": r.maintenance_interval_weeks,
+        },
+    ),
+    HovalSensorEntityDescription(
+        key="hv_filter_cleaning_interval",
+        translation_key="hv_filter_cleaning_interval",
+        native_unit_of_measurement=UnitOfTime.WEEKS,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: r.filter_cleaning_interval_weeks,
+        modbus_attributes_fn=lambda r: {"enabled": r.filter_cleaning_enabled},
+    ),
+    # First active error code; 0 = none, None = errors not read yet.
+    HovalSensorEntityDescription(
+        key="hv_active_error",
+        translation_key="hv_active_error",
+        icon="mdi:alert-circle-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        circuit_types=frozenset({CIRCUIT_TYPE_HV}),
+        exists_fn=_has_modbus,
+        modbus_value_fn=lambda r: (
+            None if r.active_errors is None else (r.active_errors[0] if r.active_errors else 0)
+        ),
+        modbus_attributes_fn=lambda r: {"active_errors": list(r.active_errors or ())},
     ),
     HovalSensorEntityDescription(
         key="temporary_change_end",
@@ -506,11 +664,32 @@ PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda p: p.weather.outside_temperature if p.weather else None,
     ),
+    # Plant-level, from the gateway's own clock (datapoint 20, registers 19802/19803).
+    HovalPlantSensorEntityDescription(
+        key="gateway_clock_offset",
+        translation_key="gateway_clock_offset",
+        icon="mdi:clock-alert-outline",
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        modbus_backed=True,
+        value_fn=lambda p: p.gateway_clock_offset,
+        attributes_fn=lambda p: {
+            "gateway_time": p.gateway_time.isoformat() if p.gateway_time else None
+        },
+    ),
 )
 
 
-def _remove_retired_sensors(ent_reg: er.EntityRegistry, entry_id: str) -> None:
+def _is_modbus_backed(unique_id: str) -> bool:
+    return any(unique_id.endswith(f"_{key}") for key in MODBUS_BACKED_KEYS)
+
+
+def _remove_retired_sensors(ent_reg: er.EntityRegistry, entry_id: str, keep_hv: bool) -> None:
     """Delete registry entries of sensors whose data source is gone.
+
+    With `keep_hv` (the entry has Modbus) the retired HV keys that Modbus
+    serves again keep their entry, so their history continues.
 
     Without this, every retired sensor would stay in the UI as "unavailable"
     forever, because nothing creates its entity again.
@@ -520,6 +699,7 @@ def _remove_retired_sensors(ent_reg: er.EntityRegistry, entry_id: str) -> None:
             entity.domain == "sensor"
             and entity.platform == DOMAIN
             and is_retired_circuit_sensor(entity.unique_id)
+            and not (keep_hv and _is_modbus_backed(entity.unique_id))
         ):
             ent_reg.async_remove(entity.entity_id)
 
@@ -534,7 +714,7 @@ async def async_setup_entry(
     known: set[str] = set()
 
     ent_reg = er.async_get(hass)
-    _remove_retired_sensors(ent_reg, entry.entry_id)
+    _remove_retired_sensors(ent_reg, entry.entry_id, coordinator.has_modbus)
 
     def _add_new() -> None:
         entities: list[SensorEntity] = []
@@ -542,6 +722,9 @@ async def async_setup_entry(
             # Circuit-level sensors
             for path, circuit in plant_data.circuits.items():
                 for description in CIRCUIT_SENSOR_DESCRIPTIONS:
+                    # A local entry has no cloud: only Modbus-backed keys can ever hold a value.
+                    if coordinator.is_local and description.key not in MODBUS_BACKED_KEYS:
+                        continue
                     uid = f"{plant_id}_{path}_{description.key}"
                     # Grandfather entities that already exist in the registry: when a
                     # circuit_types filter is newly added/tightened (e.g.
@@ -567,9 +750,21 @@ async def async_setup_entry(
                         HovalCircuitSensor(coordinator, plant_id, path, circuit, description)
                     )
 
-            # Plant-level sensors
+            # Plant-level sensors (events and weather come from the cloud only,
+            # the gateway clock from Modbus)
             for description in PLANT_SENSOR_DESCRIPTIONS:
+                if description.modbus_backed:
+                    if not coordinator.has_modbus:
+                        continue
+                elif coordinator.is_local:
+                    continue
                 uid = f"{plant_id}_{description.key}"
+                if (
+                    description.modbus_backed
+                    and description.value_fn(plant_data) is None
+                    and ent_reg.async_get_entity_id("sensor", DOMAIN, uid) is None
+                ):
+                    continue
                 if uid in known:
                     continue
                 known.add(uid)
@@ -619,8 +814,23 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return super().available and self._circuit is not None
+        """Return if entity is available.
+
+        Modbus-backed keys follow the Modbus reading, everything else needs
+        cloud data for this circuit (see `circuit_value_available`).
+        """
+        return super().available and circuit_value_available(
+            self.coordinator.data, self._circuit, self.entity_description.key
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Attributes of the Modbus-only sensors."""
+        circuit = self._circuit
+        fn = self.entity_description.modbus_attributes_fn
+        if fn is None or circuit is None or circuit.modbus is None:
+            return None
+        return fn(circuit.modbus)
 
     @property
     def native_value(self) -> datetime | float | str | None:
@@ -628,7 +838,11 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         circuit = self._circuit
         if circuit is None:
             return None
-        val = self.entity_description.value_fn(circuit)
+        modbus_fn = self.entity_description.modbus_value_fn
+        if modbus_fn is not None:
+            val = modbus_fn(circuit.modbus) if circuit.modbus is not None else None
+        else:
+            val = self.entity_description.value_fn(circuit)
         if val is None:
             return None
         # Must precede the unit-less string branch: HA requires a tz-aware
@@ -642,6 +856,9 @@ class HovalCircuitSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
         is_counter = self.entity_description.state_class == SensorStateClass.TOTAL_INCREASING
         # String sensors (program names, operation mode) return as-is
         if self.entity_description.native_unit_of_measurement is None and not is_counter:
+            # Modbus integers without a unit (error code, air quality control).
+            if isinstance(val, int) and not isinstance(val, bool):
+                return val
             return str(val)
         try:
             num = float(val)
@@ -682,8 +899,20 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return super().available and self._plant is not None
+        """Return if entity is available (events and weather need the cloud)."""
+        plant = self._plant
+        if not super().available or plant is None:
+            return False
+        if self.entity_description.modbus_backed:
+            return self.entity_description.value_fn(plant) is not None
+        return self.coordinator.data.cloud_ok
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the extra attributes of a Modbus-backed sensor."""
+        fn = self.entity_description.attributes_fn
+        plant = self._plant
+        return None if fn is None or plant is None else fn(plant)
 
     @property
     def native_value(self) -> datetime | float | str | None:

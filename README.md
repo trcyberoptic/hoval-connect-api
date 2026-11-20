@@ -4,6 +4,8 @@ Reverse-engineered API documentation for the **Hoval Connect** IoT platform (use
 
 > ⚠️ **Unofficial.** Not affiliated with Hoval. Use at your own risk. API may change without notice.
 
+What changed in each release: see the [changelog](CHANGELOG.md).
+
 > **Successor to [Hoval-GatewayV2-CANBUS-MQTT](https://github.com/trcyberoptic/Hoval-GatewayV2-CANBUS-MQTT).** This cloud-based integration requires no additional hardware — just your Hoval Connect credentials. The previous project used CAN bus + MQTT via a physical gateway connection.
 
 ## Home Assistant Integration
@@ -32,6 +34,11 @@ Plants and circuits are discovered automatically from your account.
 > data hourly and no longer reads raw controller datapoints. Hoval agreed to allow it and
 > recognises it by the version in its User-Agent (`hoval-connect-api/1.1.0`). Until Hoval
 > has done so, v1.1.0 gets the same 403. [#24][issue-24] shows the current status.
+>
+> **2.0.0** adds the [local Modbus TCP mode](#local-modbus-tcp) and identifies itself as
+> `hoval-connect-api/2.0.0`. Like 1.1.0 before it, it works against the cloud only once Hoval
+> has admitted that version ([#24][issue-24] shows the status). Until then, and whenever the
+> cloud is blocked, the local Modbus mode keeps the ventilation working without the cloud.
 >
 > Update in HACS, then **restart Home Assistant completely**: a config-entry reload does not
 > re-import Python modules. Do not change the User-Agent yourself. Hoval allows the
@@ -172,6 +179,118 @@ the office sensor to exclude, the two helpers, and your notify service. The
 thresholds default to 23 °C / 21 °C / 25 °C / 25.5 °C / 15 min / 90 %; adjust
 to taste.
 
+### Local Modbus TCP
+
+Hoval's cloud allows one request per 15 minutes at most, and in November 2026 it blocked this
+integration outright ([#24][issue-24]). The Hoval gateway (TTE-GW, "Gateway v2") can also be read
+directly in your own network over **Modbus TCP**. That is fast (default every 30 seconds), needs no
+Hoval account and keeps working when the cloud is down or blocked. The integration can use it in two ways:
+
+- **Hybrid:** you keep your cloud entry and add the gateway in its options, or you set up a new
+  entry with **Cloud account + local Modbus (hybrid)**. Live values, program and
+  setpoints of the ventilation unit then come from the gateway; the cloud still supplies what only it
+  has, at the configured cloud interval (at least 15 minutes).
+- **Local only:** no account at all. You add the gateway as its own entry.
+
+When you add the integration, the menu offers three options: **Hoval Connect cloud account** (cloud only,
+as before), **Cloud account + local Modbus (hybrid)** and **Local gateway (Modbus TCP, no account)**. The last
+two need Modbus switched on at the gateway, see step 1.
+
+Scope: **HomeVent (HV) units only.** Heating, hot-water, solar and other circuits stay cloud-only.
+
+#### 1. Switch Modbus on at the TopTronic E panel
+
+**Modbus is off by default.** On the controller panel open **Service > TTE-GW > Modbus > Einstellungen**
+(the panel's menu is in German), switch **Aktiv** on and set **Mode = TCP** (not RTU, which is RS485).
+Parity and baud rate only matter for RS485. Hoval recommends a fixed IP address for Modbus TCP (DHCP set to
+"No" in Service > TTE-GW > General), and so do we: the integration finds the gateway by that address.
+The gateway must be reachable from Home Assistant on port 502. The panel may show UnitID 0, but the gateway
+has been seen to answer on **unit id 1**, so enter 1 first. If setup reports that no unit answered, try the
+unit id shown on the panel.
+
+If setup says the gateway is reachable but does not answer Modbus requests, Modbus is most likely still
+switched off: the gateway accepts the connection on port 502 either way and only stays silent when Modbus is
+off. "Could not reach the gateway" means the address or the network is wrong instead.
+
+**The gateway answers only one Modbus client at a time (measured).** While Home Assistant holds its
+connection, a second client (Loxone, a Modbus tool, a second Home Assistant) connects but gets no answer, which
+looks exactly like "Modbus switched off". Other tools cannot poll the gateway in parallel; close them before
+setting up here. For the same reason a second entry for a gateway that another Hoval Connect entry already uses
+is refused ("gateway already in use"). When you change the gateway address in the options, the integration
+briefly releases its own connection so the check can reach the gateway.
+
+#### 2. Add the gateway
+
+- **Hybrid, new entry:** **Add Integration > Hoval Connect > Cloud account + local Modbus (hybrid)**.
+  Step 1 asks for your Hoval account, step 2 for the gateway (host, port 502, unit id 1, Modbus polling
+  interval, and the plant if your account has several). The result is the same as the next point: a cloud
+  entry whose options hold the gateway.
+- **Hybrid, existing entry:** **Settings > Devices & services > Hoval Connect > Configure**, then fill in *Modbus gateway
+  host* (IP address or name of the gateway), port (502), unit id (1) and the *Modbus polling interval*
+  (10, 30, 60 or 120 seconds, default 30). If your account has several plants, pick the one the
+  gateway belongs to. An empty host means cloud only, exactly as before. Existing entities keep their
+  entity IDs, history and long-term statistics. Saving checks a new or changed gateway address;
+  saving other options leaves the gateway alone.
+- **Local only:** **Add Integration > Hoval Connect > Local gateway (Modbus TCP, no account)** and enter
+  host, port and unit id. The integration finds the HV units itself. This creates new entities (it is
+  not a drop-in for an existing cloud entry). **Reconfigure** changes the gateway's address later.
+
+#### What each mode provides
+
+| | Hybrid | Local only |
+|---|---|---|
+| Live values: air volume, humidity, target humidity, exhaust and outside temperature | Modbus, every poll | Modbus, every poll |
+| Control status, operating selection, air-quality control, CO₂/VOC (the sensors removed in v1.1.0, **back under their old entity IDs**; CO₂/VOC only where a sensor is fitted) | Modbus | Modbus |
+| Exhaust fan target, weeks until maintenance, filter-cleaning interval, active error code | Modbus | Modbus |
+| *Gateway clock offset* (diagnostic, plant level): how many seconds the gateway's clock differs from Home Assistant's, with the gateway time as attribute. Read every 5 minutes; only created if the gateway has the datapoint | Modbus | Modbus |
+| Program select, fan on/off | written over Modbus | written over Modbus |
+| Number entities: constant and eco modulation (15–100 %), target humidity (30–65 %) | Modbus | Modbus |
+| Buttons: acknowledge maintenance, acknowledge filter cleaning | Modbus | Modbus |
+| Week/day names, program air volume, temporary change with end time, holiday, room air quality | cloud | not available |
+| Weather, forecast, plant events | cloud | not available |
+| *Online* and *Error* of the plant | cloud (unavailable while the cloud is down) | *Online* on while the gateway answers / *Error* on while an error entry is active |
+| `hoval_connect.reset_temporary_change` | works | raises an error (there is no cloud temporary change) |
+
+If the gateway stops answering, the Modbus-backed entities become unavailable, and so do the fan and
+the program select of that unit. They do not fall back to the cloud's live values. In a local-only
+entry this means every entity: *Online* does not turn *off*, it becomes unavailable like the rest.
+
+#### Fan percentage: hybrid and local differ
+
+- **Hybrid:** the slider sets a **temporary change in the cloud**, as before. The time program stays
+  active and the change ends by itself; the summer-boost blueprint keeps working. If the cloud call
+  fails, you get the error. Nothing is written locally instead.
+- **Local only:** there is no temporary change. The slider writes the *constant program* setpoint and
+  switches the program to **constant**. This is persistent and visible in the program select until
+  you pick another program. The unit then modulates normally around that setpoint.
+
+#### Acknowledge buttons
+
+*Acknowledge maintenance* and *Acknowledge filter cleaning* write 7 or 8 to Hoval's datapoint 21054 of the unit,
+as Hoval's own comment for that register describes. Hoval's datapoint list marks the register
+**read-only** in the same row, and **the gateway confirms even writes it ignores**: it echoed a write
+to its own (read-only) clock correctly and did nothing. A confirmed button press therefore proves
+nothing. Press a button only when the panel shows the matching message, then **check the *Weeks until
+maintenance* sensor**: the integration re-reads the unit's maintenance values right after the press
+and writes the comparison to the Home Assistant log (counter reset from X to Y weeks, or a warning
+that the counter did not change). For *Acknowledge filter cleaning* there is no countdown datapoint,
+so the result cannot be verified over Modbus; check the panel.
+
+#### If the cloud is unavailable
+
+In hybrid mode every successful cloud poll stores the plant's name and its HV circuits in the config
+entry. If the cloud fails (blocked, offline, wrong login) or Home Assistant restarts while it is
+down, the entry starts from that stored list and keeps running on Modbus alone. If you add the
+gateway while the cloud already refuses the account, nothing has been stored yet; the entry then
+takes the plant and its ventilation units from the entities it already has, provided they belong to
+one plant (or to the plant chosen in the options). The cloud is retried
+only at its own slow interval, never at the Modbus interval. Meanwhile everything only the cloud
+supplies is unavailable: heating and hot-water circuits, week and day names, temporary change,
+weather, events and the plant's *Online* and *Error*. After a rejected login the cloud stays
+suspended until you re-authenticate, and Modbus keeps working. If the login is rejected at start-up
+and the gateway does not answer either, the entry stops and asks you to re-authenticate instead of
+retrying, because every retry would log in again.
+
 ### Known Limitations
 
 - **HV, HK, BL, WW, and PS circuits only.** Solar (SOL), fresh water (FRIWA), and other circuit types are not yet implemented.
@@ -179,10 +298,14 @@ to taste.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **No detailed controller status and no CO₂/VOC values (since v1.1.0).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list follow in the next release. See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
+- **No detailed controller status and no CO₂/VOC values from the cloud (since v1.1.0; [Local Modbus TCP](#local-modbus-tcp) brings them back for HV units).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list exist since 2.0.0 (*Status*, *Room air quality*, *Holiday end*, *Heating/cooling control*). See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Sensors removed in v1.1.0
+
+**HV units with a Modbus gateway get the ventilation sensors back** under their old entity IDs
+(control status, operating selection, air-quality control, CO₂/VOC where a sensor is fitted), see
+[Local Modbus TCP](#local-modbus-tcp). The table describes the cloud-only situation.
 
 Up to v1.0.18 these sensors read raw controller datapoints through
 `GET /api/telemetry-data/snapshots/live/{plantId}`. Hoval asked third-party integrations to
@@ -191,8 +314,8 @@ stop calling that endpoint ([#24][issue-24]), so v1.1.0 no longer does.
 | Sensor (English / German) | Circuit | Datapoint | Status since v1.1.0 |
 |---|---|---|---|
 | Control status / Regelungsstatus | HV | `39652` | **No replacement.** No other endpoint reports why the unit deviates from its schedule (normal, VOC, humidity, frost protection, CoolVent, fault, summer humidity, switch-off stop). `operationMode` stays `ventilation` during CoolVent and summer humidity. |
-| Control status / Regelungsstatus | HK | `2051` | **Partly replaced** in the next release ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)): *Status* now shows heating / cooling / active / inactive, *Holiday end* shows a running holiday program, and *Heating/cooling control* shows the control type on reversible heat pumps. Frost protection, screed drying, SmartGrid and the other detail states have no replacement. |
-| CO₂ extract air / CO₂ Abluft | HV | `37606` | **Partly replaced** in the next release by *Room air quality* / *Raumluftqualität*: poor / medium / good instead of ppm, from `airQuality.actualRoomAirQuality` on the circuit list. Created only on units with an air-quality sensor. |
+| Control status / Regelungsstatus | HK | `2051` | **Partly replaced** since 2.0.0 ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)): *Status* now shows heating / cooling / active / inactive, *Holiday end* shows a running holiday program, and *Heating/cooling control* shows the control type on reversible heat pumps. Frost protection, screed drying, SmartGrid and the other detail states have no replacement. |
+| CO₂ extract air / CO₂ Abluft | HV | `37606` | **Partly replaced** since 2.0.0 by *Room air quality* / *Raumluftqualität*: poor / medium / good instead of a percentage, from `airQuality.actualRoomAirQuality` on the circuit list. Created only on units with an air-quality sensor. |
 | VOC extract air / VOC Abluft | HV | `37608` | **Partly replaced.** As above. |
 | VOC outside air / VOC Aussenluft | HV | `37611` | **Partly replaced.** As above. |
 | Air quality control (code) / Luftqualitätsregelung (Code) | HV | `39600` | **Partly replaced** by the new binary sensor *Air quality guided* / *Luftqualitätsgeführt*: on/off instead of the raw code. |
@@ -208,7 +331,8 @@ official API; if that happens, the sensors will come back.
 ### Requirements
 
 - A Hoval Connect account (same credentials as the Hoval Connect mobile app)
-- Hoval Connect (this integration) v1.1.0 or newer: Hoval blocks older releases (see the note under [Installation](#installation-hacs))
+- Hoval Connect (this integration) v1.1.0 or newer: Hoval blocks older releases. Use 2.0.0 for the local Modbus mode. Cloud access needs a version Hoval has admitted (see the note under [Installation](#installation-hacs))
+- For the local mode: a Hoval TTE-GW gateway with Modbus TCP switched on, reachable from Home Assistant on port 502 (HV units only)
 - Home Assistant 2024.11.0 or newer — the config flow calls `self._get_reauth_entry()` (2024.11) and relies on the base class setting `OptionsFlow.config_entry`, and the integration keeps its state in `entry.runtime_data` (2024.6). The bundled Blueprint separately declares `min_version: "2024.6.0"`.
 
 ---

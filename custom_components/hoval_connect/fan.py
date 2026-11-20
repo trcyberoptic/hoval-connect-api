@@ -23,7 +23,14 @@ from .const import (
     TURN_ON_RESUME,
     clamp_hv_air_volume,
 )
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    circuit_control_available,
+)
+from .modbus import HovalModbusError
+from .modbus_hv import VALUE_BY_PROGRAM
 from .options import get_override_duration, get_turn_on_mode
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,9 +136,53 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         return plant.circuits.get(self._circuit_path)
 
     @property
+    def _modbus_served(self) -> bool:
+        """True while this circuit's control goes over Modbus (a reading exists)."""
+        circuit = self._circuit
+        return circuit is not None and circuit.modbus is not None
+
+    async def _write_registers(self, writes: list[tuple[str, int]], what: str) -> None:
+        """Write Modbus registers in order; any failure becomes a HomeAssistantError."""
+        for name, value in writes:
+            try:
+                await self.coordinator.async_hv_write(
+                    self._plant_id, self._circuit_path, name, value
+                )
+            except (ValueError, HovalModbusError) as err:
+                raise HomeAssistantError(f"Failed to {what} ({name}={value}): {err}") from err
+
+    async def _modbus_control(self, writes_factory, what: str, mode_override: str) -> None:
+        """Run Modbus writes under the circuit lock, refreshing Modbus at once.
+
+        `writes_factory` runs inside the lock, so a resume program is resolved
+        after any earlier control action has finished.
+        """
+
+        async def action() -> None:
+            await self._write_registers(writes_factory(), what)
+
+        await self.coordinator.async_control_and_refresh(
+            action,
+            plant_id=self._plant_id,
+            circuit_path=self._circuit_path,
+            mode_override=mode_override,
+            cloud_action=False,
+        )
+
+    @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return super().available and self._circuit is not None
+        """Return if entity is available.
+
+        A Modbus-served circuit follows its Modbus reading, any other circuit
+        the cloud (unavailable while a hybrid cloud fetch fails).
+        """
+        circuit = self._circuit
+        if circuit is None or not super().available:
+            return False
+        # Local-only entries have no cloud route: without a reading nothing works.
+        if self.coordinator.is_local:
+            return circuit.modbus is not None
+        return circuit_control_available(self.coordinator.data, circuit)
 
     @property
     def is_on(self) -> bool | None:
@@ -139,6 +190,11 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         circuit = self._circuit
         if circuit is None:
             return None
+        if circuit.modbus is not None:
+            # The immediate Modbus refresh after a write shows the real state.
+            if circuit.active_program is None:
+                return None
+            return circuit.active_program != "standby"
         override = self.coordinator.get_mode_override(self._plant_id, self._circuit_path)
         mode = override if override is not None else circuit.operation_mode
         if mode is None:
@@ -186,17 +242,32 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
                 clamped,
             )
         try:
-            await self.coordinator.async_control_and_refresh(
-                lambda: self.coordinator.api.set_temporary_change(
-                    self._plant_id,
-                    self._circuit_path,
-                    value=clamped,
-                    duration=self._override_duration,
-                ),
-                plant_id=self._plant_id,
-                circuit_path=self._circuit_path,
-                mode_override=OPERATION_MODE_REGULAR,
-            )
+            if self.coordinator.is_local:
+                # Local only: the constant program's setpoint, then select it.
+                await self._modbus_control(
+                    lambda: [
+                        ("constant_modulation", clamped),
+                        ("program", VALUE_BY_PROGRAM["constant"]),
+                    ],
+                    "set fan speed",
+                    OPERATION_MODE_REGULAR,
+                )
+            else:
+                await self.coordinator.async_control_and_refresh(
+                    lambda: self.coordinator.api.set_temporary_change(
+                        self._plant_id,
+                        self._circuit_path,
+                        value=clamped,
+                        duration=self._override_duration,
+                    ),
+                    plant_id=self._plant_id,
+                    circuit_path=self._circuit_path,
+                    mode_override=OPERATION_MODE_REGULAR,
+                )
+        except HomeAssistantError:
+            # A failed Modbus write: show the real state again, keep the error.
+            self._clear_pending_percentage(request)
+            raise
         except (HovalApiError, HovalAuthError) as err:
             # HovalAuthError is not a HovalApiError subclass — without it here
             # an auth failure would escape the fire-and-forget debounce task
@@ -249,6 +320,15 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         if percentage == 0:
             await self.async_turn_off()
             return
+        if not self.coordinator.is_local:
+            # Hybrid/cloud: the percentage is a cloud temporary change; there is
+            # no silent Modbus substitute with different semantics.
+            circuit = self._circuit
+            if not self.coordinator.data.cloud_ok or (circuit is not None and circuit.restored):
+                raise HomeAssistantError(
+                    "Failed to set fan speed: the Hoval cloud is not reachable "
+                    "(on/off and program selection still work over Modbus)"
+                )
         percentage = clamp_hv_air_volume(percentage)
         # Store pending value and update UI immediately
         request = self._pending_request = object()
@@ -274,6 +354,19 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._pending_request = None
         self.async_write_ha_state()
         mode = self._turn_on_mode
+
+        if self._modbus_served:
+
+            def writes() -> list[tuple[str, int]]:
+                program = (
+                    self.coordinator.resolve_resume_program(self._plant_id, self._circuit_path)
+                    if mode == TURN_ON_RESUME
+                    else mode
+                )
+                return [("program", VALUE_BY_PROGRAM[program])]
+
+            await self._modbus_control(writes, "turn on fan", OPERATION_MODE_REGULAR)
+            return
 
         def action():
             if mode == TURN_ON_RESUME:
@@ -303,6 +396,13 @@ class HovalFan(CoordinatorEntity[HovalDataCoordinator], FanEntity):
         self._pending_percentage = 0
         self.async_write_ha_state()
         try:
+            if self._modbus_served:
+                await self._modbus_control(
+                    lambda: [("program", VALUE_BY_PROGRAM["standby"])],
+                    "turn off fan",
+                    OPERATION_MODE_STANDBY,
+                )
+                return
             await self.coordinator.async_control_and_refresh(
                 lambda: self.coordinator.api.set_circuit_mode(
                     self._plant_id,

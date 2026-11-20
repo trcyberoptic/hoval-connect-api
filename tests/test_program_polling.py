@@ -15,6 +15,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -162,13 +163,16 @@ def runtime(monkeypatch):
     update_module = sys.modules["homeassistant.helpers.update_coordinator"]
     update_module.DataUpdateCoordinator = _CoordinatorBase
     update_module.UpdateFailed = type("UpdateFailed", (Exception,), {})
-    sys.modules["homeassistant.util"].dt = SimpleNamespace(now=lambda: datetime(2026, 9, 19, 12, 0))
+    sys.modules["homeassistant.util"].dt = SimpleNamespace(
+        now=lambda: datetime(2026, 9, 19, 12, 0),
+        get_default_time_zone=lambda: ZoneInfo("Europe/Zurich"),
+    )
 
     package = ModuleType(_PACKAGE)
     package.__path__ = [str(_COMPONENT)]
     monkeypatch.setitem(sys.modules, _PACKAGE, package)
     loaded = {}
-    for module_name in ("const", "api", "coordinator"):
+    for module_name in ("const", "api", "modbus", "modbus_hv", "coordinator"):
         name = f"{_PACKAGE}.{module_name}"
         spec = importlib.util.spec_from_file_location(name, _COMPONENT / f"{module_name}.py")
         module = importlib.util.module_from_spec(spec)

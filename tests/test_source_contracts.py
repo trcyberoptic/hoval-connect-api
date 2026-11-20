@@ -141,22 +141,36 @@ class TestNoRawDatapoints:
 
     def test_retired_sensors_are_removed_from_the_registry(self):
         src = _read("sensor.py")
-        assert "_remove_retired_sensors(ent_reg, entry.entry_id)" in src
+        assert "_remove_retired_sensors(ent_reg, entry.entry_id, coordinator.has_modbus)" in src
         assert "is_retired_circuit_sensor(entity.unique_id)" in src
         assert 'entity.domain == "sensor"' in src
 
     def test_retired_sensors_have_no_description_or_translation(self):
+        import ast
         import json
-        import re
 
-        keys = set(re.findall(r'"(h[kv]_[a-z0-9_]+)",', _read("const.py")))
-        assert "hk_control_state" in keys
+        # Retired keys that Modbus serves again (MODBUS_BACKED_KEYS) get their
+        # description and translation back; the others must stay gone.
+        tree = ast.parse(_read("const.py"))
+        sets = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name in ("RETIRED_CIRCUIT_SENSOR_KEYS", "MODBUS_BACKED_KEYS"):
+                    sets[name] = set(ast.literal_eval(node.value.args[0]))
+        keys = sets["RETIRED_CIRCUIT_SENSOR_KEYS"] - sets["MODBUS_BACKED_KEYS"]
+        assert keys == {"hk_control_state"}
         sensor_src = _read("sensor.py")
         for key in keys:
             assert f'key="{key}"' not in sensor_src, key
+        for key in sets["RETIRED_CIRCUIT_SENSOR_KEYS"] & sets["MODBUS_BACKED_KEYS"]:
+            assert f'key="{key}"' in sensor_src, key
         for f in ("strings.json", "translations/en.json", "translations/de.json"):
             entity = json.loads(_read(f))["entity"]
             assert not keys & set(entity["sensor"]), f
+            assert sets["RETIRED_CIRCUIT_SENSOR_KEYS"] & sets["MODBUS_BACKED_KEYS"] <= set(
+                entity["sensor"]
+            ), f
             assert "air_quality_guided" in entity["binary_sensor"], f
 
 
@@ -246,8 +260,13 @@ class TestUserAgentOverride:
         assert "USER_AGENT" in src
         assert src.count('"User-Agent": USER_AGENT') == 3
 
+    def test_user_agent_is_built_from_the_integration_version(self):
+        """Hoval admits client versions by the version in the User-Agent (#24)."""
+        const_src = _read("const.py")
+        assert 'f"hoval-connect-api/{INTEGRATION_VERSION} ' in const_src
+
     def test_version_matches_the_manifest(self):
-        """A stale version in the User-Agent misreports which client is calling."""
+        """INTEGRATION_VERSION must equal the manifest's version."""
         import json
         import re
 
@@ -427,3 +446,66 @@ class TestOssScannerImage:
         assert ci and image
         missing = set(ci.group(1).split()) - set(image.group(1).split())
         assert not missing, f".oss-scanner/Dockerfile lacks CI's test packages: {sorted(missing)}"
+
+
+class TestModbusIsDependencyFree:
+    def test_no_pymodbus_anywhere(self):
+        for path in _BASE.glob("*.py"):
+            assert "pymodbus" not in path.read_text(encoding="utf-8").lower(), path.name
+
+    def test_manifest_has_no_requirements(self):
+        assert '"requirements": []' in _read("manifest.json")
+
+    def test_modbus_modules_make_no_cloud_calls(self):
+        for name in ("modbus.py", "modbus_hv.py"):
+            src = _read(name)
+            assert "aiohttp" not in src, name
+            assert "/v3/" not in src, name
+
+
+def _changelog_section(changelog: str, version: str) -> str:
+    """Body of the '## [version]' section, as release.yml extracts it ('' if absent)."""
+    body: list[str] = []
+    inside = False
+    for line in changelog.splitlines():
+        if line.startswith(f"## [{version}]"):
+            inside = True
+        elif inside and line.startswith("## "):
+            break
+        elif inside:
+            body.append(line)
+    return "\n".join(body).strip()
+
+
+class TestReleaseNotes:
+    """Release notes come from CHANGELOG.md, so every version needs a non-empty section there."""
+
+    def test_section_helper_rejects_missing_and_empty_sections(self):
+        text = "# Log\n\n## [2.0.0] - Unreleased\n\n## [1.0.0]\n\n- old\n"
+        assert _changelog_section(text, "2.0.0") == ""
+        assert _changelog_section(text, "3.0.0") == ""
+        assert _changelog_section(text, "1.0.0") == "- old"
+
+    def test_changelog_has_a_section_for_the_manifest_version(self):
+        import json
+
+        version = json.loads(_read("manifest.json"))["version"]
+        changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+        assert _changelog_section(changelog, version), (
+            f"CHANGELOG.md lacks a non-empty '## [{version}]' section"
+        )
+
+    def test_release_workflow_reads_the_changelog(self):
+        wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
+        assert "CHANGELOG.md" in wf
+        assert "::error::CHANGELOG.md" in wf
+
+    def test_release_workflow_marks_hyphenated_versions_as_prereleases(self):
+        """v2.0.0-beta.1 must be a pre-release and never "Latest", or HACS would
+        offer a test build to every user as an update."""
+        wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
+        assert "prerelease: ${{ contains(steps.version.outputs.version, '-') }}" in wf
+        assert (
+            "make_latest: ${{ contains(steps.version.outputs.version, '-') && 'false' || 'true' }}"
+            in wf
+        )

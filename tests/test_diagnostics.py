@@ -42,6 +42,10 @@ class TestRedactionSets:
         assert "password" in REDACT_CONFIG
         assert "email" in REDACT_CONFIG
 
+    def test_diagnostics_redact_modbus_host(self):
+        assert "host" in REDACT_CONFIG
+        assert "modbus_host" in REDACT_CONFIG
+
     def test_coordinator_redacts_tokens(self):
         assert "token" in REDACT_COORDINATOR
         assert "id_token" in REDACT_COORDINATOR
@@ -109,6 +113,7 @@ async def test_export_removes_plant_identifiers_everywhere_without_mutating_snap
     original = deepcopy(data)
     entry = SimpleNamespace(
         data={"email": "private@example.invalid", "password": "private-password"},
+        options={},
         runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data=data)),
     )
 
@@ -138,3 +143,52 @@ async def test_export_removes_plant_identifiers_everywhere_without_mutating_snap
 def test_diagnostics_handles_no_plants(monkeypatch):
     monkeypatch.setattr(diagnostics, "async_redact_data", _redact_fields)
     assert diagnostics._anonymise_coordinator_data(_Data()) == {"plants": {}}
+
+
+@pytest.mark.asyncio
+async def test_export_redacts_gateway_host_and_includes_modbus_reading(monkeypatch):
+    from custom_components.hoval_connect.modbus_hv import HvModbusReading
+
+    monkeypatch.setattr(diagnostics, "async_redact_data", _redact_fields)
+    reading = HvModbusReading(**{f: None for f in HvModbusReading.__dataclass_fields__})
+
+    @dataclass
+    class _ModbusCircuit(_Circuit):
+        modbus: object = None
+
+    circuit = _ModbusCircuit(modbus=reading)
+    data = _Data({"synthetic-p": _Plant("synthetic-p", circuits={"1.2.3": circuit})})
+    entry = SimpleNamespace(
+        data={"mode": "local", "host": "192.0.2.10"},
+        options={"modbus_host": "192.0.2.11"},
+        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data=data)),
+    )
+
+    result = await diagnostics.async_get_config_entry_diagnostics(None, entry)
+
+    assert "192.0.2" not in repr(result)
+    modbus = result["coordinator_data"]["plants"]["plant_1"]["circuits"]["1.2.3"]["modbus"]
+    assert modbus["program"] is None and "air_volume" in modbus
+
+
+@pytest.mark.asyncio
+async def test_export_redacts_stored_topology_and_modbus_plant_id(monkeypatch):
+    monkeypatch.setattr(diagnostics, "async_redact_data", _redact_fields)
+    entry = SimpleNamespace(
+        data={
+            "email": "a@example.invalid",
+            "topology": {
+                "plant_id": "P1",
+                "plant_name": "HRT",
+                "circuits": {"520.50.0": "Lüftung"},
+            },
+        },
+        options={"modbus_plant_id": "P1"},
+        runtime_data=SimpleNamespace(coordinator=SimpleNamespace(data=_Data())),
+    )
+
+    result = await diagnostics.async_get_config_entry_diagnostics(None, entry)
+
+    text = repr(result)
+    for sensitive in ("P1", "HRT", "Lüftung"):
+        assert sensitive not in text

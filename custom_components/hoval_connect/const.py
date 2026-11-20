@@ -41,9 +41,9 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 # this stops working and the answer is a conversation with Hoval, not a
 # less honest User-Agent.
 #
-# Keep in sync with manifest.json — pinned by a source contract in
-# tests/test_source_contracts.py.
-INTEGRATION_VERSION = "1.1.0"
+# The release version. Keep in sync with manifest.json — pinned by a source
+# contract in tests/test_source_contracts.py.
+INTEGRATION_VERSION = "2.0.0"
 USER_AGENT = (
     f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
 )
@@ -59,6 +59,56 @@ PLANT_TOKEN_TTL = timedelta(minutes=12)
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 CONF_SCAN_INTERVAL = "scan_interval"
 SCAN_INTERVAL_OPTIONS = {900: "15 minutes", 1800: "30 minutes", 3600: "60 minutes"}
+
+# Local Modbus TCP mode (TTE-GW gateway). "Local only" entries carry
+# CONF_MODE == MODE_LOCAL and the gateway address in their data; cloud entries
+# may add a gateway in their options (hybrid), stored under the CONF_MODBUS_* keys.
+CONF_MODE = "mode"
+MODE_LOCAL = "local"
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_UNIT_ID = "unit_id"
+CONF_MODBUS_HOST = "modbus_host"
+CONF_MODBUS_PORT = "modbus_port"
+CONF_MODBUS_UNIT_ID = "modbus_unit_id"
+CONF_MODBUS_SCAN_INTERVAL = "modbus_scan_interval"
+CONF_MODBUS_PLANT_ID = "modbus_plant_id"
+DATA_TOPOLOGY = "topology"
+# Entity keys whose value comes from Modbus; they stay available when the cloud is down.
+MODBUS_BACKED_KEYS = frozenset(
+    {
+        "outside_temperature",
+        "exhaust_temperature",
+        "air_volume",
+        "humidity_actual",
+        "humidity_target",
+        "hv_constant_modulation",
+        "hv_eco_modulation",
+        "air_quality_guided",
+        "hv_control_state",
+        "hv_operating_selection",
+        "hv_air_quality_control",
+        "hv_co2_extract",
+        "hv_voc_extract",
+        "hv_voc_outside",
+        "hv_exhaust_fan_target",
+        "hv_maintenance_weeks_remaining",
+        "hv_filter_cleaning_interval",
+        "hv_active_error",
+    }
+)
+DEFAULT_MODBUS_PORT = 502
+DEFAULT_MODBUS_UNIT_ID = 1
+DEFAULT_MODBUS_SCAN_INTERVAL = 30
+MODBUS_SCAN_INTERVAL_OPTIONS = {
+    10: "10 seconds",
+    30: "30 seconds",
+    60: "1 minute",
+    120: "2 minutes",
+}
+# Discovery probes several unit ids over a slow serial-bridged gateway; bound
+# the whole validation so the setup dialog cannot hang.
+MODBUS_VALIDATION_TIMEOUT_S = 60
 
 # Program cache TTL. Time programs change rarely, and the circuit details
 # (temporary-change limits) refresh on the same cadence.

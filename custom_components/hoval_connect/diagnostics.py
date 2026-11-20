@@ -12,7 +12,8 @@ from homeassistant.core import HomeAssistant
 
 from . import HovalConnectConfigEntry
 
-REDACT_CONFIG = {"password", "email"}
+# topology holds the plant id/name and circuit names; modbus_plant_id the plant id.
+REDACT_CONFIG = {"password", "email", "host", "modbus_host", "topology", "modbus_plant_id"}
 REDACT_COORDINATOR = {
     "token",
     "id_token",
@@ -74,5 +75,6 @@ async def async_get_config_entry_diagnostics(
 
     return {
         "config_entry": async_redact_data(dict(entry.data), REDACT_CONFIG),
+        "config_options": async_redact_data(dict(entry.options), REDACT_CONFIG),
         "coordinator_data": _anonymise_coordinator_data(coordinator.data),
     }

@@ -15,7 +15,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import HovalConnectConfigEntry, circuit_device_info
 from .api import HovalApiError, HovalAuthError
 from .const import CIRCUIT_TYPE_HK, CIRCUIT_TYPE_HV, CIRCUIT_TYPE_WW, OPERATION_MODE_REGULAR
-from .coordinator import SIGNAL_NEW_CIRCUITS, HovalCircuitData, HovalDataCoordinator
+from .coordinator import (
+    SIGNAL_NEW_CIRCUITS,
+    HovalCircuitData,
+    HovalDataCoordinator,
+    circuit_control_available,
+)
+from .modbus import HovalModbusError
+from .modbus_hv import VALUE_BY_PROGRAM
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -145,8 +152,18 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
 
     @property
     def available(self) -> bool:
-        """Return if entity is available."""
-        return super().available and self._circuit is not None
+        """Return if entity is available.
+
+        A Modbus-served circuit follows its Modbus reading, any other circuit
+        the cloud (unavailable while a hybrid cloud fetch fails).
+        """
+        circuit = self._circuit
+        if circuit is None or not super().available:
+            return False
+        # Local-only entries have no cloud route: without a reading nothing works.
+        if self.coordinator.is_local:
+            return circuit.modbus is not None
+        return circuit_control_available(self.coordinator.data, circuit)
 
     @property
     def current_option(self) -> str | None:
@@ -171,6 +188,33 @@ class HovalProgramSelect(CoordinatorEntity[HovalDataCoordinator], SelectEntity):
             self._circuit_path,
         )
         mode = OPERATION_MODE_REGULAR if api_program != "standby" else "standby"
+        circuit = self._circuit
+        if circuit is not None and circuit.modbus is not None:
+            value = VALUE_BY_PROGRAM.get(api_program)
+            if value is None:
+                raise HomeAssistantError(
+                    f"Program '{api_program}' cannot be set over Modbus; "
+                    f"valid programs: {', '.join(VALUE_BY_PROGRAM)}"
+                )
+
+            async def write() -> None:
+                try:
+                    await self.coordinator.async_hv_write(
+                        self._plant_id, self._circuit_path, "program", value
+                    )
+                except (ValueError, HovalModbusError) as err:
+                    raise HomeAssistantError(
+                        f"Failed to set program {api_program} (program={value}): {err}"
+                    ) from err
+
+            await self.coordinator.async_control_and_refresh(
+                write,
+                plant_id=self._plant_id,
+                circuit_path=self._circuit_path,
+                mode_override=mode,
+                cloud_action=False,
+            )
+            return
         try:
             await self.coordinator.async_control_and_refresh(
                 lambda: self.coordinator.api.set_program(

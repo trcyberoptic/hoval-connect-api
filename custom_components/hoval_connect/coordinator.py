@@ -6,10 +6,11 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from math import isfinite
-from typing import Any
+from typing import Any, NoReturn
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -23,18 +24,31 @@ from .const import (
     CIRCUIT_TYPE_BL,
     CIRCUIT_TYPE_HK,
     CIRCUIT_TYPE_HV,
+    CIRCUIT_TYPE_NAMES,
     CIRCUIT_TYPE_PS,
     CIRCUIT_TYPE_WW,
+    DATA_TOPOLOGY,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EVENTS_CACHE_TTL,
+    MODBUS_BACKED_KEYS,
     PROGRAM_CACHE_TTL,
     PROGRAM_UNAVAILABLE_RETRY_INTERVAL,
     SUPPORTED_CIRCUIT_TYPES,
     WEATHER_CACHE_TTL,
 )
+from .modbus import HovalModbusError
+from .modbus_hv import (
+    HV_UNIT_IDS,
+    HovalModbusPoller,
+    HvModbusReading,
+    decode_gateway_clock,
+)
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
+
+# What a Modbus round trip can raise: protocol errors, transport, timeouts.
+_MODBUS_ERRORS = (HovalModbusError, OSError, TimeoutError)
 
 # Maximum lifetime of an optimistic mode override (seconds). Overrides are
 # normally cleared at the end of the next successful poll, but if polls keep
@@ -275,6 +289,16 @@ class HovalCircuitData:
     program_air_volume: float | None = None
     # User-defined program names: API key → display name (e.g. "week1" → "Normal")
     program_names: dict[str, str] = field(default_factory=dict)
+    # Latest Modbus reading of this circuit (HV with a local gateway), else None.
+    modbus: HvModbusReading | None = None
+    # True for a circuit whose Modbus-owned values come from the gateway (hybrid
+    # after discovery, and local), also while the gateway fails and `modbus` is
+    # None: its Modbus-backed entities are then unavailable, with no fallback
+    # to the cloud (which skips that circuit's live values anyway).
+    modbus_served: bool = False
+    # True for a circuit rebuilt from the stored topology (no cloud values):
+    # its cloud-only fields are empty, so entities must show unavailable.
+    restored: bool = False
 
 
 @dataclass
@@ -298,6 +322,10 @@ class HovalPlantData:
     latest_event: HovalEventData | None = None
     events: list[HovalEventData] = field(default_factory=list)
     weather: HovalWeatherData | None = None
+    # Gateway clock over Modbus (diagnostic): its offset to this system in whole
+    # seconds and its wall-clock time; None = not read / not available.
+    gateway_clock_offset: int | None = None
+    gateway_time: datetime | None = None
 
 
 @dataclass
@@ -305,6 +333,149 @@ class HovalData:
     """Top-level data returned by the coordinator."""
 
     plants: dict[str, HovalPlantData] = field(default_factory=dict)
+    # False when this snapshot has no cloud data (local-only, or the cloud failed).
+    cloud_ok: bool = True
+
+
+_MODBUS_LIVE_KEYS = (
+    "airVolume",
+    "humidityActual",
+    "humidityTarget",
+    "outsideTemperature",
+    "exhaustTemp",
+)
+
+
+def apply_modbus_reading(circuit: HovalCircuitData, reading: HvModbusReading | None) -> None:
+    """Overlay a Modbus reading on a Modbus-served circuit.
+
+    None (the gateway failed) blanks the Modbus-owned fields; the circuit
+    stays marked as served, so their entities show unavailable.
+    """
+    circuit.modbus_served = True
+    circuit.modbus = reading
+    if reading is None:
+        for key in _MODBUS_LIVE_KEYS:
+            circuit.live_values.pop(key, None)
+        circuit.active_program = None
+        circuit.constant_value = None
+        circuit.eco_mode_value = None
+        circuit.target_value = None
+        # A bool field: "unknown" is False, not None.
+        circuit.is_air_quality_guided = False
+        return
+    values = {
+        "airVolume": reading.air_volume,
+        "humidityActual": reading.humidity_actual,
+        "humidityTarget": reading.humidity_target,
+        "outsideTemperature": reading.outside_temperature,
+        "exhaustTemp": reading.exhaust_temperature,
+    }
+    for key, value in values.items():
+        if value is None:
+            circuit.live_values.pop(key, None)
+        else:
+            circuit.live_values[key] = str(value)
+    circuit.active_program = reading.program
+    circuit.constant_value = (
+        None if reading.constant_modulation is None else float(reading.constant_modulation)
+    )
+    circuit.eco_mode_value = (
+        None if reading.eco_modulation is None else float(reading.eco_modulation)
+    )
+    circuit.target_value = None if reading.air_volume is None else float(reading.air_volume)
+    circuit.is_air_quality_guided = reading.air_quality_control == 1
+
+
+def _hv_unit(path: str) -> int | None:
+    """Return the Modbus unit id of an HV circuit path (`<unit>.50.0`), if it is one."""
+    try:
+        unit = int(path.split(".", 1)[0])
+    except ValueError:  # paths come from the cloud; isdigit() would pass "²"
+        return None
+    return unit if unit in HV_UNIT_IDS else None
+
+
+def _valid_topology(topology: Any) -> bool:
+    """Check the shape topology_from_data() writes to the config entry."""
+    if not isinstance(topology, dict) or not isinstance(topology.get("plant_id"), str):
+        return False
+    circuits = topology.get("circuits")
+    return isinstance(circuits, dict) and all(
+        isinstance(path, str) and isinstance(name, str) for path, name in circuits.items()
+    )
+
+
+def topology_from_data(data: HovalData, plant_id: str) -> dict[str, Any] | None:
+    """Describe a plant and its HV circuits for a start without the cloud."""
+    plant = data.plants.get(plant_id)
+    if plant is None:
+        return None
+    return {
+        "plant_id": plant_id,
+        "plant_name": plant.name,
+        "circuits": {
+            path: circuit.name
+            for path, circuit in plant.circuits.items()
+            if circuit.circuit_type == CIRCUIT_TYPE_HV
+        },
+    }
+
+
+def data_from_topology(topology: dict[str, Any]) -> HovalData:
+    """Rebuild the plant and its HV circuits (no values) from a stored topology."""
+    plant_id = topology["plant_id"]
+    plant_name = _coerce_optional_str(topology.get("plant_name")) or plant_id
+    plant = HovalPlantData(plant_id, plant_name, is_online=False)
+    for path, name in topology["circuits"].items():
+        plant.circuits[path] = HovalCircuitData(CIRCUIT_TYPE_HV, path, name, restored=True)
+    return HovalData(plants={plant_id: plant}, cloud_ok=False)
+
+
+def _is_modbus_served(circuit: HovalCircuitData) -> bool:
+    return circuit.modbus_served or circuit.modbus is not None
+
+
+def circuit_cloud_available(data: HovalData, circuit: HovalCircuitData | None) -> bool:
+    """Whether this snapshot carries current cloud data for the circuit.
+
+    False while the hybrid cloud fetch fails (the snapshot then holds the last
+    cloud values, frozen) and for a circuit restored from the stored topology.
+    Always true for a circuit of a cloud-only snapshot.
+    """
+    return circuit is not None and data.cloud_ok and not circuit.restored
+
+
+def circuit_value_available(data: HovalData, circuit: HovalCircuitData | None, key: str) -> bool:
+    """Whether the value behind entity `key` of this circuit is currently known.
+
+    On a Modbus-served circuit a Modbus-backed key is available exactly while
+    a Modbus reading exists, whatever the cloud does. Any other key needs
+    current cloud data for the circuit (see circuit_cloud_available).
+    """
+    if circuit is None:
+        return False
+    if key in MODBUS_BACKED_KEYS and _is_modbus_served(circuit):
+        return circuit.modbus is not None
+    return circuit_cloud_available(data, circuit)
+
+
+def circuit_control_available(data: HovalData, circuit: HovalCircuitData | None) -> bool:
+    """Availability of a fan or program select, whose state comes from one source.
+
+    A Modbus-served circuit reports its program and air volume over Modbus,
+    so the entity follows the reading; any other circuit follows the cloud.
+    """
+    if circuit is None:
+        return False
+    if _is_modbus_served(circuit):
+        return circuit.modbus is not None
+    return circuit_cloud_available(data, circuit)
+
+
+async def _no_cloud_live_values() -> list[dict[str, Any]]:
+    """Stand in for get_live_values() on a circuit whose values come from Modbus."""
+    return []
 
 
 def _parse_event(raw: dict) -> HovalEventData:
@@ -371,9 +542,18 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
     def __init__(
         self,
         hass: HomeAssistant,
-        api: HovalConnectApi,
+        api: HovalConnectApi | None,
+        *,
+        modbus: HovalModbusPoller | None = None,
+        modbus_plant_id: str | None = None,
+        local_plant: tuple[str, str] | None = None,
+        topology: dict[str, Any] | None = None,
     ) -> None:
-        """Initialize the coordinator."""
+        """Initialize the coordinator.
+
+        api None = local-only (Modbus, no Hoval account); api and modbus both
+        set = hybrid.
+        """
         super().__init__(
             hass,
             _LOGGER,
@@ -381,6 +561,38 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.api = api
+        self.modbus = modbus
+        self.modbus_plant_id = modbus_plant_id
+        if topology is not None and not _valid_topology(topology):
+            _LOGGER.warning("Ignoring a malformed stored plant topology")
+            topology = None
+        # Bound plant and HV circuits of the last successful cloud fetch
+        # (entry.data[DATA_TOPOLOGY]); lets a hybrid entry start without the cloud.
+        self.topology = topology
+        self._local_plant = local_plant
+        self.cloud_interval: float = DEFAULT_SCAN_INTERVAL.total_seconds()
+        # Unit ids found by discovery; None = not discovered yet (retried each update).
+        self._local_units: list[int] | None = None
+        # --- Hybrid state (cloud account + Modbus gateway) ---
+        # The plant the gateway belongs to. Before any cloud fetch: the chosen
+        # plant, else the stored topology's (it is only ever stored for the bound plant).
+        self.bound_plant_id: str | None = modbus_plant_id or (topology or {}).get("plant_id")
+        self._binding_warned = False
+        # Monotonic time of the next cloud fetch; 0 = fetch at the next update.
+        self._cloud_deadline = 0.0
+        # Last successful cloud snapshot, never mutated (the merge works on copies).
+        self._cloud_data: HovalData | None = None
+        # Outcome of the latest cloud attempt, and whether a failure streak runs.
+        self._cloud_ok = False
+        self._cloud_failing = False
+        # Set by a rejected login: no cloud request until the entry is reloaded.
+        self._cloud_suspended = False
+        # (plant_id, path) of HV circuits Modbus serves: the cloud fetch skips
+        # their live values and circuit details (G6). Empty in cloud-only mode.
+        self._modbus_paths: set[tuple[str, str]] = set()
+        # (plant_id, HV paths) the last successful discovery ran against.
+        self._discovered_for: tuple[str, frozenset[str]] | None = None
+        self._modbus_failing = False
         self._circuit_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._circuit_fetch_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_CIRCUIT_FETCHES)
         # Optimistic mode override per circuit (set by control actions,
@@ -415,10 +627,123 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._events_cache_ttl = EVENTS_CACHE_TTL.total_seconds()
         # Track known circuits for dynamic entity discovery
         self._known_circuits: set[str] = set()
+        # Circuits that have had a Modbus reading: the first one adds entities.
+        self._modbus_circuits: set[str] = set()
+        # (plant_id, path) -> weeks until maintenance before an acknowledge 7, checked
+        # at the next refresh.
+        self._pending_acks: dict[tuple[str, str], tuple[int | None, int]] = {}
+        # Plants whose gateway clock has been seen: its first value adds the sensor.
+        self._clock_plants: set[str] = set()
         # Consecutive polls per plant that reported isOnline=false.
         self._offline_polls: dict[str, int] = {}
         # Device-registry ids of the plant devices, filled by async_setup_entry.
         self.plant_device_ids: dict[str, str] = {}
+
+    @property
+    def has_modbus(self) -> bool:
+        """True when a Modbus poller is configured."""
+        return self.modbus is not None
+
+    @property
+    def is_local(self) -> bool:
+        """True in local-only mode (no cloud API)."""
+        return self.api is None
+
+    async def async_hv_write(self, plant_id: str, circuit_path: str, name: str, value: int) -> None:
+        """Write one HV register over Modbus (unit = first path segment)."""
+        if self.modbus is None:
+            raise HovalModbusError("Modbus is not configured")
+        unit = int(circuit_path.split(".")[0])
+        circuit = self._modbus_circuit(plant_id, circuit_path)
+        weeks_before = (
+            circuit.modbus.maintenance_weeks_remaining
+            if circuit is not None and circuit.modbus is not None
+            else None
+        )
+        await self.modbus.write(unit, name, value)
+        if name == "acknowledge":
+            self._after_acknowledge(plant_id, circuit_path, unit, value, weeks_before)
+
+    def _modbus_circuit(self, plant_id: str, circuit_path: str) -> HovalCircuitData | None:
+        plant = self.data.plants.get(plant_id) if self.data is not None else None
+        return None if plant is None else plant.circuits.get(circuit_path)
+
+    def _after_acknowledge(
+        self, plant_id: str, circuit_path: str, unit: int, value: int, weeks_before: int | None
+    ) -> None:
+        """Verify an acknowledge instead of trusting the gateway's echo.
+
+        The gateway echoes writes to registers it does not accept (measured on
+        its read-only clock), and the acknowledge register has no read-back. So
+        the unit's maintenance block is re-read once at the next refresh and the
+        counter compared. Only logs: an acknowledge while nothing is due may
+        legitimately change nothing.
+        """
+        self.modbus.invalidate_slow(unit)
+        if value == 7:
+            self._pending_acks[(plant_id, circuit_path)] = (
+                weeks_before,
+                self.modbus.slow_generation(unit),
+            )
+        else:
+            _LOGGER.info(
+                "Filter cleaning acknowledged on %s; the result cannot be verified over "
+                "Modbus (there is no datapoint for the filter-cleaning countdown)",
+                circuit_path,
+            )
+
+    def _check_acknowledges(self) -> None:
+        """Compare the maintenance counter after an acknowledge with the one before."""
+        for key in list(self._pending_acks):
+            circuit = self._modbus_circuit(*key)
+            if circuit is None:
+                del self._pending_acks[key]
+                continue
+            if circuit.modbus is None:
+                continue  # gateway failing: compare when a reading is back
+            before, generation = self._pending_acks[key]
+            if self.modbus.slow_generation(int(key[1].split(".")[0])) <= generation:
+                # The maintenance block was not re-read since the write (a poll
+                # that was already running delivered older data): compare later.
+                continue
+            del self._pending_acks[key]
+            after = circuit.modbus.maintenance_weeks_remaining
+            if before is None or after is None:
+                _LOGGER.info(
+                    "Maintenance acknowledged on %s; the counter could not be read before or "
+                    "after, so the result cannot be verified",
+                    key[1],
+                )
+            elif after != before:
+                _LOGGER.info(
+                    "Maintenance acknowledged on %s: maintenance counter reset from %s to %s weeks",
+                    key[1],
+                    before,
+                    after,
+                )
+            else:
+                _LOGGER.warning(
+                    "Maintenance acknowledged on %s: the gateway confirmed the acknowledge "
+                    "command but the maintenance counter did not change (%s weeks) - the "
+                    "gateway echoes writes it does not apply",
+                    key[1],
+                    after,
+                )
+
+    def _apply_gateway_clock(self, plant: HovalPlantData) -> None:
+        """Put the poller's latest gateway clock reading on the plant."""
+        read = getattr(self.modbus, "gateway_clock", None)
+        decoded = (
+            None
+            if read is None
+            else decode_gateway_clock(read.seconds, read.read_at, dt_util.get_default_time_zone())
+        )
+        plant.gateway_clock_offset, plant.gateway_time = decoded or (None, None)
+
+    async def async_close(self) -> None:
+        """Close the Modbus connection, if any."""
+        if self.modbus is not None:
+            await self.modbus.client.close()
 
     def set_mode_override(self, plant_id: str, circuit_path: str, mode: str) -> None:
         """Set optimistic mode override after a control action."""
@@ -463,6 +788,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         plant_id: str,
         circuit_path: str,
         mode_override: str,
+        cloud_action: bool = True,
     ) -> None:
         """Execute a control command with lock, optimistic state, and refresh.
 
@@ -479,14 +805,25 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         a manual override and turned into a notification loop.
         A failed refresh is swallowed — the coordinator retries on its
         normal poll schedule and entities stay on their optimistic state.
+
+        ``cloud_action`` False marks a Modbus write: the gateway has already
+        confirmed it by read-back, so the refresh runs at once and, in hybrid
+        mode, leaves the cloud on its own interval. A cloud action (temporary
+        change) settles 2 s and then forces a cloud fetch, as before.
         """
         async with self._get_circuit_lock(plant_id, circuit_path):
             # A cancelled lock waiter must never leave an unawaited coroutine.
             await action_factory()
             self.set_mode_override(plant_id, circuit_path, mode_override)
 
-        # Give the cloud time to commit the change before fetching.
-        await asyncio.sleep(2)
+        if cloud_action:
+            # Give the cloud time to commit the change before fetching.
+            await asyncio.sleep(2)
+            if self.modbus is not None:
+                # Hybrid fetches the cloud only once per cloud interval; this
+                # refresh must see the action's result. Set after the settle
+                # delay so a scheduled tick during it cannot use up the fetch.
+                self._cloud_deadline = 0.0
         try:
             await self.async_request_refresh()
         except Exception:  # noqa: BLE001 — see docstring
@@ -496,7 +833,352 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             )
 
     async def _async_update_data(self) -> HovalData:
-        """Fetch data from the API."""
+        """Dispatch to the cloud-only, hybrid or local-only path."""
+        if self.api is None:
+            return await self._async_fetch_local()
+        if self.modbus is None:
+            return await self._async_fetch_cloud()
+        return await self._async_update_hybrid()
+
+    async def _async_update_hybrid(self) -> HovalData:
+        """Modbus on every update, the cloud only once per cloud interval.
+
+        The update interval is the Modbus interval (30 s by default). Hoval
+        allows one cloud poll per 15 minutes (#24), so between cloud fetches
+        the last cloud snapshot is reused, and a failing cloud leaves the
+        Modbus values working (G3).
+        """
+        modbus_down = False
+        if time.monotonic() >= self._cloud_deadline:
+            # Claim the slot before the first await, so an overlapping update
+            # (e.g. a requested refresh) cannot fetch the cloud a second time.
+            # Hoval may block again without notice, so whatever the outcome,
+            # the next attempt waits a full cloud interval: a failing cloud is
+            # never retried at the Modbus interval.
+            self._cloud_deadline = time.monotonic() + self.cloud_interval
+            # Rediscover once per cloud interval, before the fetch while the HV
+            # paths are known (previous fetch or stored topology): the fetch
+            # then already skips what Modbus serves (G6), after an HA restart too.
+            modbus_down = not await self._async_discover(
+                self._hv_paths(self._bound_plant(self._base_snapshot()))
+            )
+            if not self._cloud_suspended:
+                await self._async_refresh_cloud()
+        data = self._base_snapshot()
+        if data is None:
+            self._fail_update("Hoval cloud unavailable and no stored plant topology to start from")
+        modbus_fresh = await self._async_merge_modbus(data, modbus_down=modbus_down)
+        if not data.cloud_ok and not modbus_fresh:
+            # Nothing in this snapshot is current; fail like a cloud-only
+            # entry does, so HA keeps the old data and marks entities unavailable.
+            self._fail_update("Neither the Hoval cloud nor the Modbus gateway delivered data")
+        return data
+
+    def _fail_update(self, message: str) -> NoReturn:
+        """Fail a hybrid update; at setup, as a rejected login if that is the cause.
+
+        UpdateFailed at the first refresh becomes ConfigEntryNotReady, and HA
+        retries the setup forever (5 s up to 80 s apart), each retry with a new
+        coordinator and so a new login with rejected credentials (I1). After a
+        successful update stay with UpdateFailed: ConfigEntryAuthFailed would
+        stop HA's scheduled updates, and the Modbus values could not return when
+        the gateway answers again. The cloud stays suspended either way.
+        """
+        if self._cloud_suspended and self.data is None:
+            raise ConfigEntryAuthFailed(f"Hoval rejected the login. {message}")
+        raise UpdateFailed(message)
+
+    async def _async_refresh_cloud(self) -> None:
+        """Fetch the cloud once; a failure is recorded, never raised.
+
+        Raising would fail the whole update and take the Modbus values with it.
+        """
+        try:
+            data = await self._async_fetch_cloud()
+        except ConfigEntryAuthFailed as err:
+            self._cloud_ok = False
+            self._cloud_failing = True
+            # Cloud-only polling stops on a rejected login too, and retrying it
+            # every interval walks the account towards a lockout. A successful
+            # reauth reloads the entry, which builds a new coordinator.
+            self._cloud_suspended = True
+            _LOGGER.warning(
+                "Hoval rejected the login (%s); no further cloud requests until the "
+                "integration is re-authenticated",
+                err,
+            )
+            self.config_entry.async_start_reauth(self.hass)
+            return
+        except (UpdateFailed, HovalApiError) as err:
+            self._cloud_failed(err)
+            return
+        except Exception as err:  # noqa: BLE001 — must not freeze the cloud data as fresh
+            # Anything else (e.g. a response shape the parser does not expect)
+            # would otherwise escape this update with _cloud_ok still True, and
+            # every later update would serve the frozen snapshot as fresh.
+            self._cloud_failed(err, unexpected=True)
+            return
+        if self._cloud_failing:
+            _LOGGER.info("Hoval cloud is reachable again")
+        self._cloud_failing = False
+        self._cloud_ok = True
+        self._cloud_data = data
+        self._resolve_binding(data)
+        self._persist_topology(data)
+
+    def _cloud_failed(self, err: Exception, *, unexpected: bool = False) -> None:
+        """Mark the cloud failed; log once per failure streak."""
+        self._cloud_ok = False
+        if self._cloud_failing:
+            _LOGGER.debug(
+                "Hoval cloud still failing: %s", err, exc_info=err if unexpected else None
+            )
+            return
+        self._cloud_failing = True
+        minutes = self.cloud_interval / 60
+        if unexpected:
+            # Not an error the API client knows: keep the traceback for a report.
+            _LOGGER.error(
+                "Unexpected error fetching Hoval cloud data; cloud values are "
+                "unavailable until the next attempt in %d minutes",
+                minutes,
+                exc_info=err,
+            )
+        else:
+            _LOGGER.warning(
+                "Hoval cloud request failed (%s); cloud values are unavailable until "
+                "the next attempt in %d minutes",
+                err,
+                minutes,
+            )
+
+    def _resolve_binding(self, data: HovalData) -> None:
+        """Bind the gateway to one plant of a fresh cloud snapshot."""
+        stored = self.topology["plant_id"] if self.topology is not None else None
+        if self.modbus_plant_id:
+            bound = self.modbus_plant_id
+        elif stored in data.plants:
+            # The topology is only stored for the bound plant, so it keeps an
+            # implicit binding when the account later gains a second plant.
+            bound = stored
+        elif len(data.plants) == 1:
+            bound = next(iter(data.plants))
+        else:
+            bound = None
+        if (bound is None or bound not in data.plants) and not self._binding_warned:
+            self._binding_warned = True
+            if bound is None:
+                _LOGGER.warning(
+                    "The Hoval account has %d plants and none is chosen for the Modbus "
+                    "gateway; choose the plant in the integration options. Modbus is "
+                    "not used until then",
+                    len(data.plants),
+                )
+            else:
+                _LOGGER.warning(
+                    "Plant %s chosen for the Modbus gateway is not in the Hoval account; "
+                    "Modbus values are not used",
+                    bound,
+                )
+        if bound != self.bound_plant_id:
+            self.bound_plant_id = bound
+            self._discovered_for = None
+            self._modbus_paths = set()
+
+    def _persist_topology(self, data: HovalData) -> None:
+        """Store the bound plant's topology in the entry when it changed."""
+        plant = self._bound_plant(data)
+        # An offline plant comes without its circuit list (or with the previous
+        # poll's); storing that would drop the HV circuits a start without the
+        # cloud needs.
+        if plant is None or not plant.is_online:
+            return
+        topology = topology_from_data(data, plant.plant_id)
+        self.topology = topology
+        entry = self.config_entry
+        if entry.data.get(DATA_TOPOLOGY) != topology:
+            self.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, DATA_TOPOLOGY: topology}
+            )
+
+    def _base_snapshot(self) -> HovalData | None:
+        """This update's starting point: the last cloud data, else the topology."""
+        if self._cloud_data is not None:
+            # A deep copy per update: the Modbus merge mutates circuits, while
+            # the cached cloud snapshot must stay as fetched and HA still holds
+            # the previous update's object as self.data.
+            data = deepcopy(self._cloud_data)
+            data.cloud_ok = self._cloud_ok
+        elif self.topology is not None:
+            # HA started while the cloud is down: rebuild the bound plant and
+            # its HV circuits from the last successful fetch.
+            data = data_from_topology(self.topology)
+        else:
+            return None
+        plant = self._bound_plant(data)
+        topology = self.topology
+        if (
+            plant is not None
+            and not plant.is_online
+            and topology is not None
+            and topology["plant_id"] == plant.plant_id
+        ):
+            # The cloud lists no circuits for a plant it reports offline, but
+            # the gateway may still answer on the LAN (G3): give Modbus the
+            # stored HV circuits to merge into.
+            for path, name in topology["circuits"].items():
+                plant.circuits.setdefault(
+                    path, HovalCircuitData(CIRCUIT_TYPE_HV, path, name, restored=True)
+                )
+        return data
+
+    def _bound_plant(self, data: HovalData | None) -> HovalPlantData | None:
+        """Return the bound plant of a snapshot, if both exist."""
+        if data is None or self.bound_plant_id is None:
+            return None
+        return data.plants.get(self.bound_plant_id)
+
+    @staticmethod
+    def _hv_paths(plant: HovalPlantData | None) -> dict[str, int]:
+        """Map the plant's HV circuit paths to their Modbus unit ids."""
+        if plant is None:
+            return {}
+        paths = {}
+        for path, circuit in plant.circuits.items():
+            unit = _hv_unit(path) if circuit.circuit_type == CIRCUIT_TYPE_HV else None
+            if unit is not None:
+                paths[path] = unit
+        return paths
+
+    async def _async_discover(self, paths: dict[str, int]) -> bool:
+        """Find which HV paths of the bound plant Modbus serves.
+
+        Returns False when the gateway failed; the previous result then stays,
+        so a gateway outage never turns cloud live values back on (spec: no
+        automatic fallback to the cloud's live values).
+        """
+        if self.bound_plant_id is None or not paths:
+            return True
+        try:
+            served = set(await self.modbus.discover(sorted(set(paths.values()))))
+        except _MODBUS_ERRORS as err:
+            self._modbus_failed(err)
+            return False
+        self._modbus_recovered()
+        self._discovered_for = (self.bound_plant_id, frozenset(paths))
+        self._modbus_paths = {
+            (self.bound_plant_id, path) for path, unit in paths.items() if unit in served
+        }
+        return True
+
+    async def _async_merge_modbus(self, data: HovalData, *, modbus_down: bool) -> bool:
+        """Overlay Modbus readings on the bound plant; True if any reading arrived."""
+        plant = self._bound_plant(data)
+        if plant is None:
+            return False
+        paths = self._hv_paths(plant)
+        if not modbus_down and (plant.plant_id, frozenset(paths)) != self._discovered_for:
+            # First fetch without a stored topology, a new HV circuit, or a
+            # binding resolved just now.
+            modbus_down = not await self._async_discover(paths)
+        served = {
+            path: paths[path]
+            for pid, path in self._modbus_paths
+            if pid == plant.plant_id and path in paths
+        }
+        if not served:
+            return False
+        readings: dict[int, HvModbusReading | None] = {}
+        if not modbus_down:
+            try:
+                readings = await self.modbus.poll(sorted(set(served.values())))
+            except _MODBUS_ERRORS as err:
+                self._modbus_failed(err)
+            else:
+                self._modbus_recovered()
+        fresh = False
+        if readings:
+            self._apply_gateway_clock(plant)
+        else:
+            plant.gateway_clock_offset = plant.gateway_time = None
+        for path, unit in served.items():
+            # None blanks the Modbus-owned fields: no fallback to cloud values.
+            reading = readings.get(unit)
+            self._apply_reading(plant.plant_id, plant.circuits[path], reading)
+            fresh = fresh or reading is not None
+        return fresh
+
+    def _apply_reading(
+        self, plant_id: str, circuit: HovalCircuitData, reading: HvModbusReading | None
+    ) -> None:
+        """Overlay a reading and remember the weekly program for the resume option.
+
+        Both the local fetch and the hybrid merge go through here, so
+        resolve_resume_program has a current week program even when no cloud
+        fetch ever runs (local) or the cloud is down (hybrid).
+        """
+        apply_modbus_reading(circuit, reading)
+        if reading is not None and reading.program in {"week1", "week2"}:
+            self._last_week_program[(plant_id, circuit.path)] = reading.program
+
+    def _modbus_failed(self, err: Exception) -> None:
+        """Log a Modbus failure once per outage, like the offline handling."""
+        if self._modbus_failing:
+            _LOGGER.debug("Modbus gateway still failing: %s", err)
+            return
+        self._modbus_failing = True
+        _LOGGER.warning(
+            "Modbus gateway is not answering (%s); its values are unavailable until it answers",
+            err,
+        )
+
+    def _modbus_recovered(self) -> None:
+        if self._modbus_failing:
+            self._modbus_failing = False
+            _LOGGER.info("Modbus gateway is answering again")
+
+    async def _async_fetch_local(self) -> HovalData:
+        """Build the whole data model from Modbus (no cloud account)."""
+        if self.modbus is None:
+            raise UpdateFailed("Neither cloud nor Modbus is configured")
+        plant_id, plant_name = self._local_plant or ("local", "Hoval")
+        try:
+            if self._local_units is None:
+                units = await self.modbus.discover()
+                if not units:
+                    raise UpdateFailed("No HV unit answered on the Modbus gateway")
+                self._local_units = units
+            readings = await self.modbus.poll(self._local_units)
+        except _MODBUS_ERRORS as err:
+            raise UpdateFailed(f"Modbus error: {err}") from err
+        plant = HovalPlantData(plant_id, plant_name, is_online=True)
+        self._apply_gateway_clock(plant)
+        multiple = len(self._local_units) > 1
+        for unit in self._local_units:
+            reading = readings.get(unit)
+            if reading is None:
+                continue
+            path = f"{unit}.50.0"
+            name = CIRCUIT_TYPE_NAMES[CIRCUIT_TYPE_HV]
+            circuit = HovalCircuitData(
+                CIRCUIT_TYPE_HV, path, f"{name} {unit}" if multiple else name
+            )
+            self._apply_reading(plant_id, circuit, reading)
+            plant.circuits[path] = circuit
+            if reading.active_errors:
+                plant.has_error = True
+        return HovalData(plants={plant_id: plant}, cloud_ok=False)
+
+    async def _async_fetch_cloud(self) -> HovalData:
+        """Fetch data from the API.
+
+        This is the former _async_update_data body, moved so the cloud-only
+        behaviour stays identical. Its one hybrid hook: circuits in
+        `_modbus_paths` (always empty without Modbus) skip live values and
+        circuit details.
+        """
+        if self.api is None:  # only reachable by calling this directly
+            raise UpdateFailed("Cloud API is not configured")
         # Timestamp BEFORE any fetch: overrides set after this instant belong
         # to control actions this poll's data snapshot cannot reflect yet, so
         # the pruning at the end must leave them alone.
@@ -664,10 +1346,19 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
 
                     # Fetch live values (always) + programs (only if cache expired)
                     # + circuit details (limits, HV setpoints) on the same cadence.
-                    live_task = self.api.get_live_values(_plant_id, path, ctype)
+                    # G6: an HV circuit Modbus serves gets its live values and
+                    # setpoints from Modbus, so neither is asked from the cloud.
+                    served = program_key in self._modbus_paths
+                    live_task = (
+                        _no_cloud_live_values()
+                        if served
+                        else self.api.get_live_values(_plant_id, path, ctype)
+                    )
                     cached_details = self._details_cache.get(program_key)
-                    need_details = ctype in _DETAILS_CIRCUIT_TYPES and (
-                        cached_details is None or time.monotonic() >= cached_details[2]
+                    need_details = (
+                        not served
+                        and ctype in _DETAILS_CIRCUIT_TYPES
+                        and (cached_details is None or time.monotonic() >= cached_details[2])
                     )
                     details = (
                         [self.api.get_circuit_details(_plant_id, path)] if need_details else []
@@ -1006,11 +1697,31 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """
         if not self.last_update_success or self.data is None:
             return
+        self._check_acknowledges()
         current_circuits = {
             f"{pid}_{path}" for pid, plant in self.data.plants.items() for path in plant.circuits
         }
         new_circuits = current_circuits - self._known_circuits
         self._known_circuits = current_circuits
+        # Modbus-only entities exist only with a reading, so a circuit that
+        # gains its first one (gateway back after an HA start without it)
+        # needs the platforms to look again.
+        with_modbus = {
+            f"{pid}_{path}"
+            for pid, plant in self.data.plants.items()
+            for path, circuit in plant.circuits.items()
+            if circuit.modbus is not None
+        }
+        new_modbus = with_modbus - self._modbus_circuits
+        self._modbus_circuits |= with_modbus
+        # The clock is a register the gateway may not have cached yet: a first
+        # value on a later tick must also add the sensor.
+        with_clock = {
+            pid for pid, plant in self.data.plants.items() if plant.gateway_clock_offset is not None
+        }
+        new_clock = with_clock - self._clock_plants
+        self._clock_plants |= with_clock
         if new_circuits:
             _LOGGER.info("New circuits discovered: %s", new_circuits)
+        if new_circuits or new_modbus or new_clock:
             async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)

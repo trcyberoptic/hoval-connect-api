@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -20,19 +22,32 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .api import HovalApiError, HovalConnectApi
 from .compat import DEVICE_INFO_HAS_VIA_DEVICE_ID, OPTIONS_FLOW_RELOADS
 from .const import (
+    CIRCUIT_TYPE_HV,
     CIRCUIT_TYPE_NAMES,
+    DATA_TOPOLOGY,
     DOMAIN,
     OPERATION_MODE_REGULAR,
 )
 from .coordinator import HovalCircuitData, HovalDataCoordinator, HovalPlantData
-from .options import get_scan_interval
+from .modbus import HovalModbusClient
+from .modbus_hv import HovalModbusPoller
+from .options import (
+    ModbusSettings,
+    get_modbus_plant_id,
+    get_modbus_scan_interval,
+    get_modbus_settings,
+    get_scan_interval,
+    is_local_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CLIMATE,
     Platform.FAN,
+    Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
     Platform.WATER_HEATER,
@@ -52,7 +67,11 @@ class HovalRuntimeData:
     """Runtime data for the Hoval Connect integration."""
 
     coordinator: HovalDataCoordinator
-    api: HovalConnectApi
+    api: HovalConnectApi | None
+    # Gateway address and plant binding the coordinator was built with. The
+    # legacy-HA options listener reloads the entry when either changes.
+    modbus_settings: ModbusSettings | None = None
+    modbus_plant_id: str | None = None
 
 
 def plant_device_info(plant_data: HovalPlantData) -> DeviceInfo:
@@ -85,9 +104,87 @@ def circuit_device_info(
     return info
 
 
-def _get_scan_interval(entry: HovalConnectConfigEntry) -> timedelta:
-    """Get the scan interval from options or use default."""
-    return timedelta(seconds=get_scan_interval(entry.options))
+def _apply_intervals(coordinator: HovalDataCoordinator, entry: HovalConnectConfigEntry) -> None:
+    """Set the polling cadence: Modbus interval with a gateway, else the cloud interval.
+
+    Shared by setup and the legacy-HA update listener, which also fires when the
+    coordinator writes the topology into entry.data and must not reset the cadence.
+    The choice follows the coordinator, never the options alone: a gateway added
+    in the options on legacy HA reaches a coordinator built without a poller,
+    whose every update is a full cloud poll (C1, Hoval allows one per 15 min).
+    """
+    cloud_seconds = get_scan_interval(entry.options)
+    coordinator.cloud_interval = cloud_seconds
+    if coordinator.has_modbus:
+        coordinator.update_interval = timedelta(seconds=get_modbus_scan_interval(entry.options))
+    else:
+        coordinator.update_interval = timedelta(seconds=cloud_seconds)
+
+
+# Unique id of an HV circuit's fan entity; plant ids may contain underscores.
+_FAN_UNIQUE_ID = re.compile(r"^(?P<plant>.+)_(?P<path>\d+\.\d+\.\d+)_fan$")
+
+
+# Identifier of a circuit device: `{plant_id}_{path}` (a plant device has no path).
+_CIRCUIT_DEVICE_ID = re.compile(r"_\d+\.\d+\.\d+$")
+
+
+def _seed_topology(
+    hass: HomeAssistant, entry: HovalConnectConfigEntry, modbus_plant_id: str | None
+) -> dict[str, Any] | None:
+    """Rebuild a hybrid entry's topology from its own registry entries (I6).
+
+    The topology is stored only after a successful cloud poll in hybrid mode,
+    so an entry switched to hybrid while Hoval already refuses it could not
+    start at all. Its HV circuits are known anyway: they are the fan entities
+    `{plant_id}_{path}_fan` this entry registered as a cloud entry, and the
+    device registry holds their names (with the "Hoval " prefix that
+    plant_device_info/circuit_device_info add). Only one plant is seeded: the
+    plant chosen in the options, else the only plant of the account; otherwise
+    None, and the first start needs the cloud as before. The account's plants
+    are the plant devices this entry registered, not the plants with an HV
+    unit: a seed on a two-plant account would bind the gateway implicitly, and
+    the stored topology would make that permanent. The coordinator uses the
+    seed like a stored topology; the next successful cloud poll stores it.
+    """
+    circuits: dict[str, list[str]] = {}
+    for entity in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id):
+        if entity.domain != Platform.FAN or entity.platform != DOMAIN:
+            continue
+        if (match := _FAN_UNIQUE_ID.match(entity.unique_id)) is not None:
+            circuits.setdefault(match["plant"], []).append(match["path"])
+    device_reg = dr.async_get(hass)
+    if modbus_plant_id:
+        plant_id = modbus_plant_id if modbus_plant_id in circuits else None
+    else:
+        plant_devices = {
+            identifier
+            for device in dr.async_entries_for_config_entry(device_reg, entry.entry_id)
+            for domain, identifier in device.identifiers
+            if domain == DOMAIN and not _CIRCUIT_DEVICE_ID.search(identifier)
+        }
+        plant_id = next(iter(circuits)) if len(circuits) == 1 and len(plant_devices) == 1 else None
+    if plant_id is None:
+        return None
+
+    def name(identifier: str, fallback: str) -> str:
+        device = device_reg.async_get_device(identifiers={(DOMAIN, identifier)})
+        registered = device.name if device is not None else None
+        return (registered or "").removeprefix("Hoval ") or fallback
+
+    topology = {
+        "plant_id": plant_id,
+        "plant_name": name(plant_id, plant_id),
+        # The cloud names a circuit without a name after its type.
+        "circuits": {
+            path: name(f"{plant_id}_{path}", CIRCUIT_TYPE_HV) for path in sorted(circuits[plant_id])
+        },
+    }
+    _LOGGER.debug(
+        "No stored plant topology; using %d HV circuit(s) from the entity registry",
+        len(topology["circuits"]),
+    )
+    return topology
 
 
 def _resolve_circuit_from_unique_id(
@@ -130,6 +227,11 @@ async def _async_handle_reset_temporary_change(
                 f"Hoval Connect config entry for {entity_id} is not loaded"
             )
         runtime: HovalRuntimeData = config_entry.runtime_data
+        if runtime.api is None:
+            raise ServiceValidationError(
+                f"Entity {entity_id} belongs to a local-only entry; resetting a temporary "
+                "change needs the Hoval account (cloud)"
+            )
         resolved = _resolve_circuit_from_unique_id(runtime.coordinator, registry_entry.unique_id)
         if resolved is None:
             raise ServiceValidationError(
@@ -177,39 +279,78 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry) -> bool:
     """Set up Hoval Connect from a config entry."""
-    session = async_get_clientsession(hass)
-    api = HovalConnectApi(session, entry.data["email"], entry.data["password"])
-
-    coordinator = HovalDataCoordinator(hass, api)
-    coordinator.update_interval = _get_scan_interval(entry)
-
-    await coordinator.async_config_entry_first_refresh()
-
-    entry.runtime_data = HovalRuntimeData(coordinator=coordinator, api=api)
-
-    # Register a parent device for each plant before the platforms set up, so
-    # circuit devices can link to it by registry id (see circuit_device_info).
-    device_reg = dr.async_get(hass)
-    plant_device_ids: dict[str, str] = {}
-    for plant_id, plant_data in coordinator.data.plants.items():
-        plant_device = device_reg.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, plant_id)},
-            name=f"Hoval {plant_data.name}",
-            manufacturer="Hoval",
-            model="Plant",
+    local = is_local_entry(entry.data)
+    api: HovalConnectApi | None = None
+    if not local:
+        api = HovalConnectApi(
+            async_get_clientsession(hass), entry.data["email"], entry.data["password"]
         )
-        plant_device_ids[plant_id] = plant_device.id
-    coordinator.plant_device_ids = plant_device_ids
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    settings = get_modbus_settings(entry.data, entry.options)
+    poller = (
+        HovalModbusPoller(HovalModbusClient(settings.host, settings.port, settings.unit_id))
+        if settings is not None
+        else None
+    )
+    modbus_plant_id = None if local else get_modbus_plant_id(entry.options)
+    topology = entry.data.get(DATA_TOPOLOGY)
+    if topology is None and poller is not None and not local:
+        topology = _seed_topology(hass, entry, modbus_plant_id)
 
-    _async_register_services(hass)
+    coordinator = HovalDataCoordinator(
+        hass,
+        api,
+        modbus=poller,
+        modbus_plant_id=modbus_plant_id,
+        # The plant is named after the gateway host: the entry title already
+        # reads "Hoval <host>", and the plant device prefixes "Hoval " itself.
+        local_plant=(
+            (f"local_{entry.entry_id}", settings.host if settings is not None else entry.title)
+            if local
+            else None
+        ),
+        topology=topology,
+    )
+    _apply_intervals(coordinator, entry)
 
-    # New HA reloads via the options flow. Combining that with an update
-    # listener is rejected; old HA keeps the existing in-place interval update.
-    if not OPTIONS_FLOW_RELOADS:
-        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    # HA does not call async_unload_entry when setup fails, so release the
+    # (lazily connected) Modbus client here, or retries would pile up connections.
+    try:
+        await coordinator.async_config_entry_first_refresh()
+
+        entry.runtime_data = HovalRuntimeData(
+            coordinator=coordinator,
+            api=api,
+            modbus_settings=settings,
+            modbus_plant_id=modbus_plant_id,
+        )
+
+        # Register a parent device for each plant before the platforms set up, so
+        # circuit devices can link to it by registry id (see circuit_device_info).
+        device_reg = dr.async_get(hass)
+        plant_device_ids: dict[str, str] = {}
+        for plant_id, plant_data in coordinator.data.plants.items():
+            plant_device = device_reg.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, plant_id)},
+                name=f"Hoval {plant_data.name}",
+                manufacturer="Hoval",
+                model="Plant",
+            )
+            plant_device_ids[plant_id] = plant_device.id
+        coordinator.plant_device_ids = plant_device_ids
+
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        _async_register_services(hass)
+
+        # New HA reloads via the options flow. Combining that with an update
+        # listener is rejected; old HA keeps the existing in-place interval update.
+        if not OPTIONS_FLOW_RELOADS:
+            entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    except BaseException:
+        await coordinator.async_close()
+        raise
 
     return True
 
@@ -218,9 +359,28 @@ async def _async_options_updated(
     hass: HomeAssistant,
     entry: HovalConnectConfigEntry,
 ) -> None:
-    """Handle options update — adjust polling interval without reload."""
-    coordinator = entry.runtime_data.coordinator
-    coordinator.update_interval = _get_scan_interval(entry)
+    """Apply an options change on HA without OptionsFlowWithReload.
+
+    Intervals change in place. The Modbus poller and the plant binding are
+    fixed when the coordinator is built, so a changed gateway address or
+    binding reloads the entry; until then the cadence still follows the
+    coordinator. Also fires when the coordinator stores its topology in
+    entry.data, which changes neither and so never reloads. Local entries
+    change their gateway through reconfigure, which reloads on its own.
+    """
+    runtime = entry.runtime_data
+    coordinator = runtime.coordinator
+    _apply_intervals(coordinator, entry)
+    if not is_local_entry(entry.data):
+        settings = get_modbus_settings(entry.data, entry.options)
+        # Without a gateway before and after, the binding is unused: an entry
+        # without Modbus keeps the old behaviour and is never reloaded here.
+        if settings != runtime.modbus_settings or (
+            settings is not None and get_modbus_plant_id(entry.options) != runtime.modbus_plant_id
+        ):
+            _LOGGER.debug("Modbus gateway or plant binding changed; reloading the entry")
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+            return
     _LOGGER.debug("Polling interval updated to %s", coordinator.update_interval)
 
 
@@ -229,6 +389,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: HovalConnectConfigEntry
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
+    await entry.runtime_data.coordinator.async_close()
     # Remove the integration-level service once the last config entry goes away
     remaining = [
         e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id
