@@ -205,6 +205,13 @@ If setup says the gateway is reachable but does not answer Modbus requests, Modb
 switched off: the gateway accepts the connection on port 502 either way and only stays silent when Modbus is
 off. "Could not reach the gateway" means the address or the network is wrong instead.
 
+**The gateway answers only one Modbus client at a time (measured).** While Home Assistant holds its
+connection, a second client (Loxone, a Modbus tool, a second Home Assistant) connects but gets no answer, which
+looks exactly like "Modbus switched off". Other tools cannot poll the gateway in parallel; close them before
+setting up here. For the same reason a second entry for a gateway that another Hoval Connect entry already uses
+is refused ("gateway already in use"). When you change the gateway address in the options, the integration
+briefly releases its own connection so the check can reach the gateway.
+
 #### 2. Add the gateway
 
 - **Hybrid, new entry:** **Add Integration > Hoval Connect > Cloud account + local Modbus (hybrid)**.
