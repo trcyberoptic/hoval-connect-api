@@ -47,9 +47,15 @@ class _FakePoller:
         self.writes = []
         self.gateway_clock = None
         self.invalidated = []
+        self.slow_gen = 0
+        self._dirty = False
 
     def invalidate_slow(self, unit_id):
         self.invalidated.append(unit_id)
+        self._dirty = True
+
+    def slow_generation(self, unit_id):
+        return self.slow_gen
 
     async def discover(self, candidates=None):
         self.discover_calls += 1
@@ -63,6 +69,10 @@ class _FakePoller:
         self.poll_calls.append(list(unit_ids))
         if self.poll_error is not None:
             raise self.poll_error
+        if self._dirty and not getattr(self, "stale_poll", False):
+            # A real poller re-reads the slow blocks after an invalidation.
+            self._dirty = False
+            self.slow_gen += 1
         return {unit: self.reading for unit in unit_ids}
 
     async def write(self, unit_id, name, value):
@@ -978,3 +988,34 @@ def test_other_writes_do_not_force_a_slow_re_read(runtime):
     coordinator, poller = _ack_setup(runtime)
     asyncio.run(coordinator.async_hv_write("local_E1", "520.50.0", "eco_modulation", 55))
     assert poller.invalidated == []
+
+
+def test_acknowledge_not_judged_on_data_older_than_the_write(runtime, caplog):
+    coordinator, poller = _ack_setup(runtime)
+    poller.stale_poll = True  # a poll that was in flight delivers pre-write data
+    with caplog.at_level(logging.INFO):
+        _ack(coordinator, 7)
+        _finish(runtime, coordinator, poller, 2)
+        assert not [r for r in caplog.records if "maintenance counter" in r.getMessage()]
+        poller.stale_poll = False
+        _finish(runtime, coordinator, poller, 52)
+    assert _records(caplog, logging.INFO, "counter reset from 2 to 52")
+    assert not _records(caplog, logging.WARNING, "maintenance counter")
+
+
+def test_clock_arriving_on_a_later_tick_adds_the_sensor(runtime, monkeypatch):
+    sent = []
+    monkeypatch.setattr(runtime.coordinator, "async_dispatcher_send", lambda *a: sent.append(a))
+    poller = _FakePoller(runtime)
+    coordinator = _local(runtime, poller)
+    for _ in range(2):  # first read busy: circuit signal on tick 1, nothing on tick 2
+        coordinator.data = _update(coordinator)
+        coordinator._async_refresh_finished()
+    assert len(sent) == 1
+    poller.gateway_clock = _clock(runtime)
+    coordinator.data = _update(coordinator)
+    coordinator._async_refresh_finished()
+    assert len(sent) == 2
+    coordinator.data = _update(coordinator)
+    coordinator._async_refresh_finished()
+    assert len(sent) == 2

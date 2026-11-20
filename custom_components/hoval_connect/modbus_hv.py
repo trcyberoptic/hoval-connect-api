@@ -226,6 +226,9 @@ class HovalModbusPoller:
         self._slow: dict[int, tuple[float, list[int] | None, list[list[int] | None]]] = {}
         # Gateway clock, read on the slow cadence; None = unknown / not fitted.
         self.gateway_clock: GatewayClockRead | None = None
+        # Per unit: bumped by invalidate_slow(); count of slow blocks cached.
+        self._slow_epoch: dict[int, int] = {}
+        self._slow_gen: dict[int, int] = {}
         self._clock_read_at: float | None = None
 
     async def discover(self, candidates: Iterable[int] = HV_UNIT_IDS) -> list[int]:
@@ -252,6 +255,7 @@ class HovalModbusPoller:
             now = time.monotonic()
             cached = self._slow.get(unit_id)
             if cached is None or now - cached[0] >= self._slow_ttl:
+                epoch = self._slow_epoch.get(unit_id, 0)
                 maintenance = await self.client.read_holding(
                     hv_maintenance_base(unit_id), HV_MAINTENANCE_LEN
                 )
@@ -263,7 +267,13 @@ class HovalModbusPoller:
                     for i in range(HV_ERROR_ENTRIES)
                 ]
                 cached = (now, maintenance, errors)
-                self._slow[unit_id] = cached
+                # invalidate_slow() during these awaits (an acknowledge written
+                # meanwhile) means the data above may predate the write: use it
+                # for this result, but do not cache it, or the forced re-read
+                # would be lost for a whole TTL.
+                if self._slow_epoch.get(unit_id, 0) == epoch:
+                    self._slow[unit_id] = cached
+                    self._slow_gen[unit_id] = self._slow_gen.get(unit_id, 0) + 1
             result[unit_id] = decode_hv(block, cached[1], cached[2])
         await self._poll_clock()
         return result
@@ -278,20 +288,29 @@ class HovalModbusPoller:
         now = time.monotonic()
         if self._clock_read_at is not None and now - self._clock_read_at < self._slow_ttl:
             return
+        # Taken before the request: the offset therefore carries up to ~1 s of
+        # request latency (the gateway answers in 0.2-1.6 s).
+        read_at = datetime.now(UTC)
         try:
             words = await self.client.read_holding(GATEWAY_CLOCK_ADDRESS, GATEWAY_CLOCK_LEN)
         except HovalModbusError:
-            self.gateway_clock = None
+            # Keep the last good value until the next successful read.
             return
         self._clock_read_at = now
         seconds = _u32(words[0], words[1]) if words is not None and len(words) >= 2 else None
-        self.gateway_clock = (
-            None if seconds is None else GatewayClockRead(seconds, datetime.now(UTC))
-        )
+        self.gateway_clock = None if seconds is None else GatewayClockRead(seconds, read_at)
 
     def invalidate_slow(self, unit_id: int) -> None:
-        """Make the next poll re-read the unit's maintenance block and errors."""
+        """Make the next poll re-read the unit's maintenance block and errors.
+
+        Also discards the result of a poll that is running right now.
+        """
+        self._slow_epoch[unit_id] = self._slow_epoch.get(unit_id, 0) + 1
         self._slow.pop(unit_id, None)
+
+    def slow_generation(self, unit_id: int) -> int:
+        """Number of slow-block reads cached for the unit (stale reads excluded)."""
+        return self._slow_gen.get(unit_id, 0)
 
     async def write(self, unit_id: int, name: str, value: int) -> None:
         """Validate, write, and (except acknowledge) verify by reading back."""
