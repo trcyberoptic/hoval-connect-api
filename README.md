@@ -228,6 +228,7 @@ off. "Could not reach the gateway" means the address or the network is wrong ins
 | Live values: air volume, humidity, target humidity, exhaust and outside temperature | Modbus, every poll | Modbus, every poll |
 | Control status, operating selection, air-quality control, CO₂/VOC (the sensors removed in v1.1.0, **back under their old entity IDs**; CO₂/VOC only where a sensor is fitted) | Modbus | Modbus |
 | Exhaust fan target, weeks until maintenance, filter-cleaning interval, active error code | Modbus | Modbus |
+| *Gateway clock offset* (diagnostic, plant level): how many seconds the gateway's clock differs from Home Assistant's, with the gateway time as attribute. Read every 5 minutes; only created if the gateway has the datapoint | Modbus | Modbus |
 | Program select, fan on/off | written over Modbus | written over Modbus |
 | Number entities: constant and eco modulation (15–100 %), target humidity (30–65 %) | Modbus | Modbus |
 | Buttons: acknowledge maintenance, acknowledge filter cleaning | Modbus | Modbus |
@@ -253,9 +254,13 @@ entry this means every entity: *Online* does not turn *off*, it becomes unavaila
 
 *Acknowledge maintenance* and *Acknowledge filter cleaning* write 7 or 8 to Hoval's datapoint 21054 of the unit,
 as Hoval's own comment for that register describes. Hoval's datapoint list marks the register
-**read-only** in the same row, so whether the gateway accepts the write is **not verified yet**. If it
-refuses, the button raises an error that names the gateway's answer. Press a button only when the
-panel shows the matching message; afterwards the *Weeks until maintenance* sensor should reset.
+**read-only** in the same row, and **the gateway confirms even writes it ignores**: it echoed a write
+to its own (read-only) clock correctly and did nothing. A confirmed button press therefore proves
+nothing. Press a button only when the panel shows the matching message, then **check the *Weeks until
+maintenance* sensor**: the integration re-reads the unit's maintenance values right after the press
+and writes the comparison to the Home Assistant log (counter reset from X to Y weeks, or a warning
+that the counter did not change). For *Acknowledge filter cleaning* there is no countdown datapoint,
+so the result cannot be verified over Modbus; check the panel.
 
 #### If the cloud is unavailable
 

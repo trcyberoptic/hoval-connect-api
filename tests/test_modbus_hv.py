@@ -203,7 +203,7 @@ async def test_poll_reads_slow_blocks_only_after_ttl(monkeypatch):
     poller = modbus_hv.HovalModbusPoller(client)
 
     first = (await poller.poll([520]))[520]
-    assert len(client.reads) == 7  # block + maintenance + 5 error entries
+    assert len(client.reads) == 8  # block + maintenance + 5 error entries + clock
     assert first.maintenance_interval_weeks == 52 and first.active_errors == ()
 
     client.reads.clear()
@@ -215,7 +215,7 @@ async def test_poll_reads_slow_blocks_only_after_ttl(monkeypatch):
     client.reads.clear()
     clock.now += 240  # 300 s since the last slow read
     await poller.poll([520])
-    assert len(client.reads) == 7
+    assert len(client.reads) == 8
 
 
 async def test_poll_maps_vanished_unit_to_none():
@@ -256,3 +256,104 @@ async def test_invalid_write_sends_nothing(name, value):
     with pytest.raises(ValueError):
         await modbus_hv.HovalModbusPoller(client).write(520, name, value)
     assert client.writes == [] and client.reads == []
+
+
+# --- Gateway clock (datapoint 20 "Unixzeit", registers 19802/19803) -----------
+
+from datetime import UTC, datetime  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
+
+_ZURICH = ZoneInfo("Europe/Zurich")
+# Measured 2026-11-20: the gateway answered [27391, 39041] = 1795135617 while the
+# PC's UTC epoch was 1795132008 (the gateway ran 9 s ahead, zone offset +3600).
+_CLOCK_WORDS = [27391, 39041]
+_CLOCK_NOW = datetime.fromtimestamp(1795132008, UTC)
+
+
+def test_gateway_clock_offset_and_time():
+    seconds = (27391 << 16) | 39041
+    assert seconds == 1795135617
+    offset, gateway_time = modbus_hv.decode_gateway_clock(seconds, _CLOCK_NOW, _ZURICH)
+    assert offset == 9
+    assert gateway_time.isoformat().endswith("+01:00")
+    assert gateway_time.isoformat() == "2026-11-20T00:46:57+01:00"
+
+
+@pytest.mark.parametrize("naive", [(2026, 10, 25, 2, 30), (2026, 3, 29, 2, 30)])
+def test_gateway_clock_dst_edges_never_raise(naive):
+    # Autumn: 02:30 happens twice; spring: 02:30 does not exist. Either reading is fine.
+    seconds = int((datetime(*naive) - datetime(1970, 1, 1)).total_seconds())
+    offset, gateway_time = modbus_hv.decode_gateway_clock(
+        seconds, datetime(*naive, tzinfo=_ZURICH).astimezone(UTC), _ZURICH
+    )
+    assert abs(offset) <= 3600 and gateway_time.tzinfo is not None
+
+
+def test_gateway_clock_sentinel_is_unknown():
+    assert modbus_hv.decode_gateway_clock(None, _CLOCK_NOW, _ZURICH) is None
+
+
+def _clock_answers(unit=520, clock=_CLOCK_WORDS):
+    return {**_unit_answers(unit), (19802, 2): clock}
+
+
+async def test_poll_reads_clock_with_the_slow_blocks(monkeypatch):
+    clock = FakeTime()
+    monkeypatch.setattr(modbus_hv, "time", clock)
+    client = FakeClient(_clock_answers())
+    poller = modbus_hv.HovalModbusPoller(client)
+    assert poller.gateway_clock is None
+
+    await poller.poll([520])
+    assert client.reads.count((19802, 2)) == 1
+    assert poller.gateway_clock.seconds == 1795135617
+    assert poller.gateway_clock.read_at.tzinfo is not None
+
+    client.reads.clear()
+    clock.now += 60
+    await poller.poll([520])
+    assert (19802, 2) not in client.reads  # not on every tick
+    assert poller.gateway_clock.seconds == 1795135617
+
+    client.reads.clear()
+    clock.now += 240
+    await poller.poll([520])
+    assert client.reads.count((19802, 2)) == 1
+
+
+async def test_clock_read_once_per_gateway_not_per_unit():
+    client = FakeClient({**_clock_answers(520), **_unit_answers(521)})
+    await modbus_hv.HovalModbusPoller(client).poll([520, 521])
+    assert client.reads.count((19802, 2)) == 1
+
+
+async def test_clock_exception_2_means_unknown_without_error():
+    client = FakeClient(_unit_answers(520))  # 19802 unanswered -> None (exception 2)
+    poller = modbus_hv.HovalModbusPoller(client)
+    result = await poller.poll([520])
+    assert result[520] is not None and poller.gateway_clock is None
+
+
+async def test_clock_busy_does_not_fail_the_poll_and_is_retried():
+    answers = _clock_answers()
+    answers[(19802, 2)] = HovalModbusError("busy", exception_code=modbus.EXC_BUSY)
+    client = FakeClient(answers)
+    poller = modbus_hv.HovalModbusPoller(client)
+    assert (await poller.poll([520]))[520] is not None
+    assert poller.gateway_clock is None
+    client.answers[(19802, 2)] = _CLOCK_WORDS
+    await poller.poll([520])
+    assert poller.gateway_clock.seconds == 1795135617
+
+
+async def test_invalidate_slow_forces_one_maintenance_re_read():
+    client = FakeClient(_clock_answers())
+    poller = modbus_hv.HovalModbusPoller(client)
+    await poller.poll([520])
+    client.reads.clear()
+    poller.invalidate_slow(520)
+    await poller.poll([520])
+    assert client.reads.count((modbus_hv.hv_maintenance_base(520), 13)) == 1
+    client.reads.clear()
+    await poller.poll([520])
+    assert (modbus_hv.hv_maintenance_base(520), 13) not in client.reads

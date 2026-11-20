@@ -79,6 +79,11 @@ class HovalPlantSensorEntityDescription(SensorEntityDescription):
     """Describe a Hoval plant-level sensor entity."""
 
     value_fn: Callable[[HovalPlantData], Any | None]
+    # Value comes from the Modbus gateway: no cloud needed, created only once a
+    # value was read (an already registered entity is kept), available while
+    # Modbus delivers it.
+    modbus_backed: bool = False
+    attributes_fn: Callable[[HovalPlantData], dict[str, Any]] | None = None
 
 
 def _coerce_timestamp(value: Any) -> datetime | None:
@@ -659,6 +664,20 @@ PLANT_SENSOR_DESCRIPTIONS: tuple[HovalPlantSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda p: p.weather.outside_temperature if p.weather else None,
     ),
+    # Plant-level, from the gateway's own clock (datapoint 20, registers 19802/19803).
+    HovalPlantSensorEntityDescription(
+        key="gateway_clock_offset",
+        translation_key="gateway_clock_offset",
+        icon="mdi:clock-alert-outline",
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        modbus_backed=True,
+        value_fn=lambda p: p.gateway_clock_offset,
+        attributes_fn=lambda p: {
+            "gateway_time": p.gateway_time.isoformat() if p.gateway_time else None
+        },
+    ),
 )
 
 
@@ -731,9 +750,21 @@ async def async_setup_entry(
                         HovalCircuitSensor(coordinator, plant_id, path, circuit, description)
                     )
 
-            # Plant-level sensors (events and weather come from the cloud only)
-            for description in () if coordinator.is_local else PLANT_SENSOR_DESCRIPTIONS:
+            # Plant-level sensors (events and weather come from the cloud only,
+            # the gateway clock from Modbus)
+            for description in PLANT_SENSOR_DESCRIPTIONS:
+                if description.modbus_backed:
+                    if not coordinator.has_modbus:
+                        continue
+                elif coordinator.is_local:
+                    continue
                 uid = f"{plant_id}_{description.key}"
+                if (
+                    description.modbus_backed
+                    and description.value_fn(plant_data) is None
+                    and ent_reg.async_get_entity_id("sensor", DOMAIN, uid) is None
+                ):
+                    continue
                 if uid in known:
                     continue
                 known.add(uid)
@@ -869,7 +900,19 @@ class HovalPlantSensor(CoordinatorEntity[HovalDataCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available (events and weather need the cloud)."""
-        return super().available and self._plant is not None and self.coordinator.data.cloud_ok
+        plant = self._plant
+        if not super().available or plant is None:
+            return False
+        if self.entity_description.modbus_backed:
+            return self.entity_description.value_fn(plant) is not None
+        return self.coordinator.data.cloud_ok
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the extra attributes of a Modbus-backed sensor."""
+        fn = self.entity_description.attributes_fn
+        plant = self._plant
+        return None if fn is None or plant is None else fn(plant)
 
     @property
     def native_value(self) -> datetime | float | str | None:

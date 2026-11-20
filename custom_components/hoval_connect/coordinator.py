@@ -38,7 +38,12 @@ from .const import (
     WEATHER_CACHE_TTL,
 )
 from .modbus import HovalModbusError
-from .modbus_hv import HV_UNIT_IDS, HovalModbusPoller, HvModbusReading
+from .modbus_hv import (
+    HV_UNIT_IDS,
+    HovalModbusPoller,
+    HvModbusReading,
+    decode_gateway_clock,
+)
 
 SIGNAL_NEW_CIRCUITS = f"{DOMAIN}_new_circuits"
 
@@ -317,6 +322,10 @@ class HovalPlantData:
     latest_event: HovalEventData | None = None
     events: list[HovalEventData] = field(default_factory=list)
     weather: HovalWeatherData | None = None
+    # Gateway clock over Modbus (diagnostic): its offset to this system in whole
+    # seconds and its wall-clock time; None = not read / not available.
+    gateway_clock_offset: int | None = None
+    gateway_time: datetime | None = None
 
 
 @dataclass
@@ -620,6 +629,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._known_circuits: set[str] = set()
         # Circuits that have had a Modbus reading: the first one adds entities.
         self._modbus_circuits: set[str] = set()
+        # (plant_id, path) -> weeks until maintenance before an acknowledge 7, checked
+        # at the next refresh.
+        self._pending_acks: dict[tuple[str, str], int | None] = {}
         # Consecutive polls per plant that reported isOnline=false.
         self._offline_polls: dict[str, int] = {}
         # Device-registry ids of the plant devices, filled by async_setup_entry.
@@ -639,7 +651,84 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """Write one HV register over Modbus (unit = first path segment)."""
         if self.modbus is None:
             raise HovalModbusError("Modbus is not configured")
-        await self.modbus.write(int(circuit_path.split(".")[0]), name, value)
+        unit = int(circuit_path.split(".")[0])
+        circuit = self._modbus_circuit(plant_id, circuit_path)
+        weeks_before = (
+            circuit.modbus.maintenance_weeks_remaining
+            if circuit is not None and circuit.modbus is not None
+            else None
+        )
+        await self.modbus.write(unit, name, value)
+        if name == "acknowledge":
+            self._after_acknowledge(plant_id, circuit_path, unit, value, weeks_before)
+
+    def _modbus_circuit(self, plant_id: str, circuit_path: str) -> HovalCircuitData | None:
+        plant = self.data.plants.get(plant_id) if self.data is not None else None
+        return None if plant is None else plant.circuits.get(circuit_path)
+
+    def _after_acknowledge(
+        self, plant_id: str, circuit_path: str, unit: int, value: int, weeks_before: int | None
+    ) -> None:
+        """Verify an acknowledge instead of trusting the gateway's echo.
+
+        The gateway echoes writes to registers it does not accept (measured on
+        its read-only clock), and the acknowledge register has no read-back. So
+        the unit's maintenance block is re-read once at the next refresh and the
+        counter compared. Only logs: an acknowledge while nothing is due may
+        legitimately change nothing.
+        """
+        self.modbus.invalidate_slow(unit)
+        if value == 7:
+            self._pending_acks[(plant_id, circuit_path)] = weeks_before
+        else:
+            _LOGGER.info(
+                "Filter cleaning acknowledged on %s; the result cannot be verified over "
+                "Modbus (there is no datapoint for the filter-cleaning countdown)",
+                circuit_path,
+            )
+
+    def _check_acknowledges(self) -> None:
+        """Compare the maintenance counter after an acknowledge with the one before."""
+        for key in list(self._pending_acks):
+            circuit = self._modbus_circuit(*key)
+            if circuit is None:
+                del self._pending_acks[key]
+                continue
+            if circuit.modbus is None:
+                continue  # gateway failing: compare when a reading is back
+            before = self._pending_acks.pop(key)
+            after = circuit.modbus.maintenance_weeks_remaining
+            if before is None or after is None:
+                _LOGGER.info(
+                    "Maintenance acknowledged on %s; the counter could not be read before or "
+                    "after, so the result cannot be verified",
+                    key[1],
+                )
+            elif after != before:
+                _LOGGER.info(
+                    "Maintenance acknowledged on %s: maintenance counter reset from %s to %s weeks",
+                    key[1],
+                    before,
+                    after,
+                )
+            else:
+                _LOGGER.warning(
+                    "Maintenance acknowledged on %s: the gateway confirmed the acknowledge "
+                    "command but the maintenance counter did not change (%s weeks) - the "
+                    "gateway echoes writes it does not apply",
+                    key[1],
+                    after,
+                )
+
+    def _apply_gateway_clock(self, plant: HovalPlantData) -> None:
+        """Put the poller's latest gateway clock reading on the plant."""
+        read = getattr(self.modbus, "gateway_clock", None)
+        decoded = (
+            None
+            if read is None
+            else decode_gateway_clock(read.seconds, read.read_at, dt_util.get_default_time_zone())
+        )
+        plant.gateway_clock_offset, plant.gateway_time = decoded or (None, None)
 
     async def async_close(self) -> None:
         """Close the Modbus connection, if any."""
@@ -998,6 +1087,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
             else:
                 self._modbus_recovered()
         fresh = False
+        if readings:
+            self._apply_gateway_clock(plant)
+        else:
+            plant.gateway_clock_offset = plant.gateway_time = None
         for path, unit in served.items():
             # None blanks the Modbus-owned fields: no fallback to cloud values.
             reading = readings.get(unit)
@@ -1049,6 +1142,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         except _MODBUS_ERRORS as err:
             raise UpdateFailed(f"Modbus error: {err}") from err
         plant = HovalPlantData(plant_id, plant_name, is_online=True)
+        self._apply_gateway_clock(plant)
         multiple = len(self._local_units) > 1
         for unit in self._local_units:
             reading = readings.get(unit)
@@ -1593,6 +1687,7 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """
         if not self.last_update_success or self.data is None:
             return
+        self._check_acknowledges()
         current_circuits = {
             f"{pid}_{path}" for pid, plant in self.data.plants.items() for path in plant.circuits
         }

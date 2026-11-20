@@ -226,6 +226,9 @@
       "weather_temperature": {
         "name": "Forecast temperature"
       },
+      "gateway_clock_offset": {
+        "name": "Gateway clock offset"
+      },
       "flow_temp_actual": {
         "name": "Flow temperature"
       },
