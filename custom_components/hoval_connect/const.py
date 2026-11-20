@@ -44,14 +44,8 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 # The release version. Keep in sync with manifest.json — pinned by a source
 # contract in tests/test_source_contracts.py.
 INTEGRATION_VERSION = "2.0.0"
-# The version the User-Agent announces. Hoval admits client versions by the
-# version in the User-Agent (#24), so it stays on the last version Hoval
-# admitted until Hoval admits a newer one; bump it only then (owner decision
-# 2026-11-20). The cloud requests of 2.0.0 are the same as those of 1.1.0
-# (cloud-only entries) or fewer (hybrid entries).
-USER_AGENT_VERSION = "1.1.0"
 USER_AGENT = (
-    f"hoval-connect-api/{USER_AGENT_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
+    f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
 )
 
 # Token TTLs (with safety margins)
