@@ -463,15 +463,37 @@ class TestModbusIsDependencyFree:
             assert "/v3/" not in src, name
 
 
+def _changelog_section(changelog: str, version: str) -> str:
+    """Body of the '## [version]' section, as release.yml extracts it ('' if absent)."""
+    body: list[str] = []
+    inside = False
+    for line in changelog.splitlines():
+        if line.startswith(f"## [{version}]"):
+            inside = True
+        elif inside and line.startswith("## "):
+            break
+        elif inside:
+            body.append(line)
+    return "\n".join(body).strip()
+
+
 class TestReleaseNotes:
-    """Release notes come from CHANGELOG.md, so every version needs a section there."""
+    """Release notes come from CHANGELOG.md, so every version needs a non-empty section there."""
+
+    def test_section_helper_rejects_missing_and_empty_sections(self):
+        text = "# Log\n\n## [2.0.0] - Unreleased\n\n## [1.0.0]\n\n- old\n"
+        assert _changelog_section(text, "2.0.0") == ""
+        assert _changelog_section(text, "3.0.0") == ""
+        assert _changelog_section(text, "1.0.0") == "- old"
 
     def test_changelog_has_a_section_for_the_manifest_version(self):
         import json
 
         version = json.loads(_read("manifest.json"))["version"]
         changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
-        assert f"\n## [{version}]" in changelog, f"CHANGELOG.md lacks a '## [{version}]' section"
+        assert _changelog_section(changelog, version), (
+            f"CHANGELOG.md lacks a non-empty '## [{version}]' section"
+        )
 
     def test_release_workflow_reads_the_changelog(self):
         wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
