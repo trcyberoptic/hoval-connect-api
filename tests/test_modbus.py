@@ -372,8 +372,8 @@ async def test_connect_timeout_is_not_flagged_as_no_answer(monkeypatch):
     assert err.value.no_answer is False
 
 
-async def test_disconnect_drops_the_socket_but_the_client_stays_usable():
-    """The options flow frees the gateway's single client slot before probing."""
+async def test_paused_refuses_requests_without_connecting_and_resumes():
+    """While paused (options-flow probe) a poll's next request must not retake the slot."""
 
     def script(_srv, _conn, req):
         return _read_response(req[0], BLOCK)
@@ -383,9 +383,48 @@ async def test_disconnect_drops_the_socket_but_the_client_stays_usable():
         try:
             assert await client.read_holding(23622, 13) == BLOCK
             assert server.connections == 1
-            await client.disconnect()
-            assert client._writer is None and not client._closed
+            async with client.paused():
+                assert client._writer is None and not client._closed
+                with pytest.raises(modbus.HovalModbusError, match="paused"):
+                    await client.read_holding(23622, 13)
+                assert server.connections == 1  # no reconnect
             assert await client.read_holding(23622, 13) == BLOCK  # lazy reconnect
             assert server.connections == 2
+        finally:
+            await client.close()
+
+
+async def test_paused_resumes_when_the_block_raises():
+    def script(_srv, _conn, req):
+        return _read_response(req[0], BLOCK)
+
+    async with FakeServer(script) as server:
+        client = _client(server)
+        try:
+            with pytest.raises(RuntimeError):
+                async with client.paused():
+                    raise RuntimeError("probe failed")
+            assert await client.read_holding(23622, 13) == BLOCK
+        finally:
+            await client.close()
+
+
+async def test_pause_waits_for_the_running_request_then_blocks_the_next_one():
+    """A poll in flight finishes its request; its follow-up request is refused."""
+
+    def script(_srv, _conn, req):
+        return _read_response(req[0], BLOCK)
+
+    async with FakeServer(script, delay=0.1) as server:
+        client = _client(server)
+        try:
+
+            async def pause_block():
+                async with client.paused():
+                    await asyncio.sleep(0.05)
+
+            first, _ = await asyncio.gather(client.read_holding(23622, 13), pause_block())
+            assert first == BLOCK
+            assert server.connections == 1
         finally:
             await client.close()

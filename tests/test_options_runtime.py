@@ -70,8 +70,8 @@ def test_get_modbus_settings_cloud_and_local(options):
     assert options.get_modbus_settings(cloud, {}) is None
     assert options.get_modbus_settings(cloud, {"modbus_host": ""}) is None
     assert options.get_modbus_settings(cloud, {"modbus_host": "  "}) is None
-    opts = {"modbus_host": "10.0.0.9", "modbus_port": "503", "modbus_unit_id": 3}
-    assert options.get_modbus_settings(cloud, opts) == options.ModbusSettings("10.0.0.9", 503, 3)
+    opts = {"modbus_host": "192.0.2.10", "modbus_port": "503", "modbus_unit_id": 3}
+    assert options.get_modbus_settings(cloud, opts) == options.ModbusSettings("192.0.2.10", 503, 3)
     # Defaults and corrupt values.
     assert options.get_modbus_settings(cloud, {"modbus_host": "h", "modbus_port": True}) == (
         options.ModbusSettings("h", 502, 1)
