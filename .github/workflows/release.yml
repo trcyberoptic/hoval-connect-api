@@ -85,3 +85,8 @@ jobs:
           name: ${{ steps.version.outputs.version }}
           body: ${{ steps.changelog.outputs.changes }}
           generate_release_notes: false
+          # A hyphen in the version (v2.0.0-beta.1) marks a test build: a GitHub
+          # pre-release that is not "Latest", so HACS does not offer it as an
+          # update. Testers pick it via Redownload.
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.version, '-') && 'false' || 'true' }}

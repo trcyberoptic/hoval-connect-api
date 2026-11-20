@@ -499,3 +499,13 @@ class TestReleaseNotes:
         wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
         assert "CHANGELOG.md" in wf
         assert "::error::CHANGELOG.md" in wf
+
+    def test_release_workflow_marks_hyphenated_versions_as_prereleases(self):
+        """v2.0.0-beta.1 must be a pre-release and never "Latest", or HACS would
+        offer a test build to every user as an update."""
+        wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
+        assert "prerelease: ${{ contains(steps.version.outputs.version, '-') }}" in wf
+        assert (
+            "make_latest: ${{ contains(steps.version.outputs.version, '-') && 'false' || 'true' }}"
+            in wf
+        )
