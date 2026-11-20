@@ -49,18 +49,31 @@ jobs:
 
       - name: Generate changelog
         id: changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Get commits since previous tag
+          # The release notes are the CHANGELOG.md section for this version
+          # ("## [X.Y.Z]" up to the next "## " heading). Matching on the version only,
+          # so the heading may still say "Unreleased" on release day.
+          NUMBER="${VERSION#v}"
+          NOTES=$(awk -v h="## [$NUMBER]" '
+            index($0, h) == 1 { on = 1; next }
+            on && index($0, "## ") == 1 { exit }
+            on { print }
+          ' CHANGELOG.md | sed -e '/./,$!d')
+          if [ -z "$NOTES" ]; then
+            echo "::error::CHANGELOG.md has no '## [$NUMBER]' section (or it is empty)"
+            exit 1
+          fi
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            CHANGES=$(git log --pretty=format:"- %s" "$PREV_TAG"..HEAD --no-merges)
-          else
-            CHANGES=$(git log --pretty=format:"- %s" --no-merges)
+            LINK="Full changes: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${VERSION}"
+            NOTES=$(printf '%s\n\n%s' "$NOTES" "$LINK")
           fi
           {
-            echo "changes<<EOF"
-            echo "$CHANGES"
-            echo "EOF"
+            echo "changes<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
@@ -70,8 +83,5 @@ jobs:
           # from — the action creates the tag at the checked-out commit.
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
-          body: |
-            ## Changes
-
-            ${{ steps.changelog.outputs.changes }}
+          body: ${{ steps.changelog.outputs.changes }}
           generate_release_notes: false

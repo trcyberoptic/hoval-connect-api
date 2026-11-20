@@ -461,3 +461,19 @@ class TestModbusIsDependencyFree:
             src = _read(name)
             assert "aiohttp" not in src, name
             assert "/v3/" not in src, name
+
+
+class TestReleaseNotes:
+    """Release notes come from CHANGELOG.md, so every version needs a section there."""
+
+    def test_changelog_has_a_section_for_the_manifest_version(self):
+        import json
+
+        version = json.loads(_read("manifest.json"))["version"]
+        changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+        assert f"\n## [{version}]" in changelog, f"CHANGELOG.md lacks a '## [{version}]' section"
+
+    def test_release_workflow_reads_the_changelog(self):
+        wf = (pathlib.Path(".github") / "workflows" / "release.yml").read_text(encoding="utf-8")
+        assert "CHANGELOG.md" in wf
+        assert "::error::CHANGELOG.md" in wf
