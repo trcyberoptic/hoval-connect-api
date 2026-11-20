@@ -5,6 +5,25 @@ All notable changes to this integration are listed here. The format follows
 [Semantic Versioning](https://semver.org/). The text of a release's section is also the body of its
 GitHub release (see `.github/workflows/release.yml`).
 
+## [2.0.0-beta.1] - 2026-11-20
+
+Test build of 2.0.0, which adds a local Modbus TCP mode for HomeVent (HV) units (hybrid with the
+cloud, or local only). It is opt-in: Home Assistant does not offer it as an update.
+
+**Install:** HACS -> Hoval Connect -> three-dot menu -> Redownload -> select `v2.0.0-beta.1` ->
+Download -> restart Home Assistant. To go back to 1.1.0, do the same and select `v1.1.0`.
+
+Towards Hoval's cloud this build identifies as `hoval-connect-api/1.1.0` and makes the same or
+fewer cloud requests as 1.1.0.
+
+All changes: see the [2.0.0 section](https://github.com/trcyberoptic/hoval-connect-api/blob/v2.0.0-beta.1/CHANGELOG.md#200---unreleased).
+
+### Known gaps
+
+- Writes over Modbus are not yet verified on the unit's own display panel.
+- The acknowledge buttons (maintenance, filter cleaning) are unverified.
+- HV units only.
+
 ## [2.0.0] - Unreleased
 
 Version 2.0.0 adds a local mode and includes everything since v1.1.0. Hoval has to admit the new
@@ -78,4 +97,5 @@ Until then, and whenever the cloud is blocked, the local Modbus mode keeps the v
 
 Releases before 2.0.0 are listed on [GitHub Releases](https://github.com/trcyberoptic/hoval-connect-api/releases).
 
+[2.0.0-beta.1]: https://github.com/trcyberoptic/hoval-connect-api/compare/v1.1.0...v2.0.0-beta.1
 [2.0.0]: https://github.com/trcyberoptic/hoval-connect-api/compare/v1.1.0...v2.0.0
