@@ -4,6 +4,8 @@ Reverse-engineered API documentation for the **Hoval Connect** IoT platform (use
 
 > ⚠️ **Unofficial.** Not affiliated with Hoval. Use at your own risk. API may change without notice.
 
+What changed in each release: see the [changelog](CHANGELOG.md).
+
 > **Successor to [Hoval-GatewayV2-CANBUS-MQTT](https://github.com/trcyberoptic/Hoval-GatewayV2-CANBUS-MQTT).** This cloud-based integration requires no additional hardware — just your Hoval Connect credentials. The previous project used CAN bus + MQTT via a physical gateway connection.
 
 ## Home Assistant Integration
@@ -32,6 +34,11 @@ Plants and circuits are discovered automatically from your account.
 > data hourly and no longer reads raw controller datapoints. Hoval agreed to allow it and
 > recognises it by the version in its User-Agent (`hoval-connect-api/1.1.0`). Until Hoval
 > has done so, v1.1.0 gets the same 403. [#24][issue-24] shows the current status.
+>
+> **2.0.0** adds the [local Modbus TCP mode](#local-modbus-tcp) and identifies itself as
+> `hoval-connect-api/2.0.0`. Like 1.1.0 before it, it works against the cloud only once Hoval
+> has admitted that version ([#24][issue-24] shows the status). Until then, and whenever the
+> cloud is blocked, the local Modbus mode keeps the ventilation working without the cloud.
 >
 > Update in HACS, then **restart Home Assistant completely**: a config-entry reload does not
 > re-import Python modules. Do not change the User-Agent yourself. Hoval allows the
@@ -291,10 +298,14 @@ retrying, because every retry would log in again.
 - **No time program editing.** Time programs can be read but not modified through the integration.
 - **No energy/temperature history.** Historical statistics endpoints are documented but not yet integrated.
 - **No holiday mode control.**
-- **No detailed controller status and no CO₂/VOC values from the cloud (since v1.1.0; [Local Modbus TCP](#local-modbus-tcp) brings them back for HV units).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list follow in the next release. See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
+- **No detailed controller status and no CO₂/VOC values from the cloud (since v1.1.0; [Local Modbus TCP](#local-modbus-tcp) brings them back for HV units).** Hoval asked for the endpoint they came from to be dropped (#24). Coarse stand-ins from the circuit list exist since 2.0.0 (*Status*, *Room air quality*, *Holiday end*, *Heating/cooling control*). See [Sensors removed in v1.1.0](#sensors-removed-in-v110) for what each one maps to.
 - **One config entry per Hoval account.** The same account email cannot be added twice (the entry's unique ID is the lowercased email), but several Hoval accounts can run side by side — each entry gets its own coordinator and polls independently.
 
 ### Sensors removed in v1.1.0
+
+**HV units with a Modbus gateway get the ventilation sensors back** under their old entity IDs
+(control status, operating selection, air-quality control, CO₂/VOC where a sensor is fitted), see
+[Local Modbus TCP](#local-modbus-tcp). The table describes the cloud-only situation.
 
 Up to v1.0.18 these sensors read raw controller datapoints through
 `GET /api/telemetry-data/snapshots/live/{plantId}`. Hoval asked third-party integrations to
@@ -303,8 +314,8 @@ stop calling that endpoint ([#24][issue-24]), so v1.1.0 no longer does.
 | Sensor (English / German) | Circuit | Datapoint | Status since v1.1.0 |
 |---|---|---|---|
 | Control status / Regelungsstatus | HV | `39652` | **No replacement.** No other endpoint reports why the unit deviates from its schedule (normal, VOC, humidity, frost protection, CoolVent, fault, summer humidity, switch-off stop). `operationMode` stays `ventilation` during CoolVent and summer humidity. |
-| Control status / Regelungsstatus | HK | `2051` | **Partly replaced** in the next release ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)): *Status* now shows heating / cooling / active / inactive, *Holiday end* shows a running holiday program, and *Heating/cooling control* shows the control type on reversible heat pumps. Frost protection, screed drying, SmartGrid and the other detail states have no replacement. |
-| CO₂ extract air / CO₂ Abluft | HV | `37606` | **Partly replaced** in the next release by *Room air quality* / *Raumluftqualität*: poor / medium / good instead of a percentage, from `airQuality.actualRoomAirQuality` on the circuit list. Created only on units with an air-quality sensor. |
+| Control status / Regelungsstatus | HK | `2051` | **Partly replaced** since 2.0.0 ([#14](https://github.com/trcyberoptic/hoval-connect-api/issues/14)): *Status* now shows heating / cooling / active / inactive, *Holiday end* shows a running holiday program, and *Heating/cooling control* shows the control type on reversible heat pumps. Frost protection, screed drying, SmartGrid and the other detail states have no replacement. |
+| CO₂ extract air / CO₂ Abluft | HV | `37606` | **Partly replaced** since 2.0.0 by *Room air quality* / *Raumluftqualität*: poor / medium / good instead of a percentage, from `airQuality.actualRoomAirQuality` on the circuit list. Created only on units with an air-quality sensor. |
 | VOC extract air / VOC Abluft | HV | `37608` | **Partly replaced.** As above. |
 | VOC outside air / VOC Aussenluft | HV | `37611` | **Partly replaced.** As above. |
 | Air quality control (code) / Luftqualitätsregelung (Code) | HV | `39600` | **Partly replaced** by the new binary sensor *Air quality guided* / *Luftqualitätsgeführt*: on/off instead of the raw code. |
@@ -320,7 +331,8 @@ official API; if that happens, the sensors will come back.
 ### Requirements
 
 - A Hoval Connect account (same credentials as the Hoval Connect mobile app)
-- Hoval Connect (this integration) v1.1.0 or newer: Hoval blocks older releases (see the note under [Installation](#installation-hacs))
+- Hoval Connect (this integration) v1.1.0 or newer: Hoval blocks older releases. Use 2.0.0 for the local Modbus mode. Cloud access needs a version Hoval has admitted (see the note under [Installation](#installation-hacs))
+- For the local mode: a Hoval TTE-GW gateway with Modbus TCP switched on, reachable from Home Assistant on port 502 (HV units only)
 - Home Assistant 2024.11.0 or newer — the config flow calls `self._get_reauth_entry()` (2024.11) and relies on the base class setting `OptionsFlow.config_entry`, and the integration keeps its state in `entry.runtime_data` (2024.6). The bundled Blueprint separately declares `min_version: "2024.6.0"`.
 
 ---
