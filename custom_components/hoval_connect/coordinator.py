@@ -631,7 +631,9 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         self._modbus_circuits: set[str] = set()
         # (plant_id, path) -> weeks until maintenance before an acknowledge 7, checked
         # at the next refresh.
-        self._pending_acks: dict[tuple[str, str], int | None] = {}
+        self._pending_acks: dict[tuple[str, str], tuple[int | None, int]] = {}
+        # Plants whose gateway clock has been seen: its first value adds the sensor.
+        self._clock_plants: set[str] = set()
         # Consecutive polls per plant that reported isOnline=false.
         self._offline_polls: dict[str, int] = {}
         # Device-registry ids of the plant devices, filled by async_setup_entry.
@@ -679,7 +681,10 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         """
         self.modbus.invalidate_slow(unit)
         if value == 7:
-            self._pending_acks[(plant_id, circuit_path)] = weeks_before
+            self._pending_acks[(plant_id, circuit_path)] = (
+                weeks_before,
+                self.modbus.slow_generation(unit),
+            )
         else:
             _LOGGER.info(
                 "Filter cleaning acknowledged on %s; the result cannot be verified over "
@@ -696,7 +701,12 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
                 continue
             if circuit.modbus is None:
                 continue  # gateway failing: compare when a reading is back
-            before = self._pending_acks.pop(key)
+            before, generation = self._pending_acks[key]
+            if self.modbus.slow_generation(int(key[1].split(".")[0])) <= generation:
+                # The maintenance block was not re-read since the write (a poll
+                # that was already running delivered older data): compare later.
+                continue
+            del self._pending_acks[key]
             after = circuit.modbus.maintenance_weeks_remaining
             if before is None or after is None:
                 _LOGGER.info(
@@ -1704,7 +1714,14 @@ class HovalDataCoordinator(DataUpdateCoordinator[HovalData]):
         }
         new_modbus = with_modbus - self._modbus_circuits
         self._modbus_circuits |= with_modbus
+        # The clock is a register the gateway may not have cached yet: a first
+        # value on a later tick must also add the sensor.
+        with_clock = {
+            pid for pid, plant in self.data.plants.items() if plant.gateway_clock_offset is not None
+        }
+        new_clock = with_clock - self._clock_plants
+        self._clock_plants |= with_clock
         if new_circuits:
             _LOGGER.info("New circuits discovered: %s", new_circuits)
-        if new_circuits or new_modbus:
+        if new_circuits or new_modbus or new_clock:
             async_dispatcher_send(self.hass, SIGNAL_NEW_CIRCUITS)

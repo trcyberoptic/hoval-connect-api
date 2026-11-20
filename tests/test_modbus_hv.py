@@ -357,3 +357,39 @@ async def test_invalidate_slow_forces_one_maintenance_re_read():
     client.reads.clear()
     await poller.poll([520])
     assert (modbus_hv.hv_maintenance_base(520), 13) not in client.reads
+
+
+async def test_poll_in_flight_during_invalidate_does_not_restore_stale_cache():
+    class RacingClient(FakeClient):
+        poller = None
+
+        async def read_holding(self, address, count):
+            result = await super().read_holding(address, count)
+            if (address, count) == (modbus_hv.hv_maintenance_base(520), 13) and self.poller:
+                self.poller.invalidate_slow(520)  # the acknowledge write lands mid-poll
+                self.poller = None
+            return result
+
+    client = RacingClient(_clock_answers())
+    poller = modbus_hv.HovalModbusPoller(client)
+    client.poller = poller
+    await poller.poll([520])  # pre-write data, must not be cached
+    assert poller.slow_generation(520) == 0
+    client.reads.clear()
+    await poller.poll([520])
+    assert client.reads.count((modbus_hv.hv_maintenance_base(520), 13)) == 1
+    assert poller.slow_generation(520) == 1
+
+
+async def test_busy_clock_read_keeps_the_last_good_value(monkeypatch):
+    clock = FakeTime()
+    monkeypatch.setattr(modbus_hv, "time", clock)
+    client = FakeClient(_clock_answers())
+    poller = modbus_hv.HovalModbusPoller(client)
+    await poller.poll([520])
+    good = poller.gateway_clock
+    assert good is not None
+    client.answers[(19802, 2)] = HovalModbusError("busy", exception_code=modbus.EXC_BUSY)
+    clock.now += 300
+    await poller.poll([520])
+    assert poller.gateway_clock is good
