@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from unittest.mock import MagicMock
 
@@ -838,17 +839,28 @@ def test_cloud_options_reject_gateway_of_another_entry(flow_mod):
     assert flow_mod.state.created == []
 
 
-def test_options_probe_frees_the_running_connection_first(flow_mod):
-    order = []
+class _PausableClient:
+    """Stands in for the running entry's HovalModbusClient; records pause/resume."""
 
-    class Client:
-        async def disconnect(self):
-            order.append("disconnect")
+    def __init__(self, order):
+        self.order = order
 
-    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
-    flow.config_entry.runtime_data = SimpleNamespace(
-        coordinator=SimpleNamespace(modbus=SimpleNamespace(client=Client()))
+    @contextlib.asynccontextmanager
+    async def paused(self):
+        self.order.append("pause")
+        try:
+            yield
+        finally:
+            self.order.append("resume")
+
+
+def _loaded(order):
+    return SimpleNamespace(
+        coordinator=SimpleNamespace(modbus=SimpleNamespace(client=_PausableClient(order)))
     )
+
+
+def _track_probes(flow_mod, order):
     original = flow_mod.HovalModbusClient
 
     def probing_client(*a, **kw):
@@ -856,24 +868,67 @@ def test_options_probe_frees_the_running_connection_first(flow_mod):
         return original(*a, **kw)
 
     flow_mod.HovalModbusClient = probing_client
+
+
+def test_options_probe_runs_while_the_running_connection_is_paused(flow_mod):
+    order = []
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow.config_entry.runtime_data = _loaded(order)
+    _track_probes(flow_mod, order)
     result = _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "gw2.local"}))
     assert result["type"] == "create_entry"
-    assert order == ["disconnect", "probe"]
+    assert order == ["pause", "probe", "resume"]
 
 
-def test_options_unchanged_gateway_keeps_the_connection(flow_mod):
-    calls = []
-
-    class Client:
-        async def disconnect(self):
-            calls.append(1)
-
+def test_options_probe_failure_still_resumes(flow_mod):
+    order = []
     flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
-    flow.config_entry.runtime_data = SimpleNamespace(
-        coordinator=SimpleNamespace(modbus=SimpleNamespace(client=Client()))
-    )
+    flow.config_entry.runtime_data = _loaded(order)
+    flow_mod.state.discover = RuntimeError("flow aborted")
+    with pytest.raises(RuntimeError):
+        _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "gw2.local"}))
+    assert order == ["pause", "resume"]
+    flow_mod.state.discover = flow_mod.modbus_error("timed out", no_answer=True)
+    order.clear()
+    result = _run(flow.async_step_init({**_STORED_GATEWAY, "modbus_host": "gw2.local"}))
+    assert result["errors"] == {"base": "modbus_no_answer"}
+    assert order == ["pause", "resume"]
+
+
+def test_options_unchanged_gateway_does_not_pause(flow_mod):
+    order = []
+    flow = _options_flow(flow_mod, _CLOUD, options=dict(_STORED_GATEWAY))
+    flow.config_entry.runtime_data = _loaded(order)
     _run(flow.async_step_init({**_STORED_GATEWAY, "scan_interval": 1800}))
-    assert calls == []
+    assert order == []
+
+
+def test_reconfigure_probe_runs_while_the_running_connection_is_paused(flow_mod):
+    order = []
+    flow = _flow(flow_mod)
+    mine = _entry("e1", {"mode": "local", "host": "gw.local", "port": 502, "unit_id": 1})
+    mine.unique_id = "modbus:gw.local:502:1"
+    mine.runtime_data = _loaded(order)
+    flow.reconfigure_entry = mine
+    flow.entries = [mine]
+    _track_probes(flow_mod, order)
+    # Same host, other unit id: the old entry's own connection must not block the probe.
+    result = _run(flow.async_step_reconfigure({"host": "gw.local", "port": 502, "unit_id": 2}))
+    assert result["reason"] == "reconfigure_successful"
+    assert order == ["pause", "probe", "resume"]
+
+
+def test_reconfigure_probe_failure_resumes(flow_mod):
+    order = []
+    flow = _flow(flow_mod)
+    mine = _entry("e1", {"mode": "local", "host": "gw.local", "port": 502, "unit_id": 1})
+    mine.runtime_data = _loaded(order)
+    flow.reconfigure_entry = mine
+    flow.entries = [mine]
+    flow_mod.state.discover = flow_mod.modbus_error("timed out", no_answer=True)
+    result = _run(flow.async_step_reconfigure({"host": "gw.local", "port": 502, "unit_id": 1}))
+    assert result["errors"] == {"base": "modbus_no_answer"}
+    assert order == ["pause", "resume"]
 
 
 @pytest.mark.parametrize("name", _FILES)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -113,6 +114,21 @@ async def _modbus_error_key(host: str, port: int, unit_id: int) -> str | None:
     finally:
         await client.close()
     return None if units else "modbus_no_units"
+
+
+def _paused_gateway(entry: Any) -> Any:
+    """Context manager freeing the running entry's Modbus slot while a probe runs.
+
+    The gateway answers one client at a time, so a probe next to the entry's
+    persistent connection would connect but get no answer. The entry's client
+    is paused (socket dropped, requests refused until the block ends, also on
+    errors); a successful save reloads the entry anyway. No-op for an entry
+    that is not loaded or has no Modbus client.
+    """
+    try:
+        return entry.runtime_data.coordinator.modbus.client.paused()
+    except AttributeError:
+        return contextlib.nullcontext()
 
 
 def _gateway_in_use(
@@ -393,7 +409,8 @@ class HovalConnectConfigFlow(ConfigFlow, domain=DOMAIN):
             ):
                 errors["base"] = "gateway_in_use"
             else:
-                error = await _modbus_error_key(host, port, unit_id)
+                async with _paused_gateway(entry):
+                    error = await _modbus_error_key(host, port, unit_id)
                 if error is None:
                     return self.async_update_reload_and_abort(
                         entry,
@@ -486,25 +503,6 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
         except (AttributeError, TypeError):
             return {}
 
-    async def _async_release_gateway(self) -> None:
-        """Drop the running entry's Modbus connection before the probe.
-
-        The gateway answers one client at a time: with the coordinator holding
-        its persistent connection the probe would connect but get no answer.
-        The client stays usable (next poll reconnects) and a successful save
-        reloads the entry anyway. Small remaining race: a poll may reconnect
-        during the ~4 s probe; the probe can then still time out, which the
-        `modbus_no_answer` text covers.
-        """
-        try:
-            client = self.config_entry.runtime_data.coordinator.modbus.client
-        except AttributeError:
-            return  # entry not loaded, or without Modbus
-        try:
-            await client.disconnect()
-        except Exception:  # noqa: BLE001 - never block saving options on this
-            _LOGGER.debug("Could not release the Modbus connection before probing", exc_info=True)
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if is_local_entry(self.config_entry.data):
@@ -570,8 +568,8 @@ class HovalConnectOptionsFlow(HovalOptionsFlowBase):
             ):
                 error = "gateway_in_use"
             else:
-                await self._async_release_gateway()
-                error = await _modbus_error_key(host, port, unit_id)
+                async with _paused_gateway(self.config_entry):
+                    error = await _modbus_error_key(host, port, unit_id)
             if error is None:
                 return self.async_create_entry(title="", data=data)
             errors["base"] = error

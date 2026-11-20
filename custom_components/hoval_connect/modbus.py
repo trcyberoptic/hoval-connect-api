@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import struct
+from collections.abc import AsyncIterator
 
 EXC_ILLEGAL_ADDRESS = 2
 EXC_BUSY = 6
@@ -115,6 +116,8 @@ class HovalModbusClient:
         self._exchange_connected = False
         # Set by close(): requests then raise instead of opening a new connection.
         self._closed = False
+        # Number of active `paused()` blocks: requests raise while it is > 0.
+        self._pauses = 0
 
     @property
     def host(self) -> str:
@@ -158,15 +161,24 @@ class HovalModbusClient:
         async with self._lock:
             await self._disconnect()
 
-    async def disconnect(self) -> None:
-        """Drop the connection but keep the client usable.
+    @contextlib.asynccontextmanager
+    async def paused(self) -> AsyncIterator[None]:
+        """Free the gateway's single client slot for the duration of the block.
 
-        Unlike `close()` this does not set `_closed`: the next request
-        reconnects lazily. The gateway serves one Modbus client at a time, so
-        the options flow frees the running connection before it probes.
+        The gateway serves one Modbus client at a time. Within the block the
+        socket is dropped and requests raise `HovalModbusError` instead of
+        reconnecting (a poll is a series of requests with gaps, so merely
+        dropping the socket once would be undone by its next request). Unlike
+        `close()` the client stays usable: leaving the block, also on an
+        exception, resumes normal lazy connecting.
         """
-        async with self._lock:
-            await self._disconnect()
+        self._pauses += 1
+        try:
+            async with self._lock:
+                await self._disconnect()
+            yield
+        finally:
+            self._pauses -= 1
 
     def _drop_connection(self) -> asyncio.StreamWriter | None:
         """Forget the connection and start closing it.
@@ -194,6 +206,11 @@ class HovalModbusClient:
             while True:
                 if self._closed:
                     raise HovalModbusError(f"Modbus client for {self._host}:{self._port} is closed")
+                if self._pauses:
+                    raise HovalModbusError(
+                        f"Modbus client for {self._host}:{self._port} is paused "
+                        "(the gateway serves one client at a time)"
+                    )
                 try:
                     pdu = await self._exchange(function, address, word)
                 except HovalModbusError as err:
