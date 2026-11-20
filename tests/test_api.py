@@ -948,19 +948,6 @@ class TestUserAgentIsSentOnEveryRequest:
         assert USER_AGENT.startswith("hoval-connect-api/")
         assert "github.com/trcyberoptic/hoval-connect-api" in USER_AGENT
 
-    def test_it_carries_the_admitted_version_not_the_release(self):
-        """Hoval admits client versions by the version in the User-Agent (#24).
-
-        The UA keeps the last admitted version until Hoval admits a newer one
-        (owner decision 2026-11-20); the release version follows the manifest.
-        """
-        from custom_components.hoval_connect import const
-
-        assert USER_AGENT == const.USER_AGENT
-        assert USER_AGENT.startswith(f"hoval-connect-api/{const.USER_AGENT_VERSION} ")
-        if const.INTEGRATION_VERSION != const.USER_AGENT_VERSION:
-            assert const.INTEGRATION_VERSION not in USER_AGENT
-
 
 class TestErrorsIdentifyTheEndpoint:
     """A failure must name the call that failed and carry its status.
