@@ -99,6 +99,12 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
 
     _attr_has_entity_name = True
     _attr_translation_key = "hot_water"
+    # Home Assistant 2026.11 renamed the temperature unit and the current and
+    # target temperature to native_*. 2024.11 to 2026.10 read the old names. The
+    # class provides both: 2026.11 reads the native names and logs no deprecation
+    # warning for a class that provides them (migrate_deprecated_entity_members),
+    # older versions ignore them. Drop the old names once the minimum is 2026.11.
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = WW_TEMP_STEP
     # A boost is started by setting a temperature, and reported by the existing
@@ -157,7 +163,7 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         return WW_MAX_TEMP if high is None else high
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return current water temperature (top-of-tank sensor)."""
         circuit = self._circuit
         if circuit is None:
@@ -171,7 +177,7 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
         return None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return target water temperature."""
         circuit = self._circuit
         if circuit is None:
@@ -183,6 +189,10 @@ class HovalWaterHeater(CoordinatorEntity[HovalDataCoordinator], WaterHeaterEntit
             except (ValueError, TypeError):
                 pass
         return None
+
+    # Old names for Home Assistant before 2026.11, see _attr_native_temperature_unit.
+    current_temperature = native_current_temperature
+    target_temperature = native_target_temperature
 
     @property
     def current_operation(self) -> str | None:

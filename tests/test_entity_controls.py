@@ -1022,3 +1022,28 @@ def test_modbus_served_control_follows_the_reading_not_the_cloud(entities, platf
     coordinator.circuit.modbus = SimpleNamespace()
     coordinator.data.cloud_ok = False
     assert entity.available is True
+
+
+@pytest.mark.parametrize(
+    ("module", "class_name"), [("climate", "HovalClimate"), ("water_heater", "HovalWaterHeater")]
+)
+def test_temperature_members_carry_native_and_old_names(entities, module, class_name):
+    """HA 2026.11 renamed three members to native_* and warns about a class that
+    provides only the old names; HA 2024.11 to 2026.10 reads only the old names.
+
+    HA decides by the class's own namespace (migrate_deprecated_entity_members in
+    helpers/deprecation.py): a class that provides the native name is left alone.
+    So both names must be defined on the class itself, the old ones as aliases.
+    """
+    own = vars(getattr(getattr(entities, module), class_name))
+    pairs = (
+        ("_attr_native_temperature_unit", "_attr_temperature_unit"),
+        ("native_current_temperature", "current_temperature"),
+        ("native_target_temperature", "target_temperature"),
+    )
+    for native, old in pairs:
+        assert native in own, native
+        assert old in own, old
+    assert own["_attr_temperature_unit"] == own["_attr_native_temperature_unit"]
+    assert own["current_temperature"] is own["native_current_temperature"]
+    assert own["target_temperature"] is own["native_target_temperature"]

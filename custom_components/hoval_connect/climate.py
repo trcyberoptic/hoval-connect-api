@@ -77,6 +77,12 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "heating"
+    # Home Assistant 2026.11 renamed the temperature unit and the current and
+    # target temperature to native_*. 2024.11 to 2026.10 read the old names. The
+    # class provides both: 2026.11 reads the native names and logs no deprecation
+    # warning for a class that provides them (migrate_deprecated_entity_members),
+    # older versions ignore them. Drop the old names once the minimum is 2026.11.
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF, HVACMode.AUTO]
@@ -134,7 +140,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         return HK_MAX_TEMP if high is None else high
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return the current room temperature.
 
         HK live values use 'roomTempActual' (same schema family as our
@@ -153,7 +159,7 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
         return None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return the target temperature."""
         # Show pending value immediately so the card does not snap back to
         # stale data during the in-flight API call + refresh window.
@@ -174,6 +180,10 @@ class HovalClimate(CoordinatorEntity[HovalDataCoordinator], ClimateEntity):
             return float(val)
         except (ValueError, TypeError):
             return None
+
+    # Old names for Home Assistant before 2026.11, see _attr_native_temperature_unit.
+    current_temperature = native_current_temperature
+    target_temperature = native_target_temperature
 
     @property
     def hvac_mode(self) -> HVACMode | None:

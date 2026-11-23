@@ -5,6 +5,16 @@ All notable changes to this integration are listed here. The format follows
 [Semantic Versioning](https://semver.org/). The text of a release's section is also the body of its
 GitHub release (see `.github/workflows/release.yml`).
 
+## [2.0.1] - Unreleased
+
+### Fixed
+
+- **No deprecation warnings on Home Assistant 2026.11.** The heating circuit (climate) and the hot
+  water (water heater) entities now also provide the temperature unit and the current and target
+  temperature under the new `native_*` names. Home Assistant 2026.11 logged one warning per entity
+  type because the old names stop working in 2027.11. Home Assistant 2024.11 to 2026.10 keeps
+  reading the old names, which stay.
+
 ## [2.0.0] - 2026-11-23
 
 ### How to update
@@ -125,4 +135,5 @@ Modbus mode keeps the ventilation working.
 
 Releases before 2.0.0 are listed on [GitHub Releases](https://github.com/trcyberoptic/hoval-connect-api/releases).
 
+[2.0.1]: https://github.com/trcyberoptic/hoval-connect-api/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/trcyberoptic/hoval-connect-api/compare/v1.1.0...v2.0.0
