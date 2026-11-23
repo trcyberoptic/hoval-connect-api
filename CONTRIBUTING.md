@@ -28,7 +28,7 @@ errors where there were none):
   fields are circuit-type-specific.
 
 Undocumented quirks with a date and a live observation are worth more than
-speculation — the README and `CLAUDE.md` follow that rule throughout.
+speculation — the README follows that rule throughout.
 
 ## Development setup
 

@@ -130,8 +130,8 @@ jobs:
                   f"- control UA → {control}",
                   "",
                   "The integration cannot fix this by itself. Deciding what to do is a "
-                  "judgement call, not a code change — see the User-Agent notes in "
-                  "CLAUDE.md before reaching for another string.",
+                  "judgement call, not a code change — check const.py and open issues "
+                  "before reaching for another string.",
               ])
               print("::error::Hoval's gateway now refuses this integration's User-Agent")
               raise SystemExit(1)
