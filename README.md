@@ -35,10 +35,11 @@ Plants and circuits are discovered automatically from your account.
 > recognises it by the version in its User-Agent (`hoval-connect-api/1.1.0`). Until Hoval
 > has done so, v1.1.0 gets the same 403. [#24][issue-24] shows the current status.
 >
-> **2.0.0** adds the [local Modbus TCP mode](#local-modbus-tcp) and identifies itself as
-> `hoval-connect-api/2.0.0`. Like 1.1.0 before it, it works against the cloud only once Hoval
-> has admitted that version ([#24][issue-24] shows the status). Until then, and whenever the
-> cloud is blocked, the local Modbus mode keeps the ventilation working without the cloud.
+> **2.0.0** adds the [local Modbus TCP mode](#local-modbus-tcp). Towards Hoval's cloud it still
+> identifies as `hoval-connect-api/1.1.0`, the only version Hoval has admitted so far, and makes the
+> same or fewer cloud requests as 1.1.0. It will send its own version once Hoval admits 2.x
+> ([#24][issue-24] shows the status). Whenever the cloud is blocked, the local Modbus mode keeps the
+> ventilation working without the cloud.
 >
 > Update in HACS, then **restart Home Assistant completely**: a config-entry reload does not
 > re-import Python modules. Do not change the User-Agent yourself. Hoval allows the

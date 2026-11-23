@@ -38,14 +38,22 @@ CLIENT_ID = "991b54b2-7e67-47ef-81fe-572e21c59899"
 # Naming the software and its source is what an API client should send anyway —
 # it tells Hoval more than the generic Home Assistant string did. It is a
 # workaround for a gateway rule, not a fix for it: if the rule is ever widened,
-# this stops working and the answer is a conversation with Hoval, not a
-# less honest User-Agent.
+# this stops working and the answer is a conversation with Hoval.
 #
 # The release version. Keep in sync with manifest.json — pinned by a source
 # contract in tests/test_source_contracts.py.
 INTEGRATION_VERSION = "2.0.0"
+# The version sent in the User-Agent. Hoval's gateway admits clients by this
+# version and has admitted only 1.1.0 (#24); 2.x requests were still refused on
+# 2026-11-23 and Hoval had not answered the request to admit them. Owner
+# decision 2026-11-23: 2.0.0 ships identifying as 1.1.0, as the 2.0.0-beta.1
+# test build did. This is stated in CHANGELOG.md and the README. Its cloud
+# requests are those of 1.1.0 or fewer (same polling floor and TTLs; hybrid
+# entries skip live-values for Modbus-served units). Switch back to
+# INTEGRATION_VERSION once Hoval admits 2.x.
+USER_AGENT_VERSION = "1.1.0"
 USER_AGENT = (
-    f"hoval-connect-api/{INTEGRATION_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
+    f"hoval-connect-api/{USER_AGENT_VERSION} (+https://github.com/trcyberoptic/hoval-connect-api)"
 )
 
 # Token TTLs (with safety margins)

@@ -5,11 +5,15 @@ All notable changes to this integration are listed here. The format follows
 [Semantic Versioning](https://semver.org/). The text of a release's section is also the body of its
 GitHub release (see `.github/workflows/release.yml`).
 
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-11-23
 
-Version 2.0.0 adds a local mode and includes everything since v1.1.0. Hoval has to admit the new
-User-Agent `hoval-connect-api/2.0.0` before the cloud accepts it ([#24](https://github.com/trcyberoptic/hoval-connect-api/issues/24)).
-Until then, and whenever the cloud is blocked, the local Modbus mode keeps the ventilation working.
+Version 2.0.0 adds a local mode and includes everything since v1.1.0.
+
+**Towards Hoval's cloud, 2.0.0 identifies as `hoval-connect-api/1.1.0`**, the only version Hoval has
+admitted so far ([#24](https://github.com/trcyberoptic/hoval-connect-api/issues/24)). Its cloud requests are those of 1.1.0 or
+fewer: the same 15-minute minimum and hourly slow data, and no `live-values` for units that Modbus
+serves. It will send its own version once Hoval admits 2.x. Whenever the cloud is blocked, the local
+Modbus mode keeps the ventilation working.
 
 ### Added
 
@@ -50,8 +54,8 @@ Until then, and whenever the cloud is blocked, the local Modbus mode keeps the v
 
 ### Changed
 
-- **User-Agent is `hoval-connect-api/2.0.0`.** Hoval identifies the integration by this version. The
-  daily User-Agent check in CI fails until Hoval has admitted it.
+- **User-Agent stays `hoval-connect-api/1.1.0`** (see above). The version Home Assistant and HACS
+  show is 2.0.0.
 - **Fewer cloud requests in hybrid mode.** `live-values` are no longer fetched for units that
   Modbus serves. Cloud-only entries send the same requests as v1.1.0.
 - **Local entries skip cloud-only entities.** A local-only entry has no weather, week names or
@@ -73,6 +77,8 @@ Until then, and whenever the cloud is blocked, the local Modbus mode keeps the v
   The gateway also echoes writes it ignores, so a confirmed button press proves nothing; check the
   *Weeks until maintenance* sensor and the Home Assistant log.
 - CO₂ and VOC are only available on units with an air-quality sensor.
+- Writes over Modbus (program, fan, air volumes, humidity) are read back from the gateway, but it
+  is not yet verified that they reach the unit's own controller and display panel.
 
 ## Earlier releases
 
