@@ -9,7 +9,8 @@ GitHub release (see `.github/workflows/release.yml`).
 
 ### How to update
 
-1. Install the update in HACS.
+1. Install the update under **Settings > Updates**, or in HACS (called *Marketplace* and built in
+   from Home Assistant 2026.11).
 2. **Restart Home Assistant completely.** Reloading the integration is not enough.
 3. That is all for an existing setup. Entity IDs, history, automations and the summer-boost blueprint
    stay as they are. The cloud is still polled at most every 15 minutes.
@@ -35,10 +36,11 @@ Details: README, section "Local Modbus TCP".
 - *Operating selection* (with Modbus): 1.0.x showed "eco" when the unit ran "constant". 2.0.0 shows the correct
   value, so the old history of this sensor can disagree with the new values.
 
-**Coming from 2.0.0-beta.1:** install the update as usual. **To go back to 1.1.0:** HACS > Hoval
+**Coming from 2.0.0-beta.1:** install the update as usual. **To go back to 1.1.0:** HACS (Marketplace) > Hoval
 Connect > three-dot menu > Redownload > select `v1.1.0` > restart Home Assistant.
 
-**Kurz auf Deutsch:** Update in HACS installieren und Home Assistant komplett neu starten. Bestehende
+**Kurz auf Deutsch:** Update unter **Einstellungen > Updates** installieren (oder in HACS, ab Home
+Assistant 2026.11 «Marketplace») und Home Assistant komplett neu starten. Bestehende
 Einrichtungen laufen ohne weitere Schritte weiter. Optional gibt es einen lokalen Modbus-Betrieb für
 HomeVent-Lüftungen: am Bedienteil **Service > TTE-GW > Modbus > Einstellungen** öffnen, **Aktiv**
 einschalten und **Mode = TCP** setzen, dann in Home Assistant **Einstellungen > Geräte & Dienste >
