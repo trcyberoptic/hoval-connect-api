@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 .claude/
 .claude.local.md
+CLAUDE.md
 .serena/
 re/
 *.stackdump

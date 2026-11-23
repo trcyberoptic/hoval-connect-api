@@ -7,8 +7,8 @@ HACS) that polls Hoval's cloud for heating, ventilation and hot-water plants and
 control commands back. It runs inside the Home Assistant process, with everything that
 process can reach: the whole Home Assistant instance, its configuration directory, and the
 user's home network. The repository also holds reverse-engineered API notes (`docs/`,
-`README.md`, `CLAUDE.md`), two standalone example clients (`examples/`), an automation
-Blueprint (`blueprints/`), and the GitHub Actions workflows that test and release it.
+`README.md`), two standalone example clients (`examples/`), an automation Blueprint
+(`blueprints/`), and the GitHub Actions workflows that test and release it.
 
 Untrusted input, roughly in order of how much we worry about it:
 
@@ -43,7 +43,7 @@ Also trusted: anyone with write access to this repository.
 - The account email, plant IDs (15 digits), and plant names and locations are personal
   data. The diagnostics download promises to redact them (`README.md`, "Diagnostics"), and
   so do response bodies that get logged. A plant ID in a log line's request path is
-  deliberate: the line has to name the failing endpoint (see `CLAUDE.md`). A plant ID
+  deliberate: the line has to name the failing endpoint (issue #11). A plant ID
   grants nothing without that account's tokens.
 - No value from the cloud or from a service call can send an authenticated request to
   another host, change which endpoint or plant a request addresses (through `/`, `..`, `%`,
@@ -126,7 +126,7 @@ This is a single-maintainer integration whose users are homeowners. Calibrate as
 - `CLIENT_ID` in `const.py` and `examples/` is the public OAuth client ID of Hoval's own app.
   It is not a secret.
 - The integration deliberately sends its own `User-Agent` instead of Home Assistant's. Hoval's
-  gateway refuses Home Assistant's (see `CLAUDE.md`), so this is not spoofing.
+  gateway refuses Home Assistant's (see `const.py`), so this is not spoofing.
 - TLS goes through Home Assistant's shared aiohttp session and its SSL context. Lack of
   certificate pinning is not a finding.
 - Plant IDs in log lines (see "What must hold"). Report them only where they reach the
@@ -134,7 +134,7 @@ This is a single-maintainer integration whose users are homeowners. Calibrate as
 - `hacs/action@main` and `home-assistant/actions/hassfest@master` are on branch refs on
   purpose; the reason is in `validate.yml`. Do not report the branch ref itself.
 - Token-like strings in `tests/` are fixtures.
-- Weaknesses of Hoval's cloud inferred from the notes in `docs/`, `README.md` or `CLAUDE.md`
+- Weaknesses of Hoval's cloud inferred from the notes in `docs/` or `README.md`
   are not ours to fix; do not probe for them.
 - Anything that needs a malicious Home Assistant admin, or write access to this repository,
   is out of scope.

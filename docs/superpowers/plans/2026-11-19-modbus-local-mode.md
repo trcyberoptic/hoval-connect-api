@@ -17,7 +17,7 @@
 - Unique IDs and entity IDs of existing entities never change. Entity unique-id pattern stays `{plant_id}_{circuit_path}_{key}` / `{plant_id}_{key}`.
 - Cloud cadence floor stays 15 min (`SCAN_INTERVAL_OPTIONS`); no new cloud endpoints; `USER_AGENT`/`INTEGRATION_VERSION` handling untouched. A failed cloud fetch is retried at the cloud interval, never at the Modbus interval.
 - Scope is HV units 513–528 only. Never write a register outside the write table of Task 2; validate every value before sending.
-- Repo conventions from `CLAUDE.md`: tests run without Home Assistant (HA stubbed via `sys.modules`), from the repo root, with `python -m pytest tests/ -v`; lint with `uvx ruff@latest check .` and `uvx ruff@latest format --check .`.
+- Repo conventions: tests run without Home Assistant (HA stubbed via `sys.modules`), from the repo root, with `python -m pytest tests/ -v`; lint with `uvx ruff@latest check .` and `uvx ruff@latest format --check .`.
 - Every live write on the owner's gateway needs the owner's consent for that specific value (Task 10).
 - Work on branch `feat/modbus-local`. No release, no version bump, no tag in this plan (a release needs Hoval's consent in #24).
 
@@ -652,12 +652,12 @@ git commit -m "feat(modbus): Modbus control routing, setpoint numbers and acknow
 ### Task 10: Documentation and live verification on the owner's plant
 
 **Files:**
-- Modify: `README.md` (section "Local Modbus TCP": enabling Modbus on the panel, hybrid vs local, what each mode provides, the acknowledge buttons and Hoval's read-only flag on 21054), `CLAUDE.md` (facts: register formulas, exception 2/6 behaviour, the 2026-11-19 write test, cloud TTL rule, stored topology)
+- Modify: `README.md` (section "Local Modbus TCP": enabling Modbus on the panel, hybrid vs local, what each mode provides, the acknowledge buttons and Hoval's read-only flag on 21054)
 
 - [ ] **Step 1: Write the docs and commit**
 
 ```bash
-git add README.md CLAUDE.md
+git add README.md
 git commit -m "docs: local Modbus TCP mode"
 ```
 
@@ -673,4 +673,4 @@ git commit -m "docs: local Modbus TCP mode"
   - Program select week1 → constant → week1 (audible change).
   - Acknowledge buttons only at the next real maintenance / filter-cleaning message.
 
-- [ ] **Step 5: Record results** in `CLAUDE.md` (what was verified live, what is still open: 39600 labels, whether 38606 reflects a cloud temporary change, long-lived connection behaviour) and commit.
+- [ ] **Step 5: Record results** in local project notes (what was verified live, what is still open: 39600 labels, whether 38606 reflects a cloud temporary change, long-lived connection behaviour).
