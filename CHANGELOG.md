@@ -7,6 +7,45 @@ GitHub release (see `.github/workflows/release.yml`).
 
 ## [2.0.0] - 2026-11-23
 
+### How to update
+
+1. Install the update in HACS.
+2. **Restart Home Assistant completely.** Reloading the integration is not enough.
+3. That is all for an existing setup. Entity IDs, history, automations and the summer-boost blueprint
+   stay as they are. The cloud is still polled at most every 15 minutes.
+
+**Optional: local Modbus TCP for HomeVent (HV) ventilation units.** Home Assistant then reads the unit
+directly from the TopTronic E gateway every 30 seconds, also when the cloud is down or blocked.
+
+- On the controller panel, open **Service > TTE-GW > Modbus > Einstellungen**, switch **Aktiv** on
+  and set **Mode = TCP**. Modbus is off by default.
+- In Home Assistant, open **Settings > Devices & services > Hoval Connect > Configure** and enter the
+  gateway's IP address, port 502 and unit id 1.
+- The gateway answers only one Modbus client. Stop other tools that poll it (for example Loxone).
+- With Modbus, the sensors that 1.1.0 removed come back under their old entity IDs: control status,
+  operating selection, air-quality control, and CO₂/VOC on units with an air-quality sensor.
+
+Details: README, section "Local Modbus TCP".
+
+**After the update, check these entities:**
+
+- *Status* now shows translated values (heating, cooling, active, inactive, ventilation). The stored
+  states do not change, so automations that compare them keep working. A value outside this list now
+  shows as unknown.
+- *Operating selection* (with Modbus): 1.0.x showed "eco" when the unit ran "constant". 2.0.0 shows the correct
+  value, so the old history of this sensor can disagree with the new values.
+
+**Coming from 2.0.0-beta.1:** install the update as usual. **To go back to 1.1.0:** HACS > Hoval
+Connect > three-dot menu > Redownload > select `v1.1.0` > restart Home Assistant.
+
+**Kurz auf Deutsch:** Update in HACS installieren und Home Assistant komplett neu starten. Bestehende
+Einrichtungen laufen ohne weitere Schritte weiter. Optional gibt es einen lokalen Modbus-Betrieb für
+HomeVent-Lüftungen: am Bedienteil **Service > TTE-GW > Modbus > Einstellungen** öffnen, **Aktiv**
+einschalten und **Mode = TCP** setzen, dann in Home Assistant **Einstellungen > Geräte & Dienste >
+Hoval Connect > Konfigurieren** die Adresse des Gateways eintragen (Port 502, Unit-ID 1).
+
+### Overview
+
 Version 2.0.0 adds a local mode and includes everything since v1.1.0.
 
 **Towards Hoval's cloud, 2.0.0 identifies as `hoval-connect-api/1.1.0`**, the only version Hoval has
